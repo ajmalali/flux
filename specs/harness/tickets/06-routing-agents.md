@@ -1,7 +1,7 @@
 ---
 id: FLX-06
 title: Routing agents — chore, build, deep
-status: open
+status: done
 agent: chore
 effort: low
 blockers: [FLX-01]
@@ -25,6 +25,20 @@ Three subagent definitions with model/effort frontmatter — this is the per-tic
    Action: model opus, effort high, disable-model-invocation true. Body: novel design inside the ticket, cross-cutting changes, gnarly diagnosis. Same loop; additionally instructed to record any real tradeoff as an ADR draft.
    Verify: same
    Done: same, with opus
+
+## Result — 2026-08-11
+Written as agents/{chore,build,deep}.md with `name`/`description`/`model`/`effort` and
+nothing else. The `disable-model-invocation: true` these tasks asked for does not exist
+for subagents — it is a skills-and-commands field — so the descriptions carry that intent
+instead (ADR-0008, which also records why `claude plugin validate .` at the repo root
+would not have caught a broken agent file, and the colon-in-description YAML trap it did
+catch). Bodies are 18/22/26 lines. Verified: `claude plugin validate
+.claude-plugin/plugin.json` passes with only the pre-existing root-CLAUDE.md warning;
+`bash tests/run.sh` 45 passed, 0 failed. After `/reload-plugins` the three loaded as
+`flux:chore` / `flux:build` / `flux:deep` with descriptions intact, and a trivial dispatch
+of each returned Haiku 4.5, Claude Sonnet 5 and Opus 5 respectively — the `model:` field
+routes. Effort is not self-reportable and was not confirmed this way; the frontmatter
+carries it and the schema is documented.
 
 ## Test plan
 Manual: dispatch each agent with a trivial prompt; confirm the model tier in the transcript.

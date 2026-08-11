@@ -24,7 +24,9 @@ truth for progress — nothing else tracks it.
 
 ## Verification
 
-- Manifests: `claude plugin validate . --strict`
+- Manifests: `claude plugin validate . --strict` — this checks the *marketplace* only.
+  After touching any component, also run `claude plugin validate
+  .claude-plugin/plugin.json`, which walks skills, agents and hooks (ADR-0008)
 - Tests: `bash tests/run.sh` (runner is created by FLX-02)
 - Hook and bin scripts must pass `shellcheck`, complete in <500ms, and exit 0 on
   malformed input, missing `bd`, or missing `.flux/` (ADR-0001, fail-open)

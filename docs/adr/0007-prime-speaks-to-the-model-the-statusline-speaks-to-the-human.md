@@ -1,0 +1,9 @@
+# 0007 — Prime speaks to the model; only the statusline speaks to the human
+
+Discovered running FLX-05's check 4 and confirmed against the hooks docs (re-read 2026-08-11): "For most events, stdout is written to the debug log but not shown in the transcript. The exceptions are `UserPromptSubmit`, `UserPromptExpansion`, and `SessionStart`, where stdout is added as context that Claude can see and act on." Added as *context*. Not printed. This repo's own transcripts show it arriving as a `hook_success` attachment the terminal never renders.
+
+So the primed block has exactly one reader, and it is the model. That is fine for orientation — the block exists so a session starts knowing where it is — but it silently broke the drift warning, which was phrased as a nudge ("run /sync when convenient") aimed at a human who could not see it. It fired only when the model chose to relay it, which is the dependency a deterministic hook was built to remove.
+
+The rule, therefore: anything a hook needs a *human* to notice has to reach the status line, because that is the only surface flux owns that a human actually looks at. Hook stdout is for the model. `/pause` residue, `/sync` prompts and anything else that wants a person to act should assume the block is invisible and budget a status-line segment (FLX-21 did this for drift: `FLX-20-done · main · ⚠ 2 drift · ctx 41%`).
+
+Consequence for the status line's cost model: it still resolves nothing itself. The hooks count and stamp; it reads and renders (FLX-04). Consequence for checkpoints: a check worded "the block appears" is unverifiable by looking at the screen — the human-visible assertions are the status line, and the block is confirmed either by asking the model what it received or by running the script directly. FLX-05's script is worded that way now.

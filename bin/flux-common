@@ -16,8 +16,10 @@ BD_BIN="${FLUX_BD:-bd}"
 # Ticket ids, as they appear in frontmatter and in commit messages.
 TICKET_ID_RE='FLX-[0-9]+|bd-[a-z0-9]+'
 
-# How far back store_done reads for the commit that closed a ticket.
+# How far back store_done reads for the commit that closed a ticket, and how far
+# drift_count reads for commits that name none.
 MAX_DONE_SCAN=40
+MAX_DRIFT_SCAN=200
 
 # ---------------------------------------------------------------- helpers ---
 
@@ -93,9 +95,10 @@ json_or_null() {
   if [ -z "$1" ]; then printf 'null'; else json_str "$1"; fi
 }
 
-# The fields we own, in the order they are written. `dirty_files` is the only
-# number; everything else is a string or null.
-SESSION_KEYS=(last_turn_at branch head_sha dirty_files claimed_ticket last_done_ticket last_synced_commit)
+# The fields we own, in the order they are written. Two are numbers; everything
+# else is a string or null.
+SESSION_KEYS=(last_turn_at branch head_sha dirty_files drift_commits claimed_ticket last_done_ticket last_synced_commit)
+SESSION_NUMERIC=" dirty_files drift_commits "
 
 # Fields we used to own and no longer write, as a JSON array. The merge below
 # deletes them, so a session.json left by an older install stops carrying a
@@ -103,9 +106,11 @@ SESSION_KEYS=(last_turn_at branch head_sha dirty_files claimed_ticket last_done_
 # Preserving unknown fields is for what other verbs write, not for our own past.
 SESSION_RETIRED_KEYS='["next_ticket"]'
 
-# session_field <file> <key> — top-level string value, "" when the file, the key
-# or the value is absent. jq when we have it, a sed read of our own fixed layout
-# otherwise, so a missing jq costs a field its freshness, never its value.
+# session_field <file> <key> — top-level value as text, "" when the file, the
+# key or the value is absent. jq when we have it, a sed read of our own fixed
+# layout otherwise, so a missing jq costs a field its freshness, never its
+# value. The fallback accepts an unquoted value too — the numeric fields are
+# written bare — and reads a literal null as absent, which is what it means.
 session_field() {
   local file="$1" key="$2" val=""
   [ -f "$file" ] || return 0
@@ -113,9 +118,30 @@ session_field() {
     val=$(jq -r --arg k "$key" '.[$k] // empty' "$file" 2>/dev/null)
   fi
   if [ -z "$val" ]; then
-    val=$(sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$file" 2>/dev/null | head -1)
+    val=$(sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\{0,1\}\([^\",}]*\)\"\{0,1\}.*/\1/p" \
+      "$file" 2>/dev/null | head -1)
+    [ "$val" = null ] && val=""
   fi
   printf '%s' "$val"
+}
+
+# How many commits since the sync baseline carry no ticket id — work that
+# happened outside the harness. Always a number; 0 whenever there is no usable
+# baseline, which is also the honest answer before the first /sync.
+#
+# The baseline is read, never written: only /sync (FLX-14) advances it. Both
+# hooks call this — prime to print its sentence, the heartbeat to keep the count
+# fresh through a session that commits — and the statusline only ever reads the
+# number they leave behind (FLX-04, ADR-0006).
+drift_count() {
+  local root="$1" base msg n=0
+  base=$(session_field "$root/.flux/session.json" last_synced_commit)
+  if [ -n "$base" ] && git -C "$root" cat-file -e "${base}^{commit}" 2>/dev/null; then
+    while IFS= read -r -d '' msg; do
+      [[ $msg =~ $TICKET_ID_RE ]] || n=$((n + 1))
+    done < <(git -C "$root" log -z -n "$MAX_DRIFT_SCAN" --format='%s%n%b' "${base}..HEAD" 2>/dev/null)
+  fi
+  printf '%s' "$n"
 }
 
 FLUX_TMPFILE=""
@@ -165,7 +191,7 @@ session_stamp() {
       fi
     done
     [ "$named" -eq 1 ] || v=$(session_field "$file" "$k")
-    if [ "$k" = dirty_files ]; then
+    if [ "${SESSION_NUMERIC#*" $k "}" != "$SESSION_NUMERIC" ]; then
       case "$v" in '' | *[!0-9]*) v=0 ;; esac
       body="$body$sep  \"$k\": $v"
     else

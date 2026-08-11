@@ -29,7 +29,7 @@ main() {
   root=$(repo_root "$cwd")
   file="$root/.flux/session.json"
 
-  local branch head_sha dirty claimed last_done synced now
+  local branch head_sha dirty drift claimed last_done synced now
   branch=$(git -C "$root" symbolic-ref --quiet --short HEAD 2>/dev/null)
   if [ -z "$branch" ] && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
     branch="detached"
@@ -37,6 +37,10 @@ main() {
   head_sha=$(git -C "$root" rev-parse --short HEAD 2>/dev/null)
   dirty=$(git -C "$root" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
   [ -n "$dirty" ] || dirty=0
+
+  # Recounted every turn, not just at session start: commits happen mid-session,
+  # and the statusline can only show what the last stamp left it (FLX-21).
+  drift=$(drift_count "$root" 2>/dev/null)
 
   claimed=$(first_id "$(store_claimed "$root" "$(basename "$root")" 2>/dev/null)")
 
@@ -58,6 +62,7 @@ main() {
     branch "$branch" \
     head_sha "$head_sha" \
     dirty_files "$dirty" \
+    drift_commits "$drift" \
     claimed_ticket "$claimed" \
     last_done_ticket "$last_done" \
     last_synced_commit "$synced"

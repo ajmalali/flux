@@ -24,7 +24,6 @@ set -u
 
 MAX_FRONTIER=5
 MAX_HANDOFFS=5
-MAX_DRIFT_SCAN=200
 TITLE_WIDTH=72
 
 # ---------------------------------------------------------------- helpers ---
@@ -61,22 +60,6 @@ collect_handoffs() {
   done
 }
 
-# Commits since .flux/session.json's last_synced_commit whose message carries no
-# ticket id. Prints a count; prints nothing when there is no usable baseline.
-collect_drift() {
-  local root="$1" base msg n=0
-  [ -f "$root/.flux/session.json" ] || return 0
-  have jq || return 0
-  base=$(jq -r '.last_synced_commit // empty' "$root/.flux/session.json" 2>/dev/null)
-  [ -n "$base" ] || return 0
-  git -C "$root" cat-file -e "${base}^{commit}" 2>/dev/null || return 0
-  while IFS= read -r -d '' msg; do
-    [[ $msg =~ $TICKET_ID_RE ]] || n=$((n + 1))
-  done < <(git -C "$root" log -z -n "$MAX_DRIFT_SCAN" --format='%s%n%b' "${base}..HEAD" 2>/dev/null)
-  [ "$n" -gt 0 ] && printf '%s\n' "$n"
-  return 0
-}
-
 # ------------------------------------------------------------------- main ---
 
 main() {
@@ -92,19 +75,24 @@ main() {
   ready=$(store_ready "$root" 2>/dev/null)
   last_done=$(store_done "$root" 2>/dev/null)
   handoffs=$(collect_handoffs "$root" 2>/dev/null)
-  drift=$(collect_drift "$root" 2>/dev/null)
+  drift=$(drift_count "$root" 2>/dev/null)
+  case "$drift" in '' | 0 | *[!0-9]*) drift=0 ;; esac
 
-  # Stamped after the collectors, before the print: drift reads the baseline out
-  # of the same file, and only /sync may move that. Skipped entirely in a repo
-  # flux knows nothing about — starting a session there is no reason to create a
-  # .flux/ in it.
-  if [ -n "$claimed$ready$handoffs$drift" ] || [ -d "$root/.flux" ]; then
+  local known="$claimed$ready$handoffs"
+  [ "$drift" -gt 0 ] && known="$known$drift"
+
+  # Stamped after the collectors, before the print: drift is counted from the
+  # baseline in this same file, and only /sync may move that. Skipped entirely
+  # in a repo flux knows nothing about — starting a session there is no reason
+  # to create a .flux/ in it.
+  if [ -n "$known" ] || [ -d "$root/.flux" ]; then
     session_stamp "$root" \
       claimed_ticket "$(first_id "$claimed")" \
-      last_done_ticket "$(first_id "$last_done")"
+      last_done_ticket "$(first_id "$last_done")" \
+      drift_commits "$drift"
   fi
 
-  [ -n "$claimed$ready$handoffs$drift" ] || return 0
+  [ -n "$known" ] || return 0
 
   printf 'flux · %s\n' "$worktree"
 
@@ -155,7 +143,7 @@ main() {
     [ "$rest" -gt 0 ] && printf '  (+%s more)\n' "$rest"
   fi
 
-  if [ -n "$drift" ]; then
+  if [ "$drift" -gt 0 ]; then
     printf '%s commits not linked to tickets — run /sync when convenient.\n' "$drift"
   fi
 

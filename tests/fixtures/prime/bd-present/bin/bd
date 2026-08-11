@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Minimal `bd` stub: only the two read-only queries prime issues.
+case "${1:-}" in
+  ready)
+    printf '%s\n' '[{"id":"bd-7","title":"Wire the statusline","labels":["ui","chore"],"status":"open"}]'
+    ;;
+  list)
+    printf '%s\n' '[{"id":"bd-3","title":"Prime injects session state","assignee":"bd-present","status":"in_progress"}]'
+    ;;
+  *) exit 1 ;;
+esac

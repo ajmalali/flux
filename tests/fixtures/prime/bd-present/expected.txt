@@ -1,0 +1,4 @@
+flux · bd-present
+Claimed: bd-3 Prime injects session state
+Frontier (1 ready):
+  bd-7 [chore] Wire the statusline

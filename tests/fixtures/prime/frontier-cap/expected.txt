@@ -1,0 +1,8 @@
+flux · frontier-cap
+Frontier (7 ready):
+  FLX-01 [chore] Fixture ticket 1
+  FLX-02 [chore] Fixture ticket 2
+  FLX-03 [chore] Fixture ticket 3
+  FLX-04 [chore] Fixture ticket 4
+  FLX-05 [chore] Fixture ticket 5
+  (+2 more)

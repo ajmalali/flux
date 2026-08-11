@@ -1,0 +1,251 @@
+#!/usr/bin/env bash
+#
+# flux-prime — SessionStart hook: inject the "where am I" block into a session.
+#
+# Contract (ADR-0001, fail-open): read-only, no network, no writes, under 500ms,
+# and always exit 0 — a broken prime degrades to plain Claude Code, never blocks it.
+# The ticket store is reached only through the store_* verbs below (ADR-0002).
+#
+# stdin:  SessionStart hook JSON — {session_id, transcript_path, cwd, hook_event_name, source}
+# stdout: plain text, injected verbatim as context. Empty when nothing is known.
+#
+# Env:
+#   FLUX_BD — beads binary to use (default: bd). Point it at a missing path to
+#             force the markdown fallback.
+
+set -u
+
+BD_BIN="${FLUX_BD:-bd}"
+TICKET_ID_RE='FLX-[0-9]+|bd-[a-z0-9]+'
+MAX_FRONTIER=5
+MAX_HANDOFFS=5
+MAX_DRIFT_SCAN=200
+TITLE_WIDTH=72
+
+# ---------------------------------------------------------------- helpers ---
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# Trim to TITLE_WIDTH, appending an ellipsis when cut.
+clip() {
+  local s="$1"
+  if [ "${#s}" -gt "$TITLE_WIDTH" ]; then
+    printf '%s…' "${s:0:$((TITLE_WIDTH - 1))}"
+  else
+    printf '%s' "$s"
+  fi
+}
+
+# ------------------------------------------------------- markdown fallback ---
+
+# Emit one TSV row per ticket file: id \t status \t agent \t blockers \t title.
+# Files are globbed in name order, so rows arrive lowest-numbered first.
+md_rows() {
+  local root="$1"
+  local -a files=()
+  shopt -s nullglob
+  files=("$root"/specs/*/tickets/*.md)
+  shopt -u nullglob
+  [ "${#files[@]}" -gt 0 ] || return 0
+
+  awk '
+    FNR == 1 { fm = 0; closed = 0; id = ""; st = ""; ag = ""; bl = ""; ti = "" }
+    FNR == 1 && /^---[[:space:]]*$/ { fm = 1; next }
+    closed { next }
+    fm && /^---[[:space:]]*$/ {
+      closed = 1
+      if (id != "") printf "%s\t%s\t%s\t%s\t%s\n", id, st, ag, bl, ti
+      next
+    }
+    fm {
+      k = $0; sub(/:.*$/, "", k); gsub(/[[:space:]]/, "", k)
+      v = $0; sub(/^[^:]*:[[:space:]]*/, "", v); sub(/[[:space:]]+$/, "", v)
+      if (k == "id") id = v
+      else if (k == "status") st = v
+      else if (k == "agent") ag = v
+      else if (k == "blockers") bl = v
+      else if (k == "title") ti = v
+    }
+  ' "${files[@]}" 2>/dev/null
+}
+
+md_claimed() {
+  md_rows "$1" | awk -F'\t' '$2 == "claimed" || $2 == "in_progress" { print $1 "\t" $5 }'
+}
+
+# Open tickets whose blockers are all done. Buffers rows so blockers can be
+# resolved against tickets declared later in the file order.
+md_ready() {
+  md_rows "$1" | awk -F'\t' '
+    { row[NR] = $0; status[$1] = $2 }
+    END {
+      for (i = 1; i <= NR; i++) {
+        n = split(row[i], f, "\t")
+        if (n < 5 || f[2] != "open") continue
+        bl = f[4]; gsub(/[][[:space:]]/, "", bl)
+        ok = 1
+        if (bl != "") {
+          m = split(bl, dep, ",")
+          for (j = 1; j <= m; j++)
+            if (dep[j] != "" && status[dep[j]] != "done") ok = 0
+        }
+        if (ok) print f[1] "\t" f[3] "\t" f[5]
+      }
+    }
+  '
+}
+
+# ------------------------------------------------------------ store verbs ---
+# The only two beads reads prime performs. Both are read-only and must never
+# trigger a sync. Output shape is fixed here so callers never see bd's schema.
+
+# id \t title
+store_claimed() {
+  local root="$1" wt="$2" out=""
+  if have "$BD_BIN" && have jq; then
+    out=$("$BD_BIN" list --status in_progress --json 2>/dev/null |
+      jq -r --arg wt "$wt" '
+        (if type == "array" then . elif type == "object" then (.issues // .ready // []) else [] end)
+        | map(select((.assignee // "") == "" or (.assignee // "") == $wt))
+        | .[] | [.id, (.title // "")] | @tsv
+      ' 2>/dev/null)
+    [ -n "$out" ] && { printf '%s\n' "$out"; return 0; }
+  fi
+  md_claimed "$root"
+}
+
+# id \t tier \t title
+store_ready() {
+  local root="$1" out=""
+  if have "$BD_BIN" && have jq; then
+    out=$("$BD_BIN" ready --json 2>/dev/null |
+      jq -r '
+        (if type == "array" then . elif type == "object" then (.ready // .issues // []) else [] end)
+        | .[]
+        | [ .id,
+            (((.labels // []) | map(select(. == "chore" or . == "build" or . == "deep")))[0] // ""),
+            (.title // "") ]
+        | @tsv
+      ' 2>/dev/null)
+    [ -n "$out" ] && { printf '%s\n' "$out"; return 0; }
+  fi
+  md_ready "$root"
+}
+
+# ------------------------------------------------------------- collectors ---
+
+# Handoffs are residue files in .flux/handoffs/. Presence means unconsumed —
+# whoever consumes one removes it. Emits: filename \t first meaningful line.
+collect_handoffs() {
+  local root="$1" f line
+  local -a files=()
+  shopt -s nullglob
+  files=("$root"/.flux/handoffs/*.md)
+  shopt -u nullglob
+  for f in "${files[@]}"; do
+    line=$(awk '
+      NR == 1 && /^---[[:space:]]*$/ { fm = 1; next }
+      fm && /^---[[:space:]]*$/ { fm = 0; next }
+      fm { next }
+      /^[[:space:]]*$/ { next }
+      { sub(/^#+[[:space:]]*/, ""); sub(/[[:space:]]+$/, ""); print; exit }
+    ' "$f" 2>/dev/null)
+    printf '%s\t%s\n' "$(basename "$f")" "$line"
+  done
+}
+
+# Commits since .flux/session.json's last_synced_commit whose message carries no
+# ticket id. Prints a count; prints nothing when there is no usable baseline.
+collect_drift() {
+  local root="$1" base msg n=0
+  [ -f "$root/.flux/session.json" ] || return 0
+  have jq || return 0
+  base=$(jq -r '.last_synced_commit // empty' "$root/.flux/session.json" 2>/dev/null)
+  [ -n "$base" ] || return 0
+  git -C "$root" cat-file -e "${base}^{commit}" 2>/dev/null || return 0
+  while IFS= read -r -d '' msg; do
+    [[ $msg =~ $TICKET_ID_RE ]] || n=$((n + 1))
+  done < <(git -C "$root" log -z -n "$MAX_DRIFT_SCAN" --format='%s%n%b' "${base}..HEAD" 2>/dev/null)
+  [ "$n" -gt 0 ] && printf '%s\n' "$n"
+  return 0
+}
+
+# ------------------------------------------------------------------- main ---
+
+main() {
+  local stdin_json cwd root worktree
+  stdin_json=$(cat 2>/dev/null)
+
+  cwd=""
+  if have jq && [ -n "$stdin_json" ]; then
+    cwd=$(printf '%s' "$stdin_json" | jq -r '.cwd // empty' 2>/dev/null)
+  fi
+  [ -n "$cwd" ] && [ -d "$cwd" ] || cwd="$PWD"
+
+  root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)
+  [ -n "$root" ] && [ -d "$root" ] || root="$cwd"
+  worktree=$(basename "$root")
+
+  local claimed ready handoffs drift
+  claimed=$(store_claimed "$root" "$worktree" 2>/dev/null)
+  ready=$(store_ready "$root" 2>/dev/null)
+  handoffs=$(collect_handoffs "$root" 2>/dev/null)
+  drift=$(collect_drift "$root" 2>/dev/null)
+
+  [ -n "$claimed$ready$handoffs$drift" ] || return 0
+
+  printf 'flux · %s\n' "$worktree"
+
+  local id tier title rest n shown
+  if [ -n "$claimed" ]; then
+    while IFS=$'\t' read -r id title; do
+      [ -n "$id" ] || continue
+      printf 'Claimed: %s %s\n' "$id" "$(clip "$title")"
+    done <<<"$claimed"
+  fi
+
+  if [ -n "$ready" ]; then
+    n=$(printf '%s\n' "$ready" | grep -c '' 2>/dev/null || echo 0)
+    printf 'Frontier (%s ready):\n' "$n"
+    shown=0
+    while IFS=$'\t' read -r id tier title; do
+      [ -n "$id" ] || continue
+      shown=$((shown + 1))
+      [ "$shown" -le "$MAX_FRONTIER" ] || break
+      if [ -n "$tier" ]; then
+        printf '  %s [%s] %s\n' "$id" "$tier" "$(clip "$title")"
+      else
+        printf '  %s %s\n' "$id" "$(clip "$title")"
+      fi
+    done <<<"$ready"
+    rest=$((n - MAX_FRONTIER))
+    [ "$rest" -gt 0 ] && printf '  (+%s more)\n' "$rest"
+  fi
+
+  if [ -n "$handoffs" ]; then
+    n=$(printf '%s\n' "$handoffs" | grep -c '' 2>/dev/null || echo 0)
+    printf 'Handoffs (%s unconsumed):\n' "$n"
+    shown=0
+    while IFS=$'\t' read -r id title; do
+      [ -n "$id" ] || continue
+      shown=$((shown + 1))
+      [ "$shown" -le "$MAX_HANDOFFS" ] || break
+      if [ -n "$title" ]; then
+        printf '  %s — %s\n' "$id" "$(clip "$title")"
+      else
+        printf '  %s\n' "$id"
+      fi
+    done <<<"$handoffs"
+    rest=$((n - MAX_HANDOFFS))
+    [ "$rest" -gt 0 ] && printf '  (+%s more)\n' "$rest"
+  fi
+
+  if [ -n "$drift" ]; then
+    printf '%s commits not linked to tickets — run /sync when convenient.\n' "$drift"
+  fi
+
+  return 0
+}
+
+main 2>/dev/null
+exit 0

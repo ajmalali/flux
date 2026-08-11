@@ -1,7 +1,7 @@
 ---
 id: FLX-02
 title: flux-prime — SessionStart state injection
-status: open
+status: done
 agent: build
 effort: medium
 blockers: [FLX-01]

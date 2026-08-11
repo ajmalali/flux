@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+#
+# flux-common — shared plumbing for the flux hook scripts. Sourced, not run.
+#
+# Everything here obeys the hook contract (ADR-0001, fail-open): read-only,
+# no network, no writes, and no path that can make a caller exit non-zero.
+# The ticket store is reached only through the store_* verbs (ADR-0002) so
+# callers never see beads' schema or the markdown fallback's shape.
+#
+# Env:
+#   FLUX_BD — beads binary to use (default: bd). Point it at a missing path to
+#             force the markdown fallback.
+
+BD_BIN="${FLUX_BD:-bd}"
+
+# ---------------------------------------------------------------- helpers ---
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# The working directory a hook was fired in: .cwd from the event JSON passed as
+# $1, falling back to $PWD when jq is missing or the JSON is unusable.
+hook_cwd() {
+  local json="$1" cwd=""
+  if have jq && [ -n "$json" ]; then
+    cwd=$(printf '%s' "$json" | jq -r '.cwd // empty' 2>/dev/null)
+  fi
+  [ -n "$cwd" ] && [ -d "$cwd" ] || cwd="$PWD"
+  printf '%s' "$cwd"
+}
+
+# Repository root containing $1, or $1 itself outside a repo.
+repo_root() {
+  local cwd="$1" root
+  root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)
+  [ -n "$root" ] && [ -d "$root" ] || root="$cwd"
+  printf '%s' "$root"
+}
+
+# ------------------------------------------------------- markdown fallback ---
+
+# Emit one TSV row per ticket file: id \t status \t agent \t blockers \t title.
+# Files are globbed in name order, so rows arrive lowest-numbered first.
+md_rows() {
+  local root="$1"
+  local -a files=()
+  shopt -s nullglob
+  files=("$root"/specs/*/tickets/*.md)
+  shopt -u nullglob
+  [ "${#files[@]}" -gt 0 ] || return 0
+
+  awk '
+    FNR == 1 { fm = 0; closed = 0; id = ""; st = ""; ag = ""; bl = ""; ti = "" }
+    FNR == 1 && /^---[[:space:]]*$/ { fm = 1; next }
+    closed { next }
+    fm && /^---[[:space:]]*$/ {
+      closed = 1
+      if (id != "") printf "%s\t%s\t%s\t%s\t%s\n", id, st, ag, bl, ti
+      next
+    }
+    fm {
+      k = $0; sub(/:.*$/, "", k); gsub(/[[:space:]]/, "", k)
+      v = $0; sub(/^[^:]*:[[:space:]]*/, "", v); sub(/[[:space:]]+$/, "", v)
+      if (k == "id") id = v
+      else if (k == "status") st = v
+      else if (k == "agent") ag = v
+      else if (k == "blockers") bl = v
+      else if (k == "title") ti = v
+    }
+  ' "${files[@]}" 2>/dev/null
+}
+
+md_claimed() {
+  md_rows "$1" | awk -F'\t' '$2 == "claimed" || $2 == "in_progress" { print $1 "\t" $5 }'
+}
+
+# Open tickets whose blockers are all done. Buffers rows so blockers can be
+# resolved against tickets declared later in the file order.
+md_ready() {
+  md_rows "$1" | awk -F'\t' '
+    { row[NR] = $0; status[$1] = $2 }
+    END {
+      for (i = 1; i <= NR; i++) {
+        n = split(row[i], f, "\t")
+        if (n < 5 || f[2] != "open") continue
+        bl = f[4]; gsub(/[][[:space:]]/, "", bl)
+        ok = 1
+        if (bl != "") {
+          m = split(bl, dep, ",")
+          for (j = 1; j <= m; j++)
+            if (dep[j] != "" && status[dep[j]] != "done") ok = 0
+        }
+        if (ok) print f[1] "\t" f[3] "\t" f[5]
+      }
+    }
+  '
+}
+
+# ------------------------------------------------------------ store verbs ---
+# The only beads reads the hooks perform. Both are read-only and must never
+# trigger a sync. Output shape is fixed here so callers never see bd's schema.
+
+# id \t title
+store_claimed() {
+  local root="$1" wt="$2" out=""
+  if have "$BD_BIN" && have jq; then
+    out=$("$BD_BIN" list --status in_progress --json 2>/dev/null |
+      jq -r --arg wt "$wt" '
+        (if type == "array" then . elif type == "object" then (.issues // .ready // []) else [] end)
+        | map(select((.assignee // "") == "" or (.assignee // "") == $wt))
+        | .[] | [.id, (.title // "")] | @tsv
+      ' 2>/dev/null)
+    [ -n "$out" ] && { printf '%s\n' "$out"; return 0; }
+  fi
+  md_claimed "$root"
+}
+
+# id \t tier \t title
+store_ready() {
+  local root="$1" out=""
+  if have "$BD_BIN" && have jq; then
+    out=$("$BD_BIN" ready --json 2>/dev/null |
+      jq -r '
+        (if type == "array" then . elif type == "object" then (.ready // .issues // []) else [] end)
+        | .[]
+        | [ .id,
+            (((.labels // []) | map(select(. == "chore" or . == "build" or . == "deep")))[0] // ""),
+            (.title // "") ]
+        | @tsv
+      ' 2>/dev/null)
+    [ -n "$out" ] && { printf '%s\n' "$out"; return 0; }
+  fi
+  md_ready "$root"
+}

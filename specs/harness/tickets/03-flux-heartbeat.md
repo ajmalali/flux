@@ -1,7 +1,7 @@
 ---
 id: FLX-03
 title: flux-heartbeat — Stop-hook state stamp
-status: open
+status: done
 agent: build
 effort: medium
 blockers: [FLX-01]

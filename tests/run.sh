@@ -11,12 +11,16 @@
 #   setup.sh      builds the fixture repo in $PWD (the case work dir)
 #   stdin.json    hook input; the token __CWD__ is replaced with the work dir
 #   expected.txt  exact expected stdout (absent means "expect empty stdout")
+#   check.sh      optional; assertions about side effects, run in the work dir
+#                 after the hook, with tests/lib.sh available at $TESTS_ROOT
 #   bin/          optional; prepended to PATH so a case can stub a binary
-# A case passes when stdout matches, stderr is empty, and the exit code is 0.
+# A case passes when stdout matches, stderr is empty, the exit code is 0, and
+# check.sh (if present) exits 0.
 
 set -u
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+TESTS_ROOT="$ROOT/tests"
 PASS=0
 FAIL=0
 TMPROOT=$(mktemp -d "${TMPDIR:-/tmp}/flux-tests.XXXXXX")
@@ -28,6 +32,15 @@ skip() { printf '  skip %s (%s)\n' "$1" "$2"; }
 
 # ------------------------------------------------------------ hook suites ---
 
+# Side-effect assertions for one case. No check.sh means nothing to assert.
+run_case_check() {
+  local case="$1" work="$2" path="$3" script="$4" in="$5" log="$6"
+  : >"$log"
+  [ -f "$case/check.sh" ] || return 0
+  (cd "$work" && PATH="$path" FLUX_BD="${case}bin/bd" TESTS_ROOT="$TESTS_ROOT" \
+    HOOK_SCRIPT="$script" HOOK_STDIN="$in" bash "$case/check.sh") >"$log" 2>&1
+}
+
 run_hook_suite() {
   local suite="$1" script="$2"
   local fixtures="$ROOT/tests/fixtures/$suite"
@@ -38,7 +51,7 @@ run_hook_suite() {
     return
   fi
 
-  local tmp case name work out err code expected path
+  local tmp case name work in out err code expected path
   tmp="$TMPROOT/$suite"
   mkdir -p "$tmp" || { bad "$suite: mkdir $tmp"; return; }
 
@@ -58,15 +71,17 @@ run_hook_suite() {
     path="$PATH"
     [ -d "$case/bin" ] && path="$case/bin:$PATH"
 
+    in="$tmp/$name.in"
     out="$tmp/$name.out"
     err="$tmp/$name.err"
+    if [ -f "$case/stdin.json" ]; then
+      sed "s|__CWD__|$work|g" "$case/stdin.json" >"$in"
+    else
+      : >"$in"
+    fi
     # FLUX_BD points at a path that cannot exist so the beads branch is only
     # taken by cases that stub `bd` in their own bin/ directory.
-    if [ -f "$case/stdin.json" ]; then
-      sed "s|__CWD__|$work|g" "$case/stdin.json"
-    else
-      printf ''
-    fi | (cd "$work" && PATH="$path" FLUX_BD="${case}bin/bd" "$script") >"$out" 2>"$err"
+    (cd "$work" && PATH="$path" FLUX_BD="${case}bin/bd" "$script" <"$in") >"$out" 2>"$err"
     code=$?
 
     expected="$case/expected.txt"
@@ -83,6 +98,9 @@ run_hook_suite() {
     elif ! diff -u "$expected" "$out" >"$tmp/$name.diff" 2>&1; then
       bad "$suite/$name: stdout mismatch"
       sed 's/^/       /' "$tmp/$name.diff"
+    elif ! run_case_check "$case" "$work" "$path" "$script" "$in" "$tmp/$name.check"; then
+      bad "$suite/$name: check.sh failed"
+      sed 's/^/       /' "$tmp/$name.check"
     else
       ok "$suite/$name"
     fi
@@ -90,6 +108,7 @@ run_hook_suite() {
 }
 
 suite_prime() { run_hook_suite prime "$ROOT/bin/flux-prime"; }
+suite_heartbeat() { run_hook_suite heartbeat "$ROOT/bin/flux-heartbeat"; }
 
 # ---------------------------------------------------------------- lint -----
 
@@ -100,7 +119,7 @@ suite_shellcheck() {
     return
   fi
   local f
-  for f in "$ROOT"/bin/* "$ROOT"/tests/run.sh; do
+  for f in "$ROOT"/bin/* "$ROOT"/tests/run.sh "$ROOT"/tests/lib.sh; do
     [ -f "$f" ] || continue
     case "$f" in *.gitkeep | *.md) continue ;; esac
     if shellcheck -s bash "$f" >"$f.shellcheck.log" 2>&1; then
@@ -116,11 +135,12 @@ suite_shellcheck() {
 # ---------------------------------------------------------------- driver ---
 
 SUITES=("$@")
-[ "${#SUITES[@]}" -gt 0 ] || SUITES=(prime shellcheck)
+[ "${#SUITES[@]}" -gt 0 ] || SUITES=(prime heartbeat shellcheck)
 
 for s in "${SUITES[@]}"; do
   case "$s" in
     prime) suite_prime ;;
+    heartbeat) suite_heartbeat ;;
     shellcheck) suite_shellcheck ;;
     *) bad "unknown suite: $s" ;;
   esac

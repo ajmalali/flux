@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# shellcheck source=/dev/null
+. "$TESTS_ROOT/lib.sh"
+f=.flux/session.json
+assert_json "$f"
+assert_key "$f" dirty_files 2
+finish

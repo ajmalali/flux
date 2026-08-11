@@ -1,0 +1,4 @@
+flux · stamps-claim
+Claimed: FLX-03 flux-heartbeat — Stop hook session stamp
+Frontier (1 ready):
+  FLX-04 [chore] flux-statusline — worktree-aware status line

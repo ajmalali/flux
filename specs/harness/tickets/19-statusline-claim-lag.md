@@ -1,7 +1,7 @@
 ---
 id: FLX-19
 title: Statusline is a turn behind a claim made outside a session
-status: open
+status: done
 agent: build
 effort: low
 blockers: [FLX-02, FLX-04]

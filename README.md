@@ -35,7 +35,10 @@ change to the script.
 
 The frontier head is resolved by the heartbeat, not here: the statusline runs on
 every event with a 100ms budget, so it reads `next_ticket` out of
-`.flux/session.json` and never touches the ticket store. The branch is read out
+`.flux/session.json` and never touches the ticket store. Prime stamps the same
+two fields at session start (ADR-0005) — otherwise a ticket claimed between
+sessions would show up in the primed block but not down here until the first
+turn ended. The branch is read out
 of `.git/HEAD` rather than by running `git`, for the same reason; a detached HEAD
 shows a short sha, and outside a checkout the segment falls back to the worktree
 or directory name. The token count appears only once there is one — before the

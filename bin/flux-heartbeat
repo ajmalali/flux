@@ -8,7 +8,8 @@
 # model to keep going, which a heartbeat must never do.
 #
 # Writes ONLY .flux/session.json (machine state, gitignored). Never touches
-# tickets or durable docs. The write is atomic: temp file in .flux/, then mv.
+# tickets or durable docs. The write itself is session_stamp in flux-common,
+# shared with prime (ADR-0005): atomic, and merging rather than clobbering, so
 # `last_synced_commit` is carried over untouched — only /sync advances it.
 #
 # stdin:  Stop hook JSON — {session_id, transcript_path, cwd, hook_event_name, ...}
@@ -18,39 +19,6 @@ set -u
 
 # shellcheck source=/dev/null
 . "$(dirname "${BASH_SOURCE[0]}")/flux-common" 2>/dev/null || exit 0
-
-TMPFILE=""
-trap '[ -n "$TMPFILE" ] && rm -f "$TMPFILE"' EXIT
-
-# ---------------------------------------------------------------- helpers ---
-
-# A bare string as a JSON string. Git refnames and ticket ids cannot contain
-# control characters, so escaping backslash and quote is enough.
-json_str() {
-  local s="$1"
-  s=${s//\\/\\\\}
-  s=${s//\"/\\\"}
-  printf '"%s"' "$s"
-}
-
-# Same, but an empty value becomes JSON null rather than "".
-json_or_null() {
-  if [ -z "$1" ]; then printf 'null'; else json_str "$1"; fi
-}
-
-# Top-level string field of a previous session.json. jq when available; a sed
-# read of our own fixed layout otherwise, so a missing jq is not a data loss.
-prev_field() {
-  local file="$1" key="$2" val=""
-  [ -f "$file" ] || return 0
-  if have jq; then
-    val=$(jq -r --arg k "$key" '.[$k] // empty' "$file" 2>/dev/null)
-  fi
-  if [ -z "$val" ]; then
-    val=$(sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$file" 2>/dev/null | head -1)
-  fi
-  printf '%s' "$val"
-}
 
 # ------------------------------------------------------------------- main ---
 
@@ -70,34 +38,28 @@ main() {
   dirty=$(git -C "$root" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
   [ -n "$dirty" ] || dirty=0
 
-  claimed=$(store_claimed "$root" "$(basename "$root")" 2>/dev/null | head -1 | cut -f1)
+  claimed=$(first_id "$(store_claimed "$root" "$(basename "$root")" 2>/dev/null)")
 
   # The frontier's head — what the statusline names when nothing is claimed.
   # Resolved here rather than there on purpose: this is the only hook with the
   # budget for a store verb, and the statusline must stay free of them.
-  next=$(store_ready "$root" 2>/dev/null | head -1 | cut -f1)
+  next=$(first_id "$(store_ready "$root" 2>/dev/null)")
 
   # Preserved across turns; seeded from HEAD the first time we see this repo.
-  synced=$(prev_field "$file" last_synced_commit)
+  # Named explicitly rather than left to the merge because of that seeding.
+  synced=$(session_field "$file" last_synced_commit)
   [ -n "$synced" ] || synced=$(git -C "$root" rev-parse HEAD 2>/dev/null)
 
   now=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
 
-  mkdir -p "$root/.flux" 2>/dev/null || return 0
-  TMPFILE=$(mktemp "$root/.flux/session.json.XXXXXX" 2>/dev/null) || { TMPFILE=""; return 0; }
-  {
-    printf '{\n'
-    printf '  "last_turn_at": %s,\n' "$(json_or_null "$now")"
-    printf '  "branch": %s,\n' "$(json_or_null "$branch")"
-    printf '  "head_sha": %s,\n' "$(json_or_null "$head_sha")"
-    printf '  "dirty_files": %s,\n' "$dirty"
-    printf '  "claimed_ticket": %s,\n' "$(json_or_null "$claimed")"
-    printf '  "next_ticket": %s,\n' "$(json_or_null "$next")"
-    printf '  "last_synced_commit": %s\n' "$(json_or_null "$synced")"
-    printf '}\n'
-  } >"$TMPFILE" 2>/dev/null || return 0
-
-  mv -f "$TMPFILE" "$file" 2>/dev/null && TMPFILE=""
+  session_stamp "$root" \
+    last_turn_at "$now" \
+    branch "$branch" \
+    head_sha "$head_sha" \
+    dirty_files "$dirty" \
+    claimed_ticket "$claimed" \
+    next_ticket "$next" \
+    last_synced_commit "$synced"
   return 0
 }
 

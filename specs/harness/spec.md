@@ -32,7 +32,7 @@ A Claude Code plugin ("flux") providing: a beads-backed ticket store wrapped beh
 - **Ticket format**: frontmatter `id/title/status/agent/effort/blockers/checkpoint`; body sections Context, Tasks (each task = Files / Action / Verify / Done), Test plan, Boundaries. Routing by complexity score: ≤3 → chore, 4–7 → build, ≥8 → deep.
 - **Skills**: authored per mattpocock-skills `writing-for-agents` (read it first — installed locally). User-invoked skills set `disable-model-invocation: true`. Skills invoke installed mattpocock-skills (grilling, domain-modeling, tdd) by reference, never duplicate them.
 - **Session split**: ADR-0003 — /tickets refuses a polluted window.
-- **State files**: `.flux/session.json` (heartbeat), `.flux/handoffs/*.md` (residue only). `.flux/` is gitignored. Durable knowledge only in CONTEXT.md, docs/adr/, specs/, CLAUDE.md.
+- **State files**: `.flux/session.json` (heartbeat every turn, prime at session start — ADR-0005; both through `session_stamp`, which merges), `.flux/handoffs/*.md` (residue only). `.flux/` is gitignored. Durable knowledge only in CONTEXT.md, docs/adr/, specs/, CLAUDE.md.
 
 ## Testing decisions
 

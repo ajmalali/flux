@@ -2,9 +2,14 @@
 #
 # flux-prime — SessionStart hook: inject the "where am I" block into a session.
 #
-# Contract (ADR-0001, fail-open): read-only, no network, no writes, under 500ms,
-# and always exit 0 — a broken prime degrades to plain Claude Code, never blocks it.
-# The ticket store is reached only through the store_* verbs (ADR-0002).
+# Contract (ADR-0001, fail-open): no network, under 500ms, and always exit 0 — a
+# broken prime degrades to plain Claude Code, never blocks it. The ticket store
+# is reached only through the store_* verbs (ADR-0002).
+#
+# Read-only except for one stamp: the claim and frontier head it just resolved
+# go into .flux/session.json before it prints (ADR-0005), because the statusline
+# renders from that file and the heartbeat has not run yet in a new session.
+# Non-fatal — a failed stamp still leaves the block printed and the exit 0.
 #
 # stdin:  SessionStart hook JSON — {session_id, transcript_path, cwd, hook_event_name, source}
 # stdout: plain text, injected verbatim as context. Empty when nothing is known.
@@ -88,6 +93,16 @@ main() {
   ready=$(store_ready "$root" 2>/dev/null)
   handoffs=$(collect_handoffs "$root" 2>/dev/null)
   drift=$(collect_drift "$root" 2>/dev/null)
+
+  # Stamped after the collectors, before the print: drift reads the baseline out
+  # of the same file, and only /sync may move that. Skipped entirely in a repo
+  # flux knows nothing about — starting a session there is no reason to create a
+  # .flux/ in it.
+  if [ -n "$claimed$ready$handoffs$drift" ] || [ -d "$root/.flux" ]; then
+    session_stamp "$root" \
+      claimed_ticket "$(first_id "$claimed")" \
+      next_ticket "$(first_id "$ready")"
+  fi
 
   [ -n "$claimed$ready$handoffs$drift" ] || return 0
 

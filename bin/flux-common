@@ -2,10 +2,10 @@
 #
 # flux-common — shared plumbing for the flux hook scripts. Sourced, not run.
 #
-# Everything here obeys the hook contract (ADR-0001, fail-open): read-only,
-# no network, no writes, and no path that can make a caller exit non-zero.
-# The ticket store is reached only through the store_* verbs (ADR-0002) so
-# callers never see beads' schema or the markdown fallback's shape.
+# Everything here obeys the hook contract (ADR-0001, fail-open): no network, no
+# writes outside .flux/session.json, and no path that can make a caller exit
+# non-zero. The ticket store is reached only through the store_* verbs (ADR-0002)
+# so callers never see beads' schema or the markdown fallback's shape.
 #
 # Env:
 #   FLUX_BD — beads binary to use (default: bd). Point it at a missing path to
@@ -57,6 +57,136 @@ repo_root() {
   root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)
   [ -n "$root" ] && [ -d "$root" ] || root="$cwd"
   printf '%s' "$root"
+}
+
+# The id field of the first of a store verb's TSV rows; empty when there are
+# none. Parameter expansion only — `head -1 | cut -f1` is two forks for a job
+# the shell already has the string for.
+first_id() {
+  local row="${1%%$'\n'*}"
+  printf '%s' "${row%%$'\t'*}"
+}
+
+# --------------------------------------------------------- session state ---
+# .flux/session.json is the one file the hooks write: machine state, gitignored,
+# and the only thing the statusline reads. Two hooks stamp it — the heartbeat at
+# the end of every turn, prime at the start of a session (ADR-0005) — so the
+# write lives here once rather than in both.
+
+# A bare string as a JSON string. Ticket ids, refnames and timestamps cannot
+# hold control characters, so backslash and quote are the whole escape table.
+json_str() {
+  local s="$1"
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  printf '"%s"' "$s"
+}
+
+# Same, but an empty value becomes JSON null rather than "".
+json_or_null() {
+  if [ -z "$1" ]; then printf 'null'; else json_str "$1"; fi
+}
+
+# The fields we own, in the order they are written. `dirty_files` is the only
+# number; everything else is a string or null.
+SESSION_KEYS=(last_turn_at branch head_sha dirty_files claimed_ticket next_ticket last_synced_commit)
+
+# session_field <file> <key> — top-level string value, "" when the file, the key
+# or the value is absent. jq when we have it, a sed read of our own fixed layout
+# otherwise, so a missing jq costs a field its freshness, never its value.
+session_field() {
+  local file="$1" key="$2" val=""
+  [ -f "$file" ] || return 0
+  if have jq; then
+    val=$(jq -r --arg k "$key" '.[$k] // empty' "$file" 2>/dev/null)
+  fi
+  if [ -z "$val" ]; then
+    val=$(sed -n "s/.*\"$key\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$file" 2>/dev/null | head -1)
+  fi
+  printf '%s' "$val"
+}
+
+FLUX_TMPFILE=""
+session_cleanup() {
+  [ -n "$FLUX_TMPFILE" ] && rm -f "$FLUX_TMPFILE" 2>/dev/null
+  return 0
+}
+
+# session_stamp <root> <key> <value>… — merge fields into .flux/session.json.
+#
+# Keys must come from SESSION_KEYS. A field the caller does not name keeps the
+# value already on disk — `last_synced_commit` above all, which only /sync
+# advances. A field the caller does name with an empty value is written as null:
+# that is how a caller says "nothing is claimed" rather than "leave the claim
+# alone".
+#
+# With jq, fields outside SESSION_KEYS survive the merge too, so a skill's own
+# `status` (README) outlives the next heartbeat. The exception is a `status` left
+# over from a different claim: once claimed_ticket changes, a stale status would
+# relabel the wrong ticket, so it is dropped with the claim it described.
+#
+# Non-fatal by contract (ADR-0001): an unwritable .flux/, a full disk, a corrupt
+# session.json — every one of them returns quietly and leaves the caller free to
+# print its own output and exit 0. The write is atomic: temp file in .flux/, mv.
+session_stamp() {
+  local root="$1"
+  shift
+  local file="$root/.flux/session.json"
+  local -a keys=() vals=()
+  while [ "$#" -ge 2 ]; do
+    keys+=("$1")
+    vals+=("$2")
+    shift 2
+  done
+  [ "${#keys[@]}" -gt 0 ] || return 0
+
+  local k v i named body="" sep="" prev_claim new_claim="" keep=false
+  prev_claim=$(session_field "$file" claimed_ticket)
+
+  for k in "${SESSION_KEYS[@]}"; do
+    v=""
+    named=0
+    for i in "${!keys[@]}"; do
+      if [ "${keys[$i]}" = "$k" ]; then
+        named=1
+        v="${vals[$i]}"
+      fi
+    done
+    [ "$named" -eq 1 ] || v=$(session_field "$file" "$k")
+    if [ "$k" = dirty_files ]; then
+      case "$v" in '' | *[!0-9]*) v=0 ;; esac
+      body="$body$sep  \"$k\": $v"
+    else
+      [ "$k" = claimed_ticket ] && new_claim="$v"
+      body="$body$sep  \"$k\": $(json_or_null "$v")"
+    fi
+    sep=$',\n'
+  done
+  body=$'{\n'"$body"$'\n}'
+
+  local merged=""
+  if have jq && [ -s "$file" ]; then
+    [ "$prev_claim" = "$new_claim" ] && keep=true
+    merged=$(jq -n --slurpfile old "$file" --argjson new "$body" --argjson keep "$keep" '
+      (($old[0] // {}) + $new) | if $keep then . else del(.status) end
+    ' 2>/dev/null)
+  fi
+  [ -n "$merged" ] || merged="$body"
+
+  mkdir -p "$root/.flux" 2>/dev/null || return 0
+  trap session_cleanup EXIT
+  FLUX_TMPFILE=$(mktemp "$root/.flux/session.json.XXXXXX" 2>/dev/null) || {
+    FLUX_TMPFILE=""
+    return 0
+  }
+  if printf '%s\n' "$merged" >"$FLUX_TMPFILE" 2>/dev/null &&
+    mv -f "$FLUX_TMPFILE" "$file" 2>/dev/null; then
+    FLUX_TMPFILE=""
+  else
+    session_cleanup
+    FLUX_TMPFILE=""
+  fi
+  return 0
 }
 
 # ------------------------------------------------------- markdown fallback ---

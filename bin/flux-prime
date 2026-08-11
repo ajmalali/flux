@@ -93,9 +93,10 @@ main() {
 
   printf 'flux · %s\n' "$worktree"
 
-  local id tier title rest n shown
+  local row id tier title rest n shown
   if [ -n "$claimed" ]; then
-    while IFS=$'\t' read -r id title; do
+    while IFS= read -r row; do
+      split_row "$row" id title
       [ -n "$id" ] || continue
       printf 'Claimed: %s %s\n' "$id" "$(clip "$title")"
     done <<<"$claimed"
@@ -105,7 +106,8 @@ main() {
     n=$(printf '%s\n' "$ready" | grep -c '' 2>/dev/null || echo 0)
     printf 'Frontier (%s ready):\n' "$n"
     shown=0
-    while IFS=$'\t' read -r id tier title; do
+    while IFS= read -r row; do
+      split_row "$row" id tier title
       [ -n "$id" ] || continue
       shown=$((shown + 1))
       [ "$shown" -le "$MAX_FRONTIER" ] || break
@@ -123,7 +125,8 @@ main() {
     n=$(printf '%s\n' "$handoffs" | grep -c '' 2>/dev/null || echo 0)
     printf 'Handoffs (%s unconsumed):\n' "$n"
     shown=0
-    while IFS=$'\t' read -r id title; do
+    while IFS= read -r row; do
+      split_row "$row" id title
       [ -n "$id" ] || continue
       shown=$((shown + 1))
       [ "$shown" -le "$MAX_HANDOFFS" ] || break

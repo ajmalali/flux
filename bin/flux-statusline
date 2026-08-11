@@ -4,6 +4,7 @@
 #
 #   FLX-04-claimed · main · ctx 41% · 83.6k
 #   FLX-19-done · main · ctx 41% · 83.6k
+#   FLX-19-done · main · ⚠ 2 drift · ctx 41% · 83.6k
 #   no tickets · main · ctx 41% · 83.6k
 #
 # Contract (ADR-0001, fail-open): read-only, no network, always exit 0, and
@@ -110,29 +111,33 @@ find_root() {
   done
 }
 
-# claimed_ticket \t status \t last_done_ticket from a session.json. `status` is
-# optional: the hooks do not write it today, but a verb that wants to show
-# something other than "claimed" can, and this picks it up without a change
-# here. `last_done_ticket` is what the hooks resolved from the store — reading
-# it is what lets this script name a ticket without touching the store itself.
+# claimed_ticket \t status \t last_done_ticket \t drift_commits from a
+# session.json. `status` is optional: the hooks do not write it today, but a
+# verb that wants to show something other than "claimed" can, and this picks it
+# up without a change here. The other three are what the hooks resolved from the
+# store and from git — reading them is what lets this script report a ticket and
+# a drift count while running neither a store verb nor a `git` fork.
 read_session() {
-  local file="$1" id="" st="" dn=""
+  local file="$1" id="" st="" dn="" dr=""
   [ -f "$file" ] || return 0
   if have jq; then
-    jq -r '[(.claimed_ticket // ""), (.status // ""), (.last_done_ticket // "")] | @tsv' \
-      "$file" 2>/dev/null
+    jq -r '[(.claimed_ticket // ""), (.status // ""), (.last_done_ticket // ""),
+            ((.drift_commits // 0) | tostring)] | @tsv' "$file" 2>/dev/null
     return 0
   fi
   id=$(sed_field "$file" claimed_ticket)
   st=$(sed_field "$file" status)
   dn=$(sed_field "$file" last_done_ticket)
-  printf '%s\t%s\t%s\n' "$id" "$st" "$dn"
+  dr=$(sed_field "$file" drift_commits)
+  printf '%s\t%s\t%s\t%s\n' "$id" "$st" "$dn" "$dr"
 }
 
-# Top-level string field of our own fixed session.json layout, for the no-jq
-# case. Never sees a hand-written file, so a real parser would be overkill.
+# Top-level field of our own fixed session.json layout, for the no-jq case.
+# Quoted or bare — the numeric fields are written without quotes. Never sees a
+# hand-written file, so a real parser would be overkill.
 sed_field() {
-  sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$1" 2>/dev/null | head -1
+  sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\{0,1\}\([^\",}]*\)\"\{0,1\}.*/\1/p" \
+    "$1" 2>/dev/null | head -1
 }
 
 # ------------------------------------------------------------------- main ---
@@ -162,8 +167,9 @@ main() {
   [ -n "$name" ] || name="${root##*/}"
   [ -n "$name" ] || name='?'
 
-  local ticket="" status="" last_done=""
-  split_row "$(read_session "$root/.flux/session.json")" ticket status last_done
+  local ticket="" status="" last_done="" drift=""
+  split_row "$(read_session "$root/.flux/session.json")" ticket status last_done drift
+  case "$drift" in '' | *[!0-9]*) drift=0 ;; esac
 
   # One segment carries both the ticket and what is happening to it, so there is
   # no second word repeating it. Claimed wins; idle names the last ticket
@@ -179,13 +185,18 @@ main() {
     label="$NO_TICKET"
   fi
 
+  # Only when there is drift. A warning that is always on the line is a warning
+  # nobody reads, and the clean case is the overwhelmingly common one (FLX-21).
+  local warn=""
+  [ "$drift" -gt 0 ] && warn=" · ⚠ $drift drift"
+
   # No token segment before the first API response: "ctx 0% · 0" is noise.
   if [ "$tokens" -gt 0 ]; then
     local human=""
     fmt_tokens human "$tokens"
-    printf '%s · %s · ctx %s%% · %s\n' "$label" "$name" "$pct" "$human"
+    printf '%s · %s%s · ctx %s%% · %s\n' "$label" "$name" "$warn" "$pct" "$human"
   else
-    printf '%s · %s · ctx %s%%\n' "$label" "$name" "$pct"
+    printf '%s · %s%s · ctx %s%%\n' "$label" "$name" "$warn" "$pct"
   fi
   return 0
 }

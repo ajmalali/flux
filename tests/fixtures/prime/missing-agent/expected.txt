@@ -2,3 +2,4 @@ flux · missing-agent
 Frontier (2 ready):
   FLX-01 Ticket with no agent field
   FLX-02 [build] Ticket with an agent
+The user cannot see this block — lead your first reply with one line of it: claim, drift, handoffs.

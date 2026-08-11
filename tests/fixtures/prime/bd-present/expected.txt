@@ -2,3 +2,4 @@ flux · bd-present
 Claimed: bd-3 Prime injects session state
 Frontier (1 ready):
   bd-7 [chore] Wire the statusline
+The user cannot see this block — lead your first reply with one line of it: claim, drift, handoffs.

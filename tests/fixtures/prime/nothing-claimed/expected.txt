@@ -1,3 +1,4 @@
 flux · nothing-claimed
 Frontier (1 ready):
   FLX-02 [build] flux-prime — SessionStart state injection
+The user cannot see this block — lead your first reply with one line of it: claim, drift, handoffs.

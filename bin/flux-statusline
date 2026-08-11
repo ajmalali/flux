@@ -4,7 +4,7 @@
 #
 #   FLX-04-claimed · main · ctx 41% · 83.6k
 #   FLX-19-done · main · ctx 41% · 83.6k
-#   FLX-19-done · main · ⚠ 2 drift · ctx 41% · 83.6k
+#   FLX-19-done · main · ⚠ 2 drifts · ctx 41% · 83.6k
 #   no tickets · main · ctx 41% · 83.6k
 #
 # Contract (ADR-0001, fail-open): read-only, no network, always exit 0, and
@@ -188,7 +188,11 @@ main() {
   # Only when there is drift. A warning that is always on the line is a warning
   # nobody reads, and the clean case is the overwhelmingly common one (FLX-21).
   local warn=""
-  [ "$drift" -gt 0 ] && warn=" · ⚠ $drift drift"
+  if [ "$drift" -eq 1 ]; then
+    warn=" · ⚠ 1 drift"
+  elif [ "$drift" -gt 1 ]; then
+    warn=" · ⚠ $drift drifts"
+  fi
 
   # No token segment before the first API response: "ctx 0% · 0" is noise.
   if [ "$tokens" -gt 0 ]; then

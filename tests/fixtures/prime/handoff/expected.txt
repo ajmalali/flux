@@ -2,3 +2,4 @@ flux · handoff
 Claimed: FLX-09 /plan — grilling interview to approved spec
 Handoffs (1 unconsumed):
   2026-08-09-routing.md — Routing tiers — deep vs build
+The user cannot see this block — lead your first reply with one line of it: claim, drift, handoffs.

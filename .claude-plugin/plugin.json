@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "flux",
+  "displayName": "Flux",
+  "version": "0.1.0",
+  "description": "A stateful Claude Code harness: ticket store behind flux verbs, deterministic session prime/heartbeat/statusline, planning and build skills, routed subagents.",
+  "author": {
+    "name": "Ajmal Ali",
+    "email": "ajmalsyedali@gmail.com",
+    "url": "https://github.com/ajmalali"
+  },
+  "license": "MIT",
+  "keywords": [
+    "workflow",
+    "tickets",
+    "planning",
+    "hooks",
+    "statusline"
+  ],
+  "skills": "./skills/",
+  "outputStyles": "./output-styles/"
+}

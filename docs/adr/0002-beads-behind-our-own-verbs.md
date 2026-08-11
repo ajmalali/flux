@@ -1,0 +1,3 @@
+# 0002 — Beads is the ticket store, always wrapped behind our own verbs
+
+Tickets live in beads (`bd`), but no skill or hook shells out to `bd` except through four verbs: create, ready, claim, close (plus notes). Rationale: beads is freshly 1.0 with a history of breaking migrations (the Dolt transition); wrapping it means the store is swappable for a markdown/JSONL fallback without touching any skill. Rejected: Task Master (weaker worktree story), a custom store first (beads' frontier/claim/redirect mechanics are validated — don't rebuild what we can rent). Every script must also degrade gracefully when `bd` is absent.

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "flux",
+  "description": "Self-hosted marketplace for the flux harness plugin.",
+  "owner": {
+    "name": "Ajmal Ali",
+    "email": "ajmalsyedali@gmail.com",
+    "url": "https://github.com/ajmalali"
+  },
+  "plugins": [
+    {
+      "name": "flux",
+      "source": "./",
+      "description": "A stateful Claude Code harness: ticket store behind flux verbs, deterministic session prime/heartbeat/statusline, planning and build skills, routed subagents.",
+      "category": "workflow",
+      "tags": ["workflow", "tickets", "planning"]
+    }
+  ]
+}

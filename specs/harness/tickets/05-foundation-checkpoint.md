@@ -4,7 +4,7 @@ title: "Checkpoint: foundation works end-to-end on this machine"
 status: open
 agent: build
 effort: low
-blockers: [FLX-02, FLX-03, FLX-04]
+blockers: [FLX-02, FLX-03, FLX-04, FLX-18, FLX-19]
 checkpoint: human-verify
 ---
 Spec: specs/harness/spec.md (AC-1..5, AC-13 partial).
@@ -15,10 +15,10 @@ Human-verify checkpoint (the PAUL format: what was built / how to verify / resum
 ## Tasks
 1. Files: (none — installation state)
    Action: install the plugin from the local marketplace (`/plugin marketplace add /Users/ajmalali/Dev/flux` → `/plugin install flux@flux`), add the statusLine setting from README, then print the verification script for the human:
-   - open a NEW terminal in the flux repo → primed context block appears; statusline shows `— · flux · idle · ctx N%`
+   - open a NEW terminal in the flux repo → primed context block appears; statusline shows `FLX-NN-unclaimed · main · ctx N% · 83.6k` (the format FLX-17 settled on — see README, not the older `— · flux · idle` line)
    - claim a ticket (set `status: claimed` in any ticket file) → new session: prime + statusline both show it
    - `/clear` → prime re-fires
-   - make a commit with no ticket id in the message → next session shows the drift line
+   - COMMIT OR STASH FIRST, then: `git commit --allow-empty -m "wip: no ticket id here"` → next session shows the drift line → drop it with `git reset --hard HEAD~1`. The reset discards every uncommitted change to a tracked file, so a dirty tree loses work here — it already cost this repo two tickets' worth. Only /sync (FLX-14) advances `last_synced_commit`, which is why the probe commit has to go rather than stay.
    Verify: human runs the four checks
    Done: human replies confirming all four; any failure becomes a new ticket blocking this one (AC-1..5)
 

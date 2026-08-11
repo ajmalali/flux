@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+#
+# flux-statusline — statusLine command: one always-visible line of flux state.
+#
+#   FLX-04 · flux · claimed · ctx 41%
+#   — · flux · idle · ctx 41%
+#
+# Contract (ADR-0001, fail-open): read-only, no network, always exit 0, and
+# always exactly one line — a broken statusline must never blank the footer.
+#
+# Speed matters more here than in the hooks: the statusline re-renders on every
+# event, so the budget is 100ms, not 500ms. That rules out git and bd — no store
+# verbs, no drift, no frontier (prime's job). The only subprocesses are jq for
+# the stdin JSON and jq for .flux/session.json.
+#
+# stdin:  statusLine JSON — https://code.claude.com/docs/en/statusline
+#         .workspace.git_worktree (only inside a linked worktree),
+#         .workspace.current_dir, .workspace.project_dir, .cwd,
+#         .context_window.used_percentage (may be null early in a session).
+# stdout: <ticket> · <worktree-or-repo> · <status> · ctx <N>%
+
+set -u
+
+# shellcheck source=/dev/null
+. "$(dirname "${BASH_SOURCE[0]}")/flux-common" 2>/dev/null || exit 0
+
+NO_TICKET='—'
+MAX_WALK=40
+
+# ---------------------------------------------------------------- helpers ---
+
+# Fields we need from the statusLine JSON, as one tab-separated row:
+#   worktree \t current_dir \t project_dir \t context percent
+# Read with split_row, never `IFS=$'\t' read` — an absent worktree is the common
+# case here, and collapsing that empty field would shift every later field left.
+parse_stdin() {
+  printf '%s' "$1" | jq -r '
+    [ (.workspace.git_worktree // ""),
+      (.workspace.current_dir // .cwd // ""),
+      (.workspace.project_dir // ""),
+      ((.context_window.used_percentage // 0)
+        | if type == "number" then floor else 0 end)
+    ] | map(tostring) | @tsv
+  ' 2>/dev/null
+}
+
+# Nearest ancestor of $1 (inclusive) holding .flux/ or .git — the directory the
+# heartbeat writes session state into. Pure parameter expansion: walking up with
+# dirname would cost a fork per level. Empty when there is no such ancestor.
+find_root() {
+  local dir="$1" i=0
+  while [ -n "$dir" ] && [ "$i" -lt "$MAX_WALK" ]; do
+    if [ -d "$dir/.flux" ] || [ -e "$dir/.git" ]; then
+      printf '%s' "$dir"
+      return 0
+    fi
+    dir="${dir%/*}"
+    i=$((i + 1))
+  done
+}
+
+# claimed_ticket \t status from a session.json. `status` is optional: the
+# heartbeat does not write it today, but a verb that wants to show something
+# other than "claimed" can, and this picks it up without a change here.
+read_session() {
+  local file="$1" id="" st=""
+  [ -f "$file" ] || return 0
+  if have jq; then
+    jq -r '[(.claimed_ticket // ""), (.status // "")] | @tsv' "$file" 2>/dev/null
+    return 0
+  fi
+  id=$(sed_field "$file" claimed_ticket)
+  st=$(sed_field "$file" status)
+  printf '%s\t%s\n' "$id" "$st"
+}
+
+# Top-level string field of our own fixed session.json layout, for the no-jq
+# case. Never sees a hand-written file, so a real parser would be overkill.
+sed_field() {
+  sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$1" 2>/dev/null | head -1
+}
+
+# ------------------------------------------------------------------- main ---
+
+main() {
+  local stdin_json="" wt="" cur="" proj="" pct=""
+  stdin_json=$(cat 2>/dev/null)
+  if have jq; then
+    split_row "$(parse_stdin "$stdin_json")" wt cur proj pct
+  fi
+
+  # Everything below has to survive jq being absent or the JSON being garbage,
+  # so each value falls back to something the process already knows.
+  [ -n "$cur" ] || cur="$PWD"
+  case "$pct" in '' | *[!0-9]*) pct=0 ;; esac
+
+  local root name
+  root=$(find_root "$cur")
+  [ -n "$root" ] || root=$(find_root "$proj")
+  [ -n "$root" ] || root="${proj:-$cur}"
+
+  name="$wt"
+  [ -n "$name" ] || name="${root##*/}"
+  [ -n "$name" ] || name='?'
+
+  local ticket="" status=""
+  split_row "$(read_session "$root/.flux/session.json")" ticket status
+
+  if [ -z "$ticket" ] || [ "$ticket" = "null" ]; then
+    ticket="$NO_TICKET"
+    status="idle"
+  fi
+  [ -n "$status" ] || status="claimed"
+
+  printf '%s · %s · %s · ctx %s%%\n' "$ticket" "$name" "$status" "$pct"
+  return 0
+}
+
+main 2>/dev/null
+exit 0

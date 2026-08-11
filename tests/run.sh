@@ -109,6 +109,7 @@ run_hook_suite() {
 
 suite_prime() { run_hook_suite prime "$ROOT/bin/flux-prime"; }
 suite_heartbeat() { run_hook_suite heartbeat "$ROOT/bin/flux-heartbeat"; }
+suite_statusline() { run_hook_suite statusline "$ROOT/bin/flux-statusline"; }
 
 # ---------------------------------------------------------------- lint -----
 
@@ -135,12 +136,13 @@ suite_shellcheck() {
 # ---------------------------------------------------------------- driver ---
 
 SUITES=("$@")
-[ "${#SUITES[@]}" -gt 0 ] || SUITES=(prime heartbeat shellcheck)
+[ "${#SUITES[@]}" -gt 0 ] || SUITES=(prime heartbeat statusline shellcheck)
 
 for s in "${SUITES[@]}"; do
   case "$s" in
     prime) suite_prime ;;
     heartbeat) suite_heartbeat ;;
+    statusline) suite_statusline ;;
     shellcheck) suite_shellcheck ;;
     *) bad "unknown suite: $s" ;;
   esac

@@ -17,6 +17,29 @@ BD_BIN="${FLUX_BD:-bd}"
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# split_row <row> <var>… — assign the tab-separated fields of <row> to the named
+# variables, last variable taking the remainder.
+#
+# `IFS=$'\t' read -r a b c` cannot do this: tab is IFS whitespace, so a run of
+# tabs counts as one separator and an empty field silently shifts every later
+# field left — an untiered frontier row would print its title as its tier.
+# Parameter expansion only, so splitting a row costs no forks. Fields the row
+# does not have become empty.
+split_row() {
+  local row="$1"
+  shift
+  while [ "$#" -gt 1 ]; do
+    printf -v "$1" '%s' "${row%%$'\t'*}"
+    case "$row" in
+      *$'\t'*) row="${row#*$'\t'}" ;;
+      *) row="" ;;
+    esac
+    shift
+  done
+  [ "$#" -eq 1 ] && printf -v "$1" '%s' "$row"
+  return 0
+}
+
 # The working directory a hook was fired in: .cwd from the event JSON passed as
 # $1, falling back to $PWD when jq is missing or the JSON is unusable.
 hook_cwd() {

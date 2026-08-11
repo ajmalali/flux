@@ -1,7 +1,7 @@
 ---
 id: FLX-04
 title: flux-statusline — always-visible state line
-status: open
+status: done
 agent: build
 effort: medium
 blockers: [FLX-03]

@@ -2,3 +2,4 @@ flux · claimed
 Claimed: FLX-02 flux-prime — SessionStart state injection
 Frontier (1 ready):
   FLX-04 [chore] flux-statusline — worktree-aware status line
+The user cannot see this block — lead your first reply with one line of it: claim, drift, handoffs.

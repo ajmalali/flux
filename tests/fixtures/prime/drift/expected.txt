@@ -1,2 +1,3 @@
 flux · drift
 2 commits not linked to tickets — run /sync when convenient.
+The user cannot see this block — lead your first reply with one line of it: claim, drift, handoffs.

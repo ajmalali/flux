@@ -45,7 +45,7 @@ A Claude Code plugin ("flux") providing: a beads-backed ticket store wrapped beh
 - AC-1: New session shows primed state (ticket, frontier, handoffs, drift) with no user action.
 - AC-2: Prime re-fires after /clear and after compaction.
 - AC-3: Heartbeat writes .flux/session.json every turn, <500ms, never blocks.
-- AC-4: Statusline renders `<ticket>-<state> · <branch> · ctx N% · <tokens>` — the claimed ticket, else the last completed one (ADR-0006), else `no tickets`; plus a `⚠ N drift` segment when, and only when, there is drift (ADR-0007 — the primed block is invisible to the human, so anything needing human action goes here).
+- AC-4: Statusline renders `<ticket>-<state> · <branch> · ctx N% · <tokens>` — the claimed ticket, else the last completed one (ADR-0006), else `no tickets`; plus a `⚠ 1 drift` / `⚠ N drifts` segment when, and only when, there is drift (ADR-0007 — the primed block is invisible to the human, so anything needing human action goes here, and prime asks the model to relay the rest).
 - AC-5: All hook scripts exit 0 on malformed input, missing bd, missing .flux.
 - AC-6: /plan ends with approved spec ≤50% context, or pauses (draft + handoff).
 - AC-7: /tickets refuses a polluted window; every ticket carries routing, F/A/V/D tasks, test plan, boundaries, blockers.

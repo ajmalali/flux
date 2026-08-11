@@ -143,9 +143,19 @@ main() {
     [ "$rest" -gt 0 ] && printf '  (+%s more)\n' "$rest"
   fi
 
-  if [ "$drift" -gt 0 ]; then
+  if [ "$drift" -eq 1 ]; then
+    printf '1 commit not linked to tickets — run /sync when convenient.\n'
+  elif [ "$drift" -gt 1 ]; then
     printf '%s commits not linked to tickets — run /sync when convenient.\n' "$drift"
   fi
+
+  # None of the above is on the user's screen: SessionStart output goes to the
+  # model's context and is never rendered (ADR-0007). The status line carries
+  # standing state, but a handoff has nowhere else to surface, so the block asks
+  # for its own relay. One line — the block is for orientation first, and Claude
+  # Code produces no turn until the user types, so this rides on the first
+  # answer rather than greeting an empty screen.
+  printf 'The user cannot see this block — lead your first reply with one line of it: claim, drift, handoffs.\n'
 
   return 0
 }

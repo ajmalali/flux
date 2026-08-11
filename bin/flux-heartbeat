@@ -29,7 +29,7 @@ main() {
   root=$(repo_root "$cwd")
   file="$root/.flux/session.json"
 
-  local branch head_sha dirty claimed next synced now
+  local branch head_sha dirty claimed last_done synced now
   branch=$(git -C "$root" symbolic-ref --quiet --short HEAD 2>/dev/null)
   if [ -z "$branch" ] && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
     branch="detached"
@@ -40,10 +40,11 @@ main() {
 
   claimed=$(first_id "$(store_claimed "$root" "$(basename "$root")" 2>/dev/null)")
 
-  # The frontier's head — what the statusline names when nothing is claimed.
-  # Resolved here rather than there on purpose: this is the only hook with the
-  # budget for a store verb, and the statusline must stay free of them.
-  next=$(first_id "$(store_ready "$root" 2>/dev/null)")
+  # What the statusline names when nothing is claimed: the last ticket finished,
+  # not the next one up (ADR-0006). Resolved here rather than there on purpose —
+  # this is the only hook with the budget for a store verb, and the statusline
+  # must stay free of them.
+  last_done=$(first_id "$(store_done "$root" 2>/dev/null)")
 
   # Preserved across turns; seeded from HEAD the first time we see this repo.
   # Named explicitly rather than left to the merge because of that seeding.
@@ -58,7 +59,7 @@ main() {
     head_sha "$head_sha" \
     dirty_files "$dirty" \
     claimed_ticket "$claimed" \
-    next_ticket "$next" \
+    last_done_ticket "$last_done" \
     last_synced_commit "$synced"
   return 0
 }

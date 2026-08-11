@@ -3,7 +3,7 @@
 # flux-statusline — statusLine command: one always-visible line of flux state.
 #
 #   FLX-04-claimed · main · ctx 41% · 83.6k
-#   FLX-06-unclaimed · main · ctx 41% · 83.6k
+#   FLX-19-done · main · ctx 41% · 83.6k
 #   no tickets · main · ctx 41% · 83.6k
 #
 # Contract (ADR-0001, fail-open): read-only, no network, always exit 0, and
@@ -23,8 +23,8 @@
 #         in the window now, input inclusive of cache reads and writes.
 #         There is no general branch field: .worktree.branch exists only in
 #         --worktree sessions, so the branch is read from disk instead.
-#         .flux/session.json supplies claimed_ticket and next_ticket; the
-#         frontier itself is the heartbeat's job, never this script's.
+#         .flux/session.json supplies claimed_ticket and last_done_ticket; both
+#         are resolved by the hooks, never by this script.
 # stdout: <ticket>-<state> · <branch> · ctx <N>% [· <tokens>]
 
 set -u
@@ -110,23 +110,23 @@ find_root() {
   done
 }
 
-# claimed_ticket \t status \t next_ticket from a session.json. `status` is
-# optional: the heartbeat does not write it today, but a verb that wants to show
+# claimed_ticket \t status \t last_done_ticket from a session.json. `status` is
+# optional: the hooks do not write it today, but a verb that wants to show
 # something other than "claimed" can, and this picks it up without a change
-# here. `next_ticket` is the heartbeat's cached frontier head — reading it is
-# what lets this script name the next ticket without touching the store.
+# here. `last_done_ticket` is what the hooks resolved from the store — reading
+# it is what lets this script name a ticket without touching the store itself.
 read_session() {
-  local file="$1" id="" st="" nx=""
+  local file="$1" id="" st="" dn=""
   [ -f "$file" ] || return 0
   if have jq; then
-    jq -r '[(.claimed_ticket // ""), (.status // ""), (.next_ticket // "")] | @tsv' \
+    jq -r '[(.claimed_ticket // ""), (.status // ""), (.last_done_ticket // "")] | @tsv' \
       "$file" 2>/dev/null
     return 0
   fi
   id=$(sed_field "$file" claimed_ticket)
   st=$(sed_field "$file" status)
-  nx=$(sed_field "$file" next_ticket)
-  printf '%s\t%s\t%s\n' "$id" "$st" "$nx"
+  dn=$(sed_field "$file" last_done_ticket)
+  printf '%s\t%s\t%s\n' "$id" "$st" "$dn"
 }
 
 # Top-level string field of our own fixed session.json layout, for the no-jq
@@ -162,18 +162,19 @@ main() {
   [ -n "$name" ] || name="${root##*/}"
   [ -n "$name" ] || name='?'
 
-  local ticket="" status="" next=""
-  split_row "$(read_session "$root/.flux/session.json")" ticket status next
+  local ticket="" status="" last_done=""
+  split_row "$(read_session "$root/.flux/session.json")" ticket status last_done
 
   # One segment carries both the ticket and what is happening to it, so there is
-  # no second word repeating it. Claimed wins; otherwise name the ticket that is
-  # next up, so the line always points at the work even when idle.
+  # no second word repeating it. Claimed wins; idle names the last ticket
+  # finished rather than a guess at the next one (ADR-0006) — a fact that stays
+  # put, where the frontier head moved under the reader.
   local label
   if [ -n "$ticket" ] && [ "$ticket" != "null" ]; then
     [ -n "$status" ] || status="claimed"
     label="$ticket-$status"
-  elif [ -n "$next" ] && [ "$next" != "null" ]; then
-    label="$next-unclaimed"
+  elif [ -n "$last_done" ] && [ "$last_done" != "null" ]; then
+    label="$last_done-done"
   else
     label="$NO_TICKET"
   fi

@@ -13,6 +13,12 @@
 
 BD_BIN="${FLUX_BD:-bd}"
 
+# Ticket ids, as they appear in frontmatter and in commit messages.
+TICKET_ID_RE='FLX-[0-9]+|bd-[a-z0-9]+'
+
+# How far back store_done reads for the commit that closed a ticket.
+MAX_DONE_SCAN=40
+
 # ---------------------------------------------------------------- helpers ---
 
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -89,7 +95,13 @@ json_or_null() {
 
 # The fields we own, in the order they are written. `dirty_files` is the only
 # number; everything else is a string or null.
-SESSION_KEYS=(last_turn_at branch head_sha dirty_files claimed_ticket next_ticket last_synced_commit)
+SESSION_KEYS=(last_turn_at branch head_sha dirty_files claimed_ticket last_done_ticket last_synced_commit)
+
+# Fields we used to own and no longer write, as a JSON array. The merge below
+# deletes them, so a session.json left by an older install stops carrying a
+# stale answer around: `next_ticket` was the frontier head, retired in ADR-0006.
+# Preserving unknown fields is for what other verbs write, not for our own past.
+SESSION_RETIRED_KEYS='["next_ticket"]'
 
 # session_field <file> <key> — top-level string value, "" when the file, the key
 # or the value is absent. jq when we have it, a sed read of our own fixed layout
@@ -167,8 +179,11 @@ session_stamp() {
   local merged=""
   if have jq && [ -s "$file" ]; then
     [ "$prev_claim" = "$new_claim" ] && keep=true
-    merged=$(jq -n --slurpfile old "$file" --argjson new "$body" --argjson keep "$keep" '
-      (($old[0] // {}) + $new) | if $keep then . else del(.status) end
+    merged=$(jq -n --slurpfile old "$file" --argjson new "$body" --argjson keep "$keep" \
+      --argjson retired "$SESSION_RETIRED_KEYS" '
+      (($old[0] // {}) + $new)
+      | delpaths($retired | map([.]))
+      | if $keep then . else del(.status) end
     ' 2>/dev/null)
   fi
   [ -n "$merged" ] || merged="$body"
@@ -226,6 +241,10 @@ md_claimed() {
   md_rows "$1" | awk -F'\t' '$2 == "claimed" || $2 == "in_progress" { print $1 "\t" $5 }'
 }
 
+md_done() {
+  md_rows "$1" | awk -F'\t' '$2 == "done" || $2 == "closed" { print $1 "\t" $5 }'
+}
+
 # Open tickets whose blockers are all done. Buffers rows so blockers can be
 # resolved against tickets declared later in the file order.
 md_ready() {
@@ -265,6 +284,39 @@ store_claimed() {
     [ -n "$out" ] && { printf '%s\n' "$out"; return 0; }
   fi
   md_claimed "$root"
+}
+
+# id \t title of the most recently completed ticket; empty when there is none.
+#
+# Recency is the whole difficulty. The markdown store has no timestamps and its
+# ticket numbers are not a completion order — this repo finished FLX-19 after
+# FLX-13 — so recency comes from git: the newest commit message naming a ticket
+# that is done, which is exactly the convention that closes a ticket here. Beads
+# has real close times and uses them instead. Outside a repo, or when nothing in
+# recent history names a done ticket, it degrades to file order, which is at
+# least stable.
+store_done() {
+  local root="$1" out="" rows="" hit="" id="" msg=""
+  if have "$BD_BIN" && have jq; then
+    out=$("$BD_BIN" list --status closed --json 2>/dev/null |
+      jq -r '
+        (if type == "array" then . elif type == "object" then (.issues // .closed // []) else [] end)
+        | sort_by(.closed_at // .updated_at // .created_at // "")
+        | last // empty
+        | [.id, (.title // "")] | @tsv
+      ' 2>/dev/null)
+    [ -n "$out" ] && { printf '%s\n' "$out"; return 0; }
+  fi
+
+  rows=$(md_done "$root")
+  [ -n "$rows" ] || return 0
+  while IFS= read -r msg; do
+    [[ $msg =~ ($TICKET_ID_RE) ]] || continue
+    id="${BASH_REMATCH[1]}"
+    hit=$(printf '%s\n' "$rows" | awk -F'\t' -v want="$id" '$1 == want { print; exit }')
+    [ -n "$hit" ] && { printf '%s\n' "$hit"; return 0; }
+  done < <(git -C "$root" log -n "$MAX_DONE_SCAN" --format='%s' 2>/dev/null)
+  printf '%s\n' "$rows" | tail -1
 }
 
 # id \t tier \t title

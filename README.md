@@ -20,25 +20,26 @@ yourself (`/flux-init` will automate it), pointing `command` at this repo:
     }
 
 It renders `FLX-04-claimed · main · ctx 41% · 83.6k` — ticket and its state,
-branch, context used, tokens in the window. The first segment always points at
-work: the claimed ticket when there is one, otherwise the frontier head as
-`FLX-06-unclaimed`, and `no tickets` only when the store has neither.
+branch, context used, tokens in the window. The first segment states a fact and
+never a guess: the claimed ticket when there is one, otherwise the last ticket
+finished, and `no tickets` only when the store has neither. What comes *next* is
+prime's business, not this line's — ADR-0006.
 
     FLX-04-claimed    · main · ctx 41% · 83.6k
     FLX-11-qualifying · main · ctx 41% · 83.6k
-    FLX-06-unclaimed  · main · ctx 41% · 83.6k
+    FLX-19-done       · main · ctx 41% · 83.6k
     no tickets        · main · ctx 41% · 83.6k
 
 The state suffix is `claimed` unless a verb wrote its own `status` into
 `.flux/session.json`, so a skill can show `qualifying` or `reviewing` without a
 change to the script.
 
-The frontier head is resolved by the heartbeat, not here: the statusline runs on
-every event with a 100ms budget, so it reads `next_ticket` out of
-`.flux/session.json` and never touches the ticket store. Prime stamps the same
-two fields at session start (ADR-0005) — otherwise a ticket claimed between
-sessions would show up in the primed block but not down here until the first
-turn ended. The branch is read out
+The ticket is resolved by the hooks, not here: the statusline runs on every event
+with a 100ms budget, so it reads `claimed_ticket` and `last_done_ticket` out of
+`.flux/session.json` and never touches the ticket store. The heartbeat stamps
+both at the end of every turn and prime stamps them again at session start
+(ADR-0005) — otherwise a ticket claimed between sessions would show up in the
+primed block but not down here until the first turn ended. The branch is read out
 of `.git/HEAD` rather than by running `git`, for the same reason; a detached HEAD
 shows a short sha, and outside a checkout the segment falls back to the worktree
 or directory name. The token count appears only once there is one — before the

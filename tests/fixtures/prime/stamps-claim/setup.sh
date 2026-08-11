@@ -34,7 +34,7 @@ cat > .flux/session.json <<'JSON'
   "dirty_files": 0,
   "claimed_ticket": "FLX-02",
   "status": "qualifying",
-  "next_ticket": null,
+  "next_ticket": "FLX-06",
   "last_synced_commit": "1111111"
 }
 JSON

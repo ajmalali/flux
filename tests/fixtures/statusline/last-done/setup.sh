@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Nothing claimed, but the heartbeat cached a frontier head. The line names the
-# ticket that is next up rather than going blank — idle still points at work.
+# Nothing claimed, so the line names the last ticket finished. Idle still says
+# something true — where the work got to — without asserting what comes next
+# (ADR-0006).
 set -eu
 mkdir -p .flux
 cat > .flux/session.json <<'JSON'
@@ -10,7 +11,7 @@ cat > .flux/session.json <<'JSON'
   "head_sha": "abc1234",
   "dirty_files": 0,
   "claimed_ticket": null,
-  "next_ticket": "FLX-06",
+  "last_done_ticket": "FLX-19",
   "last_synced_commit": "abc1234"
 }
 JSON

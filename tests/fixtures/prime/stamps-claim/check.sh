@@ -8,10 +8,15 @@
 f=.flux/session.json
 assert_json "$f"
 assert_key "$f" claimed_ticket FLX-03
-assert_key "$f" next_ticket FLX-04
+# No git history here, so the last completion falls back to file order: FLX-02,
+# the ticket the human closed on the way to claiming FLX-03.
+assert_key "$f" last_done_ticket FLX-02
 assert_key "$f" last_synced_commit 1111111
 # The claim moved, so the status that described the old one goes with it.
 assert_key "$f" status ""
+# A field we retired is deleted rather than carried forward (ADR-0006): this
+# file was written by an install that still cached the frontier head.
+assert_eq "$(jget "$f" next_ticket)" "" next_ticket
 # Fields prime does not own keep the previous session's values rather than
 # being clobbered to null — only the heartbeat has fresh ones.
 assert_key "$f" branch main

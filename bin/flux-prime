@@ -6,9 +6,9 @@
 # broken prime degrades to plain Claude Code, never blocks it. The ticket store
 # is reached only through the store_* verbs (ADR-0002).
 #
-# Read-only except for one stamp: the claim and frontier head it just resolved
-# go into .flux/session.json before it prints (ADR-0005), because the statusline
-# renders from that file and the heartbeat has not run yet in a new session.
+# Read-only except for one stamp: the claim and the last completion it just
+# resolved go into .flux/session.json before it prints (ADR-0005), because the
+# statusline renders from that file and no heartbeat has run yet in a new session.
 # Non-fatal — a failed stamp still leaves the block printed and the exit 0.
 #
 # stdin:  SessionStart hook JSON — {session_id, transcript_path, cwd, hook_event_name, source}
@@ -22,7 +22,6 @@ set -u
 # shellcheck source=/dev/null
 . "$(dirname "${BASH_SOURCE[0]}")/flux-common" 2>/dev/null || exit 0
 
-TICKET_ID_RE='FLX-[0-9]+|bd-[a-z0-9]+'
 MAX_FRONTIER=5
 MAX_HANDOFFS=5
 MAX_DRIFT_SCAN=200
@@ -88,9 +87,10 @@ main() {
   root=$(repo_root "$cwd")
   worktree=$(basename "$root")
 
-  local claimed ready handoffs drift
+  local claimed ready handoffs drift last_done
   claimed=$(store_claimed "$root" "$worktree" 2>/dev/null)
   ready=$(store_ready "$root" 2>/dev/null)
+  last_done=$(store_done "$root" 2>/dev/null)
   handoffs=$(collect_handoffs "$root" 2>/dev/null)
   drift=$(collect_drift "$root" 2>/dev/null)
 
@@ -101,7 +101,7 @@ main() {
   if [ -n "$claimed$ready$handoffs$drift" ] || [ -d "$root/.flux" ]; then
     session_stamp "$root" \
       claimed_ticket "$(first_id "$claimed")" \
-      next_ticket "$(first_id "$ready")"
+      last_done_ticket "$(first_id "$last_done")"
   fi
 
   [ -n "$claimed$ready$handoffs$drift" ] || return 0

@@ -16,6 +16,9 @@
 #   bin/          optional; prepended to PATH so a case can stub a binary
 # A case passes when stdout matches, stderr is empty, the exit code is 0, and
 # check.sh (if present) exits 0.
+#
+# The `hooks` suite has no fixtures: it asserts on hooks/hooks.json itself,
+# where the thing worth pinning is the manifest, not any observable output.
 
 set -u
 
@@ -111,6 +114,56 @@ suite_prime() { run_hook_suite prime "$ROOT/bin/flux-prime"; }
 suite_heartbeat() { run_hook_suite heartbeat "$ROOT/bin/flux-heartbeat"; }
 suite_statusline() { run_hook_suite statusline "$ROOT/bin/flux-statusline"; }
 
+# ------------------------------------------------------------- manifest ----
+
+# Every SessionStart source listed at https://code.claude.com/docs/en/hooks
+# (re-read 2026-08-11). prime has to fire for all of them: a source the matcher
+# misses is not an error, it is a session that silently starts unprimed. When
+# the docs grow a source, add it here — the test then tells you the matcher
+# needs it too.
+SESSION_START_SOURCES=(clear compact fork resume startup)
+
+suite_hooks() {
+  printf 'hooks\n'
+  local file="$ROOT/hooks/hooks.json"
+
+  if [ ! -f "$file" ]; then
+    bad "hooks: no manifest at hooks/hooks.json"
+    return
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    skip "hooks/prime-sources" "jq not installed"
+    return
+  fi
+
+  # Matchers of every SessionStart entry that runs flux-prime, joined — the hook
+  # may be split across entries; what matters is the union they cover. An entry
+  # with no matcher at all already runs for every source (the Stop hook does
+  # this), so it is reported as * rather than as an empty alternation.
+  local matcher
+  matcher=$(jq -r '
+    (.hooks.SessionStart // [])
+    | map(select(any(.hooks[]?.command; test("flux-prime"))))
+    | map(if has("matcher") then .matcher else "*" end)
+    | join("|")
+  ' "$file" 2>/dev/null)
+
+  local want got=""
+  want=$(printf '%s\n' "${SESSION_START_SOURCES[@]}" | sort | tr '\n' ' ')
+  if [ -n "$matcher" ]; then
+    local -a covered=()
+    IFS='|' read -r -a covered <<<"$matcher"
+    got=$(printf '%s\n' "${covered[@]}" | sort -u | tr '\n' ' ')
+  fi
+
+  if [ "$got" = "$want" ] || [ "$matcher" = "*" ]; then
+    ok "hooks/prime-sources: $matcher"
+  else
+    bad "hooks/prime-sources: SessionStart matcher must cover every documented source"
+    printf '       want: %s\n       got:  %s\n' "$want" "$got"
+  fi
+}
+
 # ---------------------------------------------------------------- lint -----
 
 suite_shellcheck() {
@@ -136,13 +189,14 @@ suite_shellcheck() {
 # ---------------------------------------------------------------- driver ---
 
 SUITES=("$@")
-[ "${#SUITES[@]}" -gt 0 ] || SUITES=(prime heartbeat statusline shellcheck)
+[ "${#SUITES[@]}" -gt 0 ] || SUITES=(prime heartbeat statusline hooks shellcheck)
 
 for s in "${SUITES[@]}"; do
   case "$s" in
     prime) suite_prime ;;
     heartbeat) suite_heartbeat ;;
     statusline) suite_statusline ;;
+    hooks) suite_hooks ;;
     shellcheck) suite_shellcheck ;;
     *) bad "unknown suite: $s" ;;
   esac

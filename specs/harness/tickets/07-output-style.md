@@ -1,7 +1,7 @@
 ---
 id: FLX-07
 title: Output style — plain language, keep coding instructions
-status: open
+status: done
 agent: build
 effort: low
 blockers: [FLX-01]

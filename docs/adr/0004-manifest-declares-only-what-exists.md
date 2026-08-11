@@ -1,0 +1,5 @@
+# 0004 — The plugin manifest declares only components that exist
+
+`.claude-plugin/plugin.json` declares `skills` and `outputStyles` as directories, and deliberately omits `agents` and `hooks`; those load from their default locations (`agents/*.md`, `hooks/hooks.json`). Forced by two validator behaviours confirmed against Claude Code 2.1.226: the `agents` field rejects a directory path outright (`agents: Invalid input` — it accepts only `.md` file paths), and any declared path that does not yet exist fails validation with "The runtime loader will report this as a load failure". A skeleton repo therefore cannot declare components it has not written yet.
+
+Consequence: when a later ticket adds `hooks/hooks.json` (FLX-02/03) or `agents/{chore,build,deep}.md` (FLX-06), do not add matching manifest fields — default discovery already covers them, and declaring them buys nothing. Re-run `claude plugin validate . --strict` after any manifest change. Note also that because the marketplace entry's `source` is `"./"` (the marketplace root), a declared `skills` path replaces the default scan instead of adding to it, so no skill is loaded twice.

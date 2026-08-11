@@ -1,7 +1,7 @@
 ---
 id: FLX-08
 title: /flux-init — idempotent per-project bootstrap
-status: open
+status: done
 agent: build
 effort: medium
 blockers: [FLX-02, FLX-03, FLX-04]

@@ -61,7 +61,7 @@ main() {
   root=$(repo_root "$cwd")
   file="$root/.flux/session.json"
 
-  local branch head_sha dirty claimed synced now
+  local branch head_sha dirty claimed next synced now
   branch=$(git -C "$root" symbolic-ref --quiet --short HEAD 2>/dev/null)
   if [ -z "$branch" ] && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
     branch="detached"
@@ -71,6 +71,11 @@ main() {
   [ -n "$dirty" ] || dirty=0
 
   claimed=$(store_claimed "$root" "$(basename "$root")" 2>/dev/null | head -1 | cut -f1)
+
+  # The frontier's head — what the statusline names when nothing is claimed.
+  # Resolved here rather than there on purpose: this is the only hook with the
+  # budget for a store verb, and the statusline must stay free of them.
+  next=$(store_ready "$root" 2>/dev/null | head -1 | cut -f1)
 
   # Preserved across turns; seeded from HEAD the first time we see this repo.
   synced=$(prev_field "$file" last_synced_commit)
@@ -87,6 +92,7 @@ main() {
     printf '  "head_sha": %s,\n' "$(json_or_null "$head_sha")"
     printf '  "dirty_files": %s,\n' "$dirty"
     printf '  "claimed_ticket": %s,\n' "$(json_or_null "$claimed")"
+    printf '  "next_ticket": %s,\n' "$(json_or_null "$next")"
     printf '  "last_synced_commit": %s\n' "$(json_or_null "$synced")"
     printf '}\n'
   } >"$TMPFILE" 2>/dev/null || return 0

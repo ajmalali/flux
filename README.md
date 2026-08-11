@@ -19,10 +19,29 @@ yourself (`/flux-init` will automate it), pointing `command` at this repo:
       }
     }
 
-It renders `FLX-04 · flux · claimed · ctx 41%` — claimed ticket, worktree or repo,
-ticket status, context used — and `— · flux · idle · ctx 41%` when nothing is
-claimed. `jq` supplies the context percentage; without it the rest of the line
-still renders and `ctx` reads 0%.
+It renders `FLX-04-claimed · main · ctx 41% · 83.6k` — ticket and its state,
+branch, context used, tokens in the window. The first segment always points at
+work: the claimed ticket when there is one, otherwise the frontier head as
+`FLX-06-unclaimed`, and `no tickets` only when the store has neither.
+
+    FLX-04-claimed    · main · ctx 41% · 83.6k
+    FLX-11-qualifying · main · ctx 41% · 83.6k
+    FLX-06-unclaimed  · main · ctx 41% · 83.6k
+    no tickets        · main · ctx 41% · 83.6k
+
+The state suffix is `claimed` unless a verb wrote its own `status` into
+`.flux/session.json`, so a skill can show `qualifying` or `reviewing` without a
+change to the script.
+
+The frontier head is resolved by the heartbeat, not here: the statusline runs on
+every event with a 100ms budget, so it reads `next_ticket` out of
+`.flux/session.json` and never touches the ticket store. The branch is read out
+of `.git/HEAD` rather than by running `git`, for the same reason; a detached HEAD
+shows a short sha, and outside a checkout the segment falls back to the worktree
+or directory name. The token count appears only once there is one — before the
+first API response the segment is dropped rather than printing a zero. `jq`
+supplies the percentage and token count; without it the rest of the line still
+renders, `ctx` reads 0%, and the token segment is absent.
 
 Spec: `specs/harness/spec.md`. Decisions: `docs/adr/`. Vocabulary: `CONTEXT.md`.
 Design rationale: https://claude.ai/code/artifact/45b7cd63-1002-4d75-82be-5554e755ba13

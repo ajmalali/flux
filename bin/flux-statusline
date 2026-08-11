@@ -2,8 +2,9 @@
 #
 # flux-statusline — statusLine command: one always-visible line of flux state.
 #
-#   FLX-04 · flux · claimed · ctx 41%
-#   — · flux · idle · ctx 41%
+#   FLX-04-claimed · main · ctx 41% · 83.6k
+#   FLX-06-unclaimed · main · ctx 41% · 83.6k
+#   no tickets · main · ctx 41% · 83.6k
 #
 # Contract (ADR-0001, fail-open): read-only, no network, always exit 0, and
 # always exactly one line — a broken statusline must never blank the footer.
@@ -11,37 +12,87 @@
 # Speed matters more here than in the hooks: the statusline re-renders on every
 # event, so the budget is 100ms, not 500ms. That rules out git and bd — no store
 # verbs, no drift, no frontier (prime's job). The only subprocesses are jq for
-# the stdin JSON and jq for .flux/session.json.
+# the stdin JSON and jq for .flux/session.json; the branch is read out of
+# .git/HEAD with builtins rather than paying for a `git` fork.
 #
 # stdin:  statusLine JSON — https://code.claude.com/docs/en/statusline
 #         .workspace.git_worktree (only inside a linked worktree),
 #         .workspace.current_dir, .workspace.project_dir, .cwd,
-#         .context_window.used_percentage (may be null early in a session).
-# stdout: <ticket> · <worktree-or-repo> · <status> · ctx <N>%
+#         .context_window.used_percentage (may be null early in a session),
+#         .context_window.total_input_tokens + .total_output_tokens — what is
+#         in the window now, input inclusive of cache reads and writes.
+#         There is no general branch field: .worktree.branch exists only in
+#         --worktree sessions, so the branch is read from disk instead.
+#         .flux/session.json supplies claimed_ticket and next_ticket; the
+#         frontier itself is the heartbeat's job, never this script's.
+# stdout: <ticket>-<state> · <branch> · ctx <N>% [· <tokens>]
 
 set -u
 
 # shellcheck source=/dev/null
 . "$(dirname "${BASH_SOURCE[0]}")/flux-common" 2>/dev/null || exit 0
 
-NO_TICKET='—'
+NO_TICKET='no tickets'
 MAX_WALK=40
 
 # ---------------------------------------------------------------- helpers ---
 
 # Fields we need from the statusLine JSON, as one tab-separated row:
-#   worktree \t current_dir \t project_dir \t context percent
+#   worktree \t current_dir \t project_dir \t context percent \t tokens
 # Read with split_row, never `IFS=$'\t' read` — an absent worktree is the common
 # case here, and collapsing that empty field would shift every later field left.
 parse_stdin() {
   printf '%s' "$1" | jq -r '
+    def num: if type == "number" then floor else 0 end;
     [ (.workspace.git_worktree // ""),
       (.workspace.current_dir // .cwd // ""),
       (.workspace.project_dir // ""),
-      ((.context_window.used_percentage // 0)
-        | if type == "number" then floor else 0 end)
+      ((.context_window.used_percentage // 0) | num),
+      (((.context_window.total_input_tokens // 0) | num)
+        + ((.context_window.total_output_tokens // 0) | num))
     ] | map(tostring) | @tsv
   ' 2>/dev/null
+}
+
+# Checked-out branch of $1, read straight out of .git — a `git` fork costs more
+# than the whole rest of this script. Handles the linked-worktree case, where
+# .git is a file pointing at the real git dir. A detached HEAD renders as a
+# short sha. Empty when $1 is not a git checkout, which is the caller's cue to
+# fall back to a directory name.
+git_branch() {
+  local root="$1" line=""
+  local gitdir="$root/.git"
+  if [ -f "$gitdir" ]; then
+    [ -r "$gitdir" ] || return 0
+    read -r line <"$gitdir" 2>/dev/null || return 0
+    case "$line" in
+      'gitdir: '*) gitdir="${line#gitdir: }" ;;
+      *) return 0 ;;
+    esac
+    case "$gitdir" in /*) ;; *) gitdir="$root/$gitdir" ;; esac
+  fi
+  [ -r "$gitdir/HEAD" ] || return 0
+  read -r line <"$gitdir/HEAD" 2>/dev/null || return 0
+  case "$line" in
+    'ref: refs/heads/'*) printf '%s' "${line#ref: refs/heads/}" ;;
+    'ref: '*) printf '%s' "${line#ref: }" ;;
+    ?*) printf '%s' "${line:0:7}" ;;
+  esac
+  return 0
+}
+
+# fmt_tokens <var> <n> — token count into <var>: 940, 83.6k, 158k. Integer
+# arithmetic and printf -v, no subshell: this runs on every render.
+fmt_tokens() {
+  local n="$2" tenths
+  if [ "$n" -lt 1000 ]; then
+    printf -v "$1" '%s' "$n"
+  elif [ "$n" -lt 100000 ]; then
+    tenths=$(((n + 50) / 100))
+    printf -v "$1" '%s.%sk' "$((tenths / 10))" "$((tenths % 10))"
+  else
+    printf -v "$1" '%sk' "$(((n + 500) / 1000))"
+  fi
 }
 
 # Nearest ancestor of $1 (inclusive) holding .flux/ or .git — the directory the
@@ -59,19 +110,23 @@ find_root() {
   done
 }
 
-# claimed_ticket \t status from a session.json. `status` is optional: the
-# heartbeat does not write it today, but a verb that wants to show something
-# other than "claimed" can, and this picks it up without a change here.
+# claimed_ticket \t status \t next_ticket from a session.json. `status` is
+# optional: the heartbeat does not write it today, but a verb that wants to show
+# something other than "claimed" can, and this picks it up without a change
+# here. `next_ticket` is the heartbeat's cached frontier head — reading it is
+# what lets this script name the next ticket without touching the store.
 read_session() {
-  local file="$1" id="" st=""
+  local file="$1" id="" st="" nx=""
   [ -f "$file" ] || return 0
   if have jq; then
-    jq -r '[(.claimed_ticket // ""), (.status // "")] | @tsv' "$file" 2>/dev/null
+    jq -r '[(.claimed_ticket // ""), (.status // ""), (.next_ticket // "")] | @tsv' \
+      "$file" 2>/dev/null
     return 0
   fi
   id=$(sed_field "$file" claimed_ticket)
   st=$(sed_field "$file" status)
-  printf '%s\t%s\n' "$id" "$st"
+  nx=$(sed_field "$file" next_ticket)
+  printf '%s\t%s\t%s\n' "$id" "$st" "$nx"
 }
 
 # Top-level string field of our own fixed session.json layout, for the no-jq
@@ -83,36 +138,54 @@ sed_field() {
 # ------------------------------------------------------------------- main ---
 
 main() {
-  local stdin_json="" wt="" cur="" proj="" pct=""
+  local stdin_json="" wt="" cur="" proj="" pct="" tokens=""
   stdin_json=$(cat 2>/dev/null)
   if have jq; then
-    split_row "$(parse_stdin "$stdin_json")" wt cur proj pct
+    split_row "$(parse_stdin "$stdin_json")" wt cur proj pct tokens
   fi
 
   # Everything below has to survive jq being absent or the JSON being garbage,
   # so each value falls back to something the process already knows.
   [ -n "$cur" ] || cur="$PWD"
   case "$pct" in '' | *[!0-9]*) pct=0 ;; esac
+  case "$tokens" in '' | *[!0-9]*) tokens=0 ;; esac
 
   local root name
   root=$(find_root "$cur")
   [ -n "$root" ] || root=$(find_root "$proj")
   [ -n "$root" ] || root="${proj:-$cur}"
 
-  name="$wt"
+  # Branch first — it is what actually changes under you. The worktree name and
+  # the directory are only stand-ins for when there is no branch to read.
+  name=$(git_branch "$root")
+  [ -n "$name" ] || name="$wt"
   [ -n "$name" ] || name="${root##*/}"
   [ -n "$name" ] || name='?'
 
-  local ticket="" status=""
-  split_row "$(read_session "$root/.flux/session.json")" ticket status
+  local ticket="" status="" next=""
+  split_row "$(read_session "$root/.flux/session.json")" ticket status next
 
-  if [ -z "$ticket" ] || [ "$ticket" = "null" ]; then
-    ticket="$NO_TICKET"
-    status="idle"
+  # One segment carries both the ticket and what is happening to it, so there is
+  # no second word repeating it. Claimed wins; otherwise name the ticket that is
+  # next up, so the line always points at the work even when idle.
+  local label
+  if [ -n "$ticket" ] && [ "$ticket" != "null" ]; then
+    [ -n "$status" ] || status="claimed"
+    label="$ticket-$status"
+  elif [ -n "$next" ] && [ "$next" != "null" ]; then
+    label="$next-unclaimed"
+  else
+    label="$NO_TICKET"
   fi
-  [ -n "$status" ] || status="claimed"
 
-  printf '%s · %s · %s · ctx %s%%\n' "$ticket" "$name" "$status" "$pct"
+  # No token segment before the first API response: "ctx 0% · 0" is noise.
+  if [ "$tokens" -gt 0 ]; then
+    local human=""
+    fmt_tokens human "$tokens"
+    printf '%s · %s · ctx %s%% · %s\n' "$label" "$name" "$pct" "$human"
+  else
+    printf '%s · %s · ctx %s%%\n' "$label" "$name" "$pct"
+  fi
   return 0
 }
 

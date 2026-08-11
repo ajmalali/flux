@@ -4,7 +4,8 @@
 #
 #   FLX-04-claimed · main · ctx 41% · 83.6k
 #   FLX-19-done · main · ctx 41% · 83.6k
-#   FLX-19-done · main · ⚠ 2 drifts · ctx 41% · 83.6k
+#   FLX-19-done · main · ⚠ 2 drift · ctx 41% · 83.6k · /sync
+#   FLX-04-claimed · main · ctx 78% · 156k · /pause
 #   no tickets · main · ctx 41% · 83.6k
 #
 # Contract (ADR-0001, fail-open): read-only, no network, always exit 0, and
@@ -35,6 +36,11 @@ set -u
 
 NO_TICKET='no tickets'
 MAX_WALK=40
+
+# Context share at which the line starts suggesting /pause. Low enough to leave
+# room to deposit what the session learned, high enough not to nag through the
+# working half of a window.
+HINT_CTX_PCT=75
 
 # ---------------------------------------------------------------- helpers ---
 
@@ -187,20 +193,29 @@ main() {
 
   # Only when there is drift. A warning that is always on the line is a warning
   # nobody reads, and the clean case is the overwhelmingly common one (FLX-21).
+  # "drift" does not take a plural here: the count is commits, and the word is
+  # the condition they add up to. `⚠ 2 drifts` was tried and read badly.
   local warn=""
-  if [ "$drift" -eq 1 ]; then
-    warn=" · ⚠ 1 drift"
-  elif [ "$drift" -gt 1 ]; then
-    warn=" · ⚠ $drift drifts"
+  [ "$drift" -gt 0 ] && warn=" · ⚠ $drift drift"
+
+  # At most one verb, and only when there is something to act on — a hint that
+  # is always there is furniture, and furniture is not read. Ordered by the cost
+  # of doing nothing: a full window loses the session, drift loses only the
+  # attribution. Arithmetic on values already in hand, so it costs nothing.
+  local hint=""
+  if [ "$pct" -ge "$HINT_CTX_PCT" ]; then
+    hint=' · /pause'
+  elif [ "$drift" -gt 0 ]; then
+    hint=' · /sync'
   fi
 
   # No token segment before the first API response: "ctx 0% · 0" is noise.
   if [ "$tokens" -gt 0 ]; then
     local human=""
     fmt_tokens human "$tokens"
-    printf '%s · %s%s · ctx %s%% · %s\n' "$label" "$name" "$warn" "$pct" "$human"
+    printf '%s · %s%s · ctx %s%% · %s%s\n' "$label" "$name" "$warn" "$pct" "$human" "$hint"
   else
-    printf '%s · %s%s · ctx %s%%\n' "$label" "$name" "$warn" "$pct"
+    printf '%s · %s%s · ctx %s%%%s\n' "$label" "$name" "$warn" "$pct" "$hint"
   fi
   return 0
 }

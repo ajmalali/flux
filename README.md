@@ -29,7 +29,8 @@ prime's business, not this line's — ADR-0006.
     FLX-11-qualifying · main · ctx 41% · 83.6k
     FLX-19-done       · main · ctx 41% · 83.6k
     no tickets        · main · ctx 41% · 83.6k
-    FLX-19-done       · main · ⚠ 2 drifts · ctx 41% · 83.6k
+    FLX-19-done       · main · ⚠ 2 drift · ctx 41% · 83.6k · /sync
+    FLX-04-claimed    · main · ctx 78% · 156k · /pause
 
 The drift segment appears only when commits since the last `/sync` name no
 ticket — work the harness has no record of. It lives here rather than in the
@@ -39,6 +40,12 @@ nobody acts on. The count is walked by the hooks, never by this script. Prime
 closes its block by asking the model to relay the same state in one line at the
 top of its first reply — that reply is the earliest a session can say anything,
 since no turn exists until you type.
+
+The line ends in a verb when there is one worth naming: `/pause` once the window
+is 75% full, `/sync` when there is drift. At most one, ordered by what doing
+nothing costs — a full window loses the session, drift only loses attribution —
+and nothing at all in the steady state, because a hint that is always there
+stops being read.
 
 The state suffix is `claimed` unless a verb wrote its own `status` into
 `.flux/session.json`, so a skill can show `qualifying` or `reviewing` without a

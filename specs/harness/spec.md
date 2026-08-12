@@ -15,7 +15,7 @@ A Claude Code plugin ("flux") providing: a beads-backed ticket store wrapped beh
 
 1. Opening a terminal in any worktree, I see the claimed ticket, frontier, pending handoffs, and drift — without typing anything.
 2. After /clear or compaction, the session re-orients automatically.
-3. I plan a feature through a grilling interview that maintains the glossary and ADRs, ending in an approved spec before ~50% context.
+3. I plan a feature through a grilling interview that maintains the glossary, the ADRs, and a spec draft kept current at every round, so I can stop whenever I choose and lose nothing.
 4. Tickets are generated in a fresh session from the spec alone, each self-contained and routed to a model tier.
 5. I implement a ticket manually with /build: atomic claim, minimal context load, TDD at pre-agreed seams, Execute→Qualify per task, close with a linked commit.
 6. I run the frontier automatically with /run: worktree-isolated subagents, capped concurrency, hard stops at human-verify checkpoints.
@@ -47,7 +47,7 @@ A Claude Code plugin ("flux") providing: a beads-backed ticket store wrapped beh
 - AC-3: Heartbeat writes .flux/session.json every turn, <500ms, never blocks.
 - AC-4: Statusline renders `<ticket>-<state> · <branch> · ctx N% · <tokens>` — the claimed ticket, else the last completed one (ADR-0006), else `no tickets`; plus a `⚠ N drift` segment when, and only when, there is drift, and a trailing verb (`/pause`, `/sync`) when a condition warrants one — at most one, never in the steady state (ADR-0007 — the primed block is invisible to the human, so anything needing human action goes here, and prime asks the model to relay the rest).
 - AC-5: All hook scripts exit 0 on malformed input, missing bd, missing .flux.
-- AC-6: /plan ends with approved spec ≤50% context, or pauses (draft + handoff).
+- AC-6: /plan writes each settled section into specs/<slug>/spec-draft.md in the round it settles, and gives one notice at 200k and one at 350k without stopping the run on its own; the run ends with an approved spec.md, or — when the user calls a pause or context pressure forces one — a draft plus handoff.
 - AC-7: /tickets refuses a polluted window; every ticket carries routing, F/A/V/D tasks, test plan, boundaries, blockers.
 - AC-8: /build claims atomically, closes with a commit referencing the ticket id; 3 failed qualify cycles escalate classified (intent/spec/code).
 - AC-9: /show-work artifact: one diagram ≤12 nodes scoped to the diff, ≤5-sentence summary, AC checklist with verify commands.

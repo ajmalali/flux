@@ -13,7 +13,7 @@ _Avoid_: backlog, queue.
 **Claim**: Atomic assignment of a ticket to one session/worktree. A ticket is claimed before any code is touched.
 _Avoid_: pick up, assign.
 
-**Smart zone**: The context budget inside which work stays high-quality. Working rule: specs and tickets are finished before ~50% of the window is used.
+**Smart zone**: The context budget inside which work stays high-quality. Working rule: a planning run gives notice at 200k tokens and again at 350k — an absolute count rather than a share of the window, which means something different on a 200k model than on a 1M one. Both notices are advice, and stopping is the user's call; what keeps the run safe is that settled work is deposited every round, not the mark itself. A context-pressure notice is not advice and pauses the run.
 _Avoid_: context limit.
 
 **Prime**: The SessionStart injection of current state (claimed ticket, frontier, handoffs, drift) so a session starts oriented without exploration.

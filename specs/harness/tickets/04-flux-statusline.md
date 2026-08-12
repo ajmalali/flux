@@ -23,7 +23,7 @@ Ticket comes from `.flux/session.json` (written by heartbeat, FLX-03 — hence t
    Verify: tests/run.sh statusline
    Done: fixtures produce the exact expected strings, including the no-ticket and no-.flux cases (AC-4, AC-5)
 2. Files: README.md
-   Action: add the one-line `statusLine` settings snippet users need (flux-init will automate it later; documented now for the FLX-05 checkpoint).
+   Action: add the one-line `statusLine` settings snippet users need (flux:init will automate it later; documented now for the FLX-05 checkpoint).
    Verify: snippet is valid JSON when inserted into a settings.json
    Done: copy-pasteable
 

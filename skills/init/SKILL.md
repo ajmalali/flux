@@ -1,5 +1,5 @@
 ---
-name: flux-init
+name: init
 description: Bootstrap this repository for the flux harness. Idempotent — safe to run again after a plugin update.
 disable-model-invocation: true
 ---
@@ -82,7 +82,7 @@ rerun repairs the line after a plugin update.
 
 Otherwise append this file verbatim, creating `CLAUDE.md` first when it is absent:
 
-    ${CLAUDE_PLUGIN_ROOT}/skills/flux-init/claude-md-section.md
+    ${CLAUDE_PLUGIN_ROOT}/skills/init/claude-md-section.md
 
 The marker pair is the only region of `CLAUDE.md` this skill owns. Text already in the
 file keeps its exact wording and position.

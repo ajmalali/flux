@@ -10,7 +10,7 @@ Install:
     /plugin install flux@flux
 
 Status line — plugins cannot install one, so add this to `~/.claude/settings.json`
-yourself (`/flux-init` will automate it), pointing `command` at this repo:
+yourself (`/flux:init` will automate it), pointing `command` at this repo:
 
     {
       "statusLine": {

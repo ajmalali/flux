@@ -9,7 +9,7 @@ AI-assisted coding sessions lose state between terminals and worktrees, burn tok
 
 ## Solution
 
-A Claude Code plugin ("flux") providing: a beads-backed ticket store wrapped behind our own verbs; three deterministic components (SessionStart prime, Stop heartbeat, statusline); eight skills (/plan, /tickets, /build, /run, /show-work, /pause, /sync, /flux-init); three routed subagents (chore/build/deep); and a plain-language output style. The repo is its own plugin and marketplace.
+A Claude Code plugin ("flux") providing: a beads-backed ticket store wrapped behind our own verbs; three deterministic components (SessionStart prime, Stop heartbeat, statusline); eight skills (/plan, /tickets, /build, /run, /show-work, /pause, /sync, /flux:init); three routed subagents (chore/build/deep); and a plain-language output style. The repo is its own plugin and marketplace.
 
 ## User stories
 
@@ -54,7 +54,7 @@ A Claude Code plugin ("flux") providing: a beads-backed ticket store wrapped beh
 - AC-10: /pause deposits settled knowledge into durable homes before writing residue; prime surfaces the handoff next session.
 - AC-11: /sync creates retroactive closed tickets for unattributed commits and flags ADR/architecture/glossary contradictions.
 - AC-12: /run caps concurrency at 3, blocks at checkpoints, tags failures without retrying.
-- AC-13: Fresh repo: marketplace add + install + /flux-init yields all of the above; second /flux-init run is a no-op.
+- AC-13: Fresh repo: marketplace add + install + /flux:init yields all of the above; second /flux:init run is a no-op.
 - AC-14: plugin.json and marketplace.json validate; bin scripts pass shellcheck.
 
 ## Out of scope
@@ -67,4 +67,4 @@ A Claude Code plugin ("flux") providing: a beads-backed ticket store wrapped beh
 ## Further notes
 
 - Once FLX-05 (foundation checkpoint) passes, optionally import remaining open tickets into beads and continue via /build itself.
-- The gitnexus license question (PolyForm Noncommercial vs commercial zaps work) must be resolved before /flux-init advertises gitnexus indexing as a default step; until then it is offered as optional.
+- The gitnexus license question (PolyForm Noncommercial vs commercial zaps work) must be resolved before /flux:init advertises gitnexus indexing as a default step; until then it is offered as optional.

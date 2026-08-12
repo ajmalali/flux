@@ -14,7 +14,7 @@ The harness is done when it has carried one real, small feature end-to-end on a 
 
 ## Tasks
 1. Files: (none)
-   Action: guide the human through the loop on a feature of their choice: /flux-init on the target repo → /plan → (fresh session) /tickets → /build one ticket → /show-work → deliberately make one raw commit → next session shows drift → /sync. Collect friction notes at each step.
+   Action: guide the human through the loop on a feature of their choice: /flux:init on the target repo → /plan → (fresh session) /tickets → /build one ticket → /show-work → deliberately make one raw commit → next session shows drift → /sync. Collect friction notes at each step.
    Verify: human completes the loop
    Done: human confirms each step; every friction note becomes a ticket with `discovered-from: FLX-16` (ACs 1-11, 13)
 

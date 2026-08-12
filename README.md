@@ -41,8 +41,10 @@ closes its block by asking the model to relay the same state in one line at the
 top of its first reply — that reply is the earliest a session can say anything,
 since no turn exists until you type.
 
-The line ends in a verb when there is one worth naming: `/pause` once the window
-is 75% full, `/sync` when there is drift. At most one, ordered by what doing
+The line ends in a verb when there is one worth naming: `/pause` once the session
+has spent 350k tokens or filled 75% of the window — whichever comes first, since
+a share alone reads wrong on a 1M window and a count alone reads wrong on a 200k
+one — and `/sync` when there is drift. At most one, ordered by what doing
 nothing costs — a full window loses the session, drift only loses attribution —
 and nothing at all in the steady state, because a hint that is always there
 stops being read.

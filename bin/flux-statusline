@@ -6,6 +6,7 @@
 #   FLX-19-done · main · ctx 41% · 83.6k
 #   FLX-19-done · main · ⚠ 2 drift · ctx 41% · 83.6k · /sync
 #   FLX-04-claimed · main · ctx 78% · 156k · /pause
+#   FLX-04-claimed · main · ctx 36% · 361k · /pause
 #   no tickets · main · ctx 41% · 83.6k
 #
 # Contract (ADR-0001, fail-open): read-only, no network, always exit 0, and
@@ -37,9 +38,13 @@ set -u
 NO_TICKET='no tickets'
 MAX_WALK=40
 
-# Context share at which the line starts suggesting /pause. Low enough to leave
-# room to deposit what the session learned, high enough not to nag through the
-# working half of a window.
+# When the line starts suggesting /pause. Two marks, whichever comes first:
+# an absolute token count, and a share of the window. The share alone is wrong
+# on a 1M window — 75% of it is 750k, far past the point where a planning
+# session should have deposited and handed off. The count alone is wrong on a
+# 200k window, which can never reach it and would go to compaction unwarned.
+# Each mark covers the window size the other misreads.
+HINT_TOKENS=350000
 HINT_CTX_PCT=75
 
 # ---------------------------------------------------------------- helpers ---
@@ -203,7 +208,7 @@ main() {
   # of doing nothing: a full window loses the session, drift loses only the
   # attribution. Arithmetic on values already in hand, so it costs nothing.
   local hint=""
-  if [ "$pct" -ge "$HINT_CTX_PCT" ]; then
+  if [ "$tokens" -ge "$HINT_TOKENS" ] || [ "$pct" -ge "$HINT_CTX_PCT" ]; then
     hint=' · /pause'
   elif [ "$drift" -gt 0 ]; then
     hint=' · /sync'

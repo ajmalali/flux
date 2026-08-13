@@ -52,7 +52,7 @@ A Claude Code plugin ("flux") providing: a beads-backed ticket store wrapped beh
 - AC-8: /build claims atomically, closes with a commit referencing the ticket id; 3 failed qualify cycles escalate classified (intent/spec/code).
 - AC-9: /show-work artifact: one diagram ≤12 nodes scoped to the diff, ≤5-sentence summary, AC checklist with verify commands.
 - AC-10: /pause deposits settled knowledge into durable homes before writing residue; prime surfaces the handoff next session.
-- AC-11: /sync creates retroactive closed tickets for unattributed commits and flags ADR/architecture/glossary contradictions.
+- AC-11: /sync creates retroactive closed tickets for unattributed commits and flags ADR/glossary contradictions (ADR-0010 — the architecture case is the ADR case).
 - AC-12: /run caps concurrency at 3, blocks at checkpoints, tags failures without retrying.
 - AC-13: Fresh repo: marketplace add + install + /flux:init yields all of the above; second /flux:init run is a no-op.
 - AC-14: plugin.json and marketplace.json validate; bin scripts pass shellcheck.

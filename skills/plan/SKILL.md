@@ -59,9 +59,16 @@ it. The working branch ends the detour exactly as it started.
 
 ## 4. Budget
 
-The status line carries this session's token count beside `ctx N%` — `83.6k`, `156k`.
-That count is absolute rather than a share of the window, and it has two marks. Check it
-at every round boundary, never mid-round.
+`.flux/session.json` carries this session's token count, stamped by the heartbeat at the
+end of every turn. Read it at every round boundary, never mid-round:
+
+    jq -r '.context_tokens' .flux/session.json
+
+That count is absolute rather than a share of the window, and it has two marks. It is the
+same number the status line shows the user, as of the last completed turn — so quote it as
+read, and never estimate one. `null` means this session cannot know its count: say that
+plainly instead of substituting a guess, and work the context-pressure rule below, which
+needs no number.
 
 Both marks are advice. Whether a run stops is the user's call and never yours: report the
 count, say what you would do, and carry on grilling unless you are told otherwise.

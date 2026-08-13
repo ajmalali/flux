@@ -12,7 +12,10 @@
 # shared with prime (ADR-0005): atomic, and merging rather than clobbering, so
 # `last_synced_commit` is carried over untouched — only /sync advances it.
 #
-# stdin:  Stop hook JSON — {session_id, transcript_path, cwd, hook_event_name, ...}
+# stdin:  Stop hook JSON — {session_id, transcript_path, cwd, hook_event_name,
+#         prompt_id, permission_mode, stop_hook_active, last_assistant_message,
+#         background_tasks, session_crons}. No token or context figure: the
+#         count comes from the transcript that transcript_path names (FLX-63o).
 # stdout: nothing.
 
 set -u
@@ -29,7 +32,7 @@ main() {
   root=$(repo_root "$cwd")
   file="$root/.flux/session.json"
 
-  local branch head_sha dirty drift claimed last_done synced now
+  local branch head_sha dirty drift claimed last_done synced tokens now
   branch=$(git -C "$root" symbolic-ref --quiet --short HEAD 2>/dev/null)
   if [ -z "$branch" ] && git -C "$root" rev-parse --verify HEAD >/dev/null 2>&1; then
     branch="detached"
@@ -55,6 +58,13 @@ main() {
   synced=$(session_field "$file" last_synced_commit)
   [ -n "$synced" ] || synced=$(git -C "$root" rev-parse HEAD 2>/dev/null)
 
+  # The one number in here the model cannot see for itself. The statusline reads
+  # it live off its own stdin and shows it to the human; a skill working to a
+  # token budget has no such channel, so the count is resolved here — off the
+  # transcript, since the event does not carry it — and left where the skill can
+  # read it (FLX-63o). Empty stamps null, never 0: not knowing is its own answer.
+  tokens=$(context_tokens "$(hook_field "$stdin_json" transcript_path)" 2>/dev/null)
+
   now=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)
 
   session_stamp "$root" \
@@ -63,6 +73,7 @@ main() {
     head_sha "$head_sha" \
     dirty_files "$dirty" \
     drift_commits "$drift" \
+    context_tokens "$tokens" \
     claimed_ticket "$claimed" \
     last_done_ticket "$last_done" \
     last_synced_commit "$synced"

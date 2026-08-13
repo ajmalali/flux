@@ -33,6 +33,12 @@ TICKET_ID_ANY_RE='([A-Z][A-Z0-9]+|bd)-[0-9a-z]+'
 MAX_DONE_SCAN=40
 MAX_DRIFT_SCAN=200
 
+# How much of a transcript's tail context_tokens reads. The record it wants is
+# the last one, and a whole transcript is unbounded — this caps the read at a
+# size that still comfortably contains the final assistant record even when the
+# turns before it carried large tool results.
+MAX_TRANSCRIPT_TAIL=400000
+
 # ---------------------------------------------------------------- helpers ---
 
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -60,13 +66,23 @@ split_row() {
   return 0
 }
 
+# hook_field <json> <key> — a top-level field of the event JSON, "" when jq is
+# missing, the JSON is unusable, or the field is absent. Every hook event shares
+# a handful of these (session_id, transcript_path, cwd, …), so reading one is
+# the same job whichever hook is asking.
+hook_field() {
+  local json="$1" key="$2" val=""
+  if have jq && [ -n "$json" ]; then
+    val=$(printf '%s' "$json" | jq -r --arg k "$key" '.[$k] // empty' 2>/dev/null)
+  fi
+  printf '%s' "$val"
+}
+
 # The working directory a hook was fired in: .cwd from the event JSON passed as
 # $1, falling back to $PWD when jq is missing or the JSON is unusable.
 hook_cwd() {
-  local json="$1" cwd=""
-  if have jq && [ -n "$json" ]; then
-    cwd=$(printf '%s' "$json" | jq -r '.cwd // empty' 2>/dev/null)
-  fi
+  local cwd=""
+  cwd=$(hook_field "$1" cwd)
   [ -n "$cwd" ] && [ -d "$cwd" ] || cwd="$PWD"
   printf '%s' "$cwd"
 }
@@ -147,10 +163,17 @@ json_or_null() {
   if [ -z "$1" ]; then printf 'null'; else json_str "$1"; fi
 }
 
-# The fields we own, in the order they are written. Two are numbers; everything
-# else is a string or null.
-SESSION_KEYS=(last_turn_at branch head_sha dirty_files drift_commits claimed_ticket last_done_ticket last_synced_commit)
+# The fields we own, in the order they are written. Two are plain numbers, one
+# is a number that can also be null; everything else is a string or null.
+SESSION_KEYS=(last_turn_at branch head_sha dirty_files drift_commits context_tokens claimed_ticket last_done_ticket last_synced_commit)
 SESSION_NUMERIC=" dirty_files drift_commits "
+
+# Numbers where absence is a real answer and 0 would be a lie. A repo with no
+# drifted commits genuinely has 0 of them; a session whose token count could not
+# be read has not spent zero tokens, it has spent an unknown number — and a
+# reader deciding whether to recommend a pause has to be able to tell those
+# apart (FLX-63o).
+SESSION_NULLABLE_NUMERIC=" context_tokens "
 
 # Fields we used to own and no longer write, as a JSON array. The merge below
 # deletes them, so a session.json left by an older install stops carrying a
@@ -194,6 +217,43 @@ drift_count() {
       [[ $msg =~ $re ]] || n=$((n + 1))
     done < <(git -C "$root" log -z -n "$MAX_DRIFT_SCAN" --format='%s%n%b' "${base}..HEAD" 2>/dev/null)
   fi
+  printf '%s' "$n"
+}
+
+# context_tokens <transcript_path> — tokens in the model's context window as of
+# the last completed turn, or "" when it cannot be known.
+#
+# This exists because the number is not in the hook event. A Stop event carries
+# session_id, transcript_path, cwd, prompt_id, permission_mode, hook_event_name,
+# stop_hook_active, last_assistant_message, background_tasks, session_crons —
+# and nothing about tokens or the window (FLX-63o, captured and checked, not
+# recalled). What it does carry is the path to the transcript, and every
+# assistant record there has the `usage` the API returned. Their sum is the same
+# quantity the statusline prints from .context_window: input inclusive of cache
+# reads and writes, plus output.
+#
+# Two things it must get right. Sidechain records belong to a subagent's window,
+# not this one, so a scout's context would otherwise land in the user's budget.
+# And the docs say the transcript is written asynchronously, so the last record
+# can lag by a turn — which is why what this returns is described everywhere as
+# "the last completed turn" rather than "now".
+#
+# One tail and one jq, ~9ms on a real transcript. `fromjson?` is what makes the
+# tail safe: the first line it lands in is usually cut mid-record, and a line
+# that does not parse is simply dropped rather than failing the read.
+context_tokens() {
+  local path="${1:-}" n=""
+  [ -n "$path" ] && [ -f "$path" ] && have jq || return 0
+  n=$(tail -c "$MAX_TRANSCRIPT_TAIL" "$path" 2>/dev/null | jq -Rr '
+    fromjson?
+    | select(.type == "assistant" and (.isSidechain | not))
+    | .message.usage
+    | select(type == "object")
+    | ((.input_tokens // 0) + (.cache_creation_input_tokens // 0)
+       + (.cache_read_input_tokens // 0) + (.output_tokens // 0))
+    | floor
+  ' 2>/dev/null | tail -1)
+  case "$n" in '' | *[!0-9]*) return 0 ;; esac
   printf '%s' "$n"
 }
 
@@ -246,6 +306,9 @@ session_stamp() {
     [ "$named" -eq 1 ] || v=$(session_field "$file" "$k")
     if [ "${SESSION_NUMERIC#*" $k "}" != "$SESSION_NUMERIC" ]; then
       case "$v" in '' | *[!0-9]*) v=0 ;; esac
+      body="$body$sep  \"$k\": $v"
+    elif [ "${SESSION_NULLABLE_NUMERIC#*" $k "}" != "$SESSION_NULLABLE_NUMERIC" ]; then
+      case "$v" in '' | *[!0-9]*) v=null ;; esac
       body="$body$sep  \"$k\": $v"
     else
       [ "$k" = claimed_ticket ] && new_claim="$v"

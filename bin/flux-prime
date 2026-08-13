@@ -86,9 +86,16 @@ main() {
   # in a repo flux knows nothing about — starting a session there is no reason
   # to create a .flux/ in it.
   if [ -n "$known" ] || [ -d "$root/.flux" ]; then
+    # context_tokens has to be named here even though prime is not what tracks
+    # it. An unnamed field keeps whatever is on disk, and what is on disk at
+    # SessionStart is the *previous* session's count — which after a /clear
+    # would have a fresh window reading someone else's 300k and reporting a
+    # budget mark it is nowhere near (FLX-63o). Re-read from this session's own
+    # transcript instead: empty on a new window, current on a resumed one.
     session_stamp "$root" \
       claimed_ticket "$(first_id "$claimed")" \
       last_done_ticket "$(first_id "$last_done")" \
+      context_tokens "$(context_tokens "$(hook_field "$stdin_json" transcript_path)" 2>/dev/null)" \
       drift_commits "$drift"
   fi
 

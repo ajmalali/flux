@@ -143,10 +143,16 @@ main() {
     [ "$rest" -gt 0 ] && printf '  (+%s more)\n' "$rest"
   fi
 
+  # Both endings, always. A line that only ever says "run /sync" describes one
+  # legal outcome out of two: work committed outside the harness on purpose is
+  # not a defect, and the user who says so is answering the question, not
+  # refusing it. Naming the decline is also what keeps it from being asked
+  # again — /sync --skip advances the baseline past these commits, so the count
+  # a declined drift leaves behind is zero rather than the same number tomorrow.
   if [ "$drift" -eq 1 ]; then
-    printf '1 commit not linked to tickets — run /sync when convenient.\n'
+    printf '1 commit not linked to tickets — run /sync when convenient, or /sync --skip to accept it as it is.\n'
   elif [ "$drift" -gt 1 ]; then
-    printf '%s commits not linked to tickets — run /sync when convenient.\n' "$drift"
+    printf '%s commits not linked to tickets — run /sync when convenient, or /sync --skip to accept them as they are.\n' "$drift"
   fi
 
   # None of the above is on the user's screen: SessionStart output goes to the

@@ -14,7 +14,19 @@
 BD_BIN="${FLUX_BD:-bd}"
 
 # Ticket ids, as they appear in frontmatter and in commit messages.
-TICKET_ID_RE='FLX-[0-9]+|bd-[a-z0-9]+'
+#
+# Two id shapes, both real: the hand-numbered FLX-09 the markdown store used,
+# and the base36 hash beads stamps on anything it creates itself — `bd init`
+# says so out loud ("Issues will be named: FLX-<hash>"), and FLX-63o is already
+# on this repo's frontier. One body, [0-9a-z]+, covers both.
+#
+# The prefix is per-repo (`bd init -p <PREFIX>`), so this pattern is what we
+# fall back to when the repo has not said what its own is: any all-caps word,
+# plus `bd`, the prefix beads defaults to. Broad on purpose and eager as a
+# result — a commit body citing ADR-0006 or AC-11 reads as linked here, and this
+# repo's bodies cite both. That is why ticket_id_re narrows it wherever the repo
+# can name its prefix, and why this is only the fallback.
+TICKET_ID_ANY_RE='([A-Z][A-Z0-9]+|bd)-[0-9a-z]+'
 
 # How far back store_done reads for the commit that closed a ticket, and how far
 # drift_count reads for commits that name none.
@@ -73,6 +85,46 @@ repo_root() {
 first_id() {
   local row="${1%%$'\n'*}"
   printf '%s' "${row%%$'\t'*}"
+}
+
+# ticket_id_re <root> — the regex this repo's ticket ids match.
+#
+# Files only, never a store verb: beads stays out of the hook path (ADR-0002)
+# and out of its budget (ADR-0004). Two places a repo can name its own prefix —
+# the config key `bd init -p` corresponds to, which bd only writes when it was
+# asked for one, then the first id in the JSONL export, tracked here precisely
+# so every ticket is readable without beads (CLAUDE.md). Both come out of an
+# alphanumeric character class, so neither can carry a regex metacharacter into
+# the pattern it builds. A repo that names neither gets TICKET_ID_ANY_RE and its
+# wider net.
+ticket_id_re() {
+  local root="$1" prefix=""
+  prefix=$(awk '
+    /^[[:space:]]*issue-prefix:/ {
+      v = $0
+      sub(/^[[:space:]]*issue-prefix:[[:space:]]*/, "", v)
+      sub(/#.*$/, "", v)
+      gsub(/[^A-Za-z0-9]/, "", v)
+      if (v != "") { print v; exit }
+    }
+  ' "$root/.beads/config.yaml" 2>/dev/null)
+  [ -n "$prefix" ] || prefix=$(awk '
+    match($0, /"id"[[:space:]]*:[[:space:]]*"[A-Za-z][A-Za-z0-9]*-/) {
+      v = substr($0, RSTART, RLENGTH)
+      sub(/^.*"/, "", v)
+      sub(/-$/, "", v)
+      print v
+      exit
+    }
+  ' "$root/.beads/issues.jsonl" 2>/dev/null)
+
+  # `bd` rides along with a named prefix: it is what ids created before the repo
+  # had one look like, and they are still in the history.
+  case "$prefix" in
+    '') printf '%s' "$TICKET_ID_ANY_RE" ;;
+    bd) printf 'bd-[0-9a-z]+' ;;
+    *) printf '(%s|bd)-[0-9a-z]+' "$prefix" ;;
+  esac
 }
 
 # --------------------------------------------------------- session state ---
@@ -134,11 +186,12 @@ session_field() {
 # fresh through a session that commits — and the statusline only ever reads the
 # number they leave behind (FLX-04, ADR-0006).
 drift_count() {
-  local root="$1" base msg n=0
+  local root="$1" base msg re n=0
   base=$(session_field "$root/.flux/session.json" last_synced_commit)
   if [ -n "$base" ] && git -C "$root" cat-file -e "${base}^{commit}" 2>/dev/null; then
+    re=$(ticket_id_re "$root")
     while IFS= read -r -d '' msg; do
-      [[ $msg =~ $TICKET_ID_RE ]] || n=$((n + 1))
+      [[ $msg =~ $re ]] || n=$((n + 1))
     done < <(git -C "$root" log -z -n "$MAX_DRIFT_SCAN" --format='%s%n%b' "${base}..HEAD" 2>/dev/null)
   fi
   printf '%s' "$n"
@@ -322,7 +375,7 @@ store_claimed() {
 # recent history names a done ticket, it degrades to file order, which is at
 # least stable.
 store_done() {
-  local root="$1" out="" rows="" hit="" id="" msg=""
+  local root="$1" out="" rows="" hit="" id="" msg="" re=""
   if have "$BD_BIN" && have jq; then
     out=$("$BD_BIN" list --status closed --json 2>/dev/null |
       jq -r '
@@ -336,8 +389,9 @@ store_done() {
 
   rows=$(md_done "$root")
   [ -n "$rows" ] || return 0
+  re=$(ticket_id_re "$root")
   while IFS= read -r msg; do
-    [[ $msg =~ ($TICKET_ID_RE) ]] || continue
+    [[ $msg =~ ($re) ]] || continue
     id="${BASH_REMATCH[1]}"
     hit=$(printf '%s\n' "$rows" | awk -F'\t' -v want="$id" '$1 == want { print; exit }')
     [ -n "$hit" ] && { printf '%s\n' "$hit"; return 0; }

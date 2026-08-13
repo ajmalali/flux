@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+#
+# gitnexus-reindex — refresh the gitnexus knowledge graph when HEAD has moved.
+#
+# Repo-local on purpose. This is wired in .claude/settings.json and not in
+# flux's own hooks/hooks.json: shipping it would make gitnexus a de-facto
+# default for every repo that adopts flux, and specs/harness/spec.md keeps that
+# indexing optional until the PolyForm licence question is settled.
+#
+# gitnexus ships a PostToolUse hook that only *notices* staleness, on the stated
+# grounds that a synchronous `analyze` blocks the tool call. This one runs on
+# Stop with "async": true, so it never gates a turn, and fixes rather than tells.
+#
+# Fail-open like every hook in this repo (ADR-0001): every path exits 0, and the
+# guard below runs before anything is spawned, so the steady state is two file
+# reads and no fork.
+
+set -uo pipefail
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+root=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+[ -n "$root" ] || exit 0
+
+meta="$root/.gitnexus/meta.json"
+
+# Never index a repo nobody has indexed. Opting in stays the user's call, and a
+# first analyze on an unindexed tree costs minutes rather than the second and a
+# half a refresh costs.
+[ -f "$meta" ] || exit 0
+
+head_sha=$(git -C "$root" rev-parse HEAD 2>/dev/null) || exit 0
+[ -n "$head_sha" ] || exit 0
+
+# meta_field <jq-path> <key> — read one value out of meta.json.
+#
+# jq when it is there, sed when it is not: this runs on every Stop, including in
+# repos that never installed jq, and a missing parser must mean "skip the
+# refresh", never "crash the hook".
+meta_field() {
+  if have jq; then
+    jq -r "$1 // empty" "$meta" 2>/dev/null
+  else
+    sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\{0,1\}\([^\",}]*\)\"\{0,1\}.*/\1/p" \
+      "$meta" 2>/dev/null | head -1
+  fi
+}
+
+last=$(meta_field '.lastCommit' 'lastCommit')
+[ -n "$last" ] || exit 0
+[ "$head_sha" = "$last" ] && exit 0
+
+# An index built with embeddings loses them to a plain `analyze`, silently — the
+# graph still answers, just worse. gitnexus' own hook carries the same flag for
+# the same reason.
+emb=$(meta_field '.stats.embeddings' 'embeddings')
+case "$emb" in '' | *[!0-9]*) emb=0 ;; esac
+
+# A reindex outlives the turn that started it, so two commits in quick
+# succession would otherwise run two analyzes over one repo. mkdir is the atomic
+# test-and-set.
+lock="$root/.gitnexus/.reindex.lock"
+if ! mkdir "$lock" 2>/dev/null; then
+  # A run killed mid-analyze leaves the directory behind. Without this the hook
+  # would be wedged for good and say nothing about it, which is exactly the
+  # silent-staleness failure it exists to prevent.
+  if [ -n "$(find "$lock" -maxdepth 0 -mmin +10 2>/dev/null)" ]; then
+    rmdir "$lock" 2>/dev/null
+    mkdir "$lock" 2>/dev/null || exit 0
+  else
+    exit 0
+  fi
+fi
+trap 'rmdir "$lock" 2>/dev/null' EXIT
+
+have npx || exit 0
+
+# --skip-agents-md is not optional here. Without it `analyze` appends its own
+# ~100-line section to CLAUDE.md and writes an AGENTS.md beside it, so a hook
+# that fires on every HEAD move would rewrite this repo's instruction file after
+# every commit and leave the tree dirty each time. The content is also wrong for
+# this repo: it mandates an impact query before editing any symbol, against a
+# graph with 0 execution flows, which is the opposite of the minimal-context
+# rule the harness runs on. Refresh the graph; leave the prose alone.
+if [ "$emb" -gt 0 ]; then
+  npx gitnexus analyze --embeddings --skip-agents-md "$root" >/dev/null 2>&1
+else
+  npx gitnexus analyze --skip-agents-md "$root" >/dev/null 2>&1
+fi
+
+exit 0

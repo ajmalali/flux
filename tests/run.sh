@@ -173,7 +173,9 @@ suite_shellcheck() {
     return
   fi
   local f
-  for f in "$ROOT"/bin/* "$ROOT"/tests/run.sh "$ROOT"/tests/lib.sh; do
+  # .claude/hooks/* is not shipped with the plugin, but it runs on every Stop in
+  # this repo and the shell contract applies to it just the same.
+  for f in "$ROOT"/bin/* "$ROOT"/.claude/hooks/* "$ROOT"/tests/run.sh "$ROOT"/tests/lib.sh; do
     [ -f "$f" ] || continue
     case "$f" in *.gitkeep | *.md) continue ;; esac
     if shellcheck -s bash "$f" >"$f.shellcheck.log" 2>&1; then

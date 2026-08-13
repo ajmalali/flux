@@ -6,21 +6,20 @@ marketplace. It is built by dogfooding its own conventions, one ticket at a time
 ## Where things live
 
 - Spec and acceptance criteria: `specs/harness/spec.md`
-- Tickets: `specs/harness/tickets/NN-*.md` — frontmatter `status` advanced in place (pre-beads store)
+- Tickets: beads (`bd`), prefix `FLX-` — imported from the markdown store, which is gone
 - Decisions: `docs/adr/` — read before changing anything they cover
 - Glossary: `CONTEXT.md` — use those terms exactly; they are opinionated
 - Plugin: `.claude-plugin/`, `skills/`, `agents/`, `hooks/hooks.json`, `bin/`, `output-styles/`, `tests/`
 
 ## Working rule
 
-One ticket per fresh session (ADR-0003). The next ticket is the lowest-numbered one
-with `status: open` whose blockers are all `status: done`:
+One ticket per fresh session (ADR-0003). The frontier is computed, never maintained:
 
-    grep -l 'status: open' specs/harness/tickets/*.md | head -3
+    bd ready
 
 Work only within that ticket's Tasks and Boundaries, run each task's Verify command
-fresh, then set its frontmatter to `status: done`. Ticket frontmatter is the source of
-truth for progress — nothing else tracks it.
+fresh, then `bd close <id>`. Beads is the source of truth for progress — nothing else
+tracks it. Reach it only through the store verbs (ADR-0002).
 
 ## Verification
 

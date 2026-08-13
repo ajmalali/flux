@@ -1,7 +1,7 @@
 # Spec: The Flux harness
 
 Full research and design rationale: https://claude.ai/code/artifact/45b7cd63-1002-4d75-82be-5554e755ba13
-Vocabulary: CONTEXT.md. Decisions: docs/adr/. Tickets: specs/harness/tickets/.
+Vocabulary: CONTEXT.md. Decisions: docs/adr/. Tickets: beads (`bd ready`, `bd show FLX-NN`).
 
 ## Problem statement
 
@@ -28,7 +28,7 @@ A Claude Code plugin ("flux") providing: a beads-backed ticket store wrapped beh
 
 - **Layout**: `.claude-plugin/{plugin.json,marketplace.json}`, `skills/<name>/SKILL.md`, `agents/{chore,build,deep}.md`, `hooks/hooks.json`, `bin/{flux-prime,flux-heartbeat,flux-statusline}`, `output-styles/flux.md`.
 - **Hook scripts**: bash + jq. Must complete <500ms and always exit 0 (ADR-0001, fail-open). Paths in hooks.json use `${CLAUDE_PLUGIN_ROOT}`. Verify current hook/statusline JSON schemas against https://code.claude.com/docs/en/hooks and /statusline docs at implementation time — do not trust remembered field names.
-- **Ticket store**: beads behind create/ready/claim/close verbs (ADR-0002). Pre-beads fallback (used for these very tickets): markdown files with YAML frontmatter in `specs/<feature>/tickets/`, `status:` field advanced in place.
+- **Ticket store**: beads behind create/ready/claim/close verbs (ADR-0002), prefix `FLX-`. These tickets were written in the pre-beads fallback — markdown with YAML frontmatter in `specs/<feature>/tickets/`, `status:` advanced in place — and imported once beads was initialized; the fallback code paths remain for repos without `bd`.
 - **Ticket format**: frontmatter `id/title/status/agent/effort/blockers/checkpoint`; body sections Context, Tasks (each task = Files / Action / Verify / Done), Test plan, Boundaries. Routing by complexity score: ≤3 → chore, 4–7 → build, ≥8 → deep.
 - **Skills**: `skills/<name>/SKILL.md`, authored per the `writing-for-agents` conventions (an authoring habit, read before writing one — not a runtime dependency). User-invoked skills set `disable-model-invocation: true`. Skills are composed by reference and never restated inside another skill's body; the composed skills — grilling, domain-modeling, prototype, tdd, codebase-design — ship in this plugin and are invoked as `flux:<name>` (ADR-0009, `skills/NOTICE.md`).
 - **Session split**: ADR-0003 — /tickets refuses a polluted window.

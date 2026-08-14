@@ -8,7 +8,9 @@ marketplace. It is built by dogfooding its own conventions, one ticket at a time
 - Spec and acceptance criteria: `specs/harness/spec.md`
 - Tickets: beads (`bd`), prefix `FLX-` — imported from the markdown store, which is gone
 - Ticket escape hatch: `.beads/issues.jsonl` — tracked on purpose, see House rules
-- Decisions: `docs/adr/` — read before changing anything they cover
+- Decisions: `docs/adr/` — the filenames state the decisions, so `ls docs/adr/` is the
+  whole index; open only the ones a finished diff touches, and check that diff against
+  them before committing. Nothing listed, nothing to check
 - Glossary: `CONTEXT.md` — use those terms exactly; they are opinionated
 - Plugin: `.claude-plugin/`, `skills/`, `agents/`, `hooks/hooks.json`, `bin/`, `output-styles/`, `tests/`
 
@@ -54,7 +56,9 @@ tracks it. Reach it only through the store verbs (ADR-0002).
 
 - Specs: `specs/<feature>/spec.md`
 - Tickets: beads (`bd`), or `specs/<feature>/tickets/*.md` when beads is absent
-- Decisions: `docs/adr/` — read before changing anything they cover
+- Decisions: `docs/adr/` — the filenames state the decisions, so `ls docs/adr/` is the
+  whole index; open only the ones a finished diff touches, and check that diff against
+  them before committing. Nothing listed, nothing to check
 - Glossary: `CONTEXT.md` — use those terms exactly. A term defines a concept, not its
   address: no file paths, since a glossary outlives the layout it was written against
 - Machine state: `.flux/` — gitignored, written by the hooks, never edited by hand

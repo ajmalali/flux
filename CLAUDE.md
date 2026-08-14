@@ -18,11 +18,17 @@ marketplace. It is built by dogfooding its own conventions, one ticket at a time
 
 One ticket per fresh session (ADR-0003). The frontier is computed, never maintained:
 
-    bd ready
+    bd ready --json
 
 Work only within that ticket's Tasks and Boundaries, run each task's Verify command
 fresh, then `bd close <id>`. Beads is the source of truth for progress — nothing else
 tracks it. Reach it only through the store verbs (ADR-0002).
+
+**Every read from beads passes `--json`** — `bd ready --json`, `bd show <id> --json`,
+`bd list --json`. Not a preference: the human-readable output is a rendering, wrapped and
+clipped to a terminal width, and a body read out of it is the body as displayed rather
+than the body as stored. `bin/flux-common` already reads this way; typing it by hand is
+the only place the rule can be broken.
 
 ## Verification
 

@@ -1,0 +1,10 @@
+{
+  "session_id": "guard",
+  "cwd": "__CWD__",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "bd list --json | jq -r .[0].id && git commit -m x"
+  },
+  "tool_use_id": "toolu_guard"
+}

@@ -130,7 +130,59 @@ the same reason `bd init` runs with `--skip-agents` in step 2. It also installs 
 skills under `.claude/skills/gitnexus/`; name those in the report so the user knows they
 arrived.
 
-## 7. Hand back
+## 7. Guard hooks — an offer
+
+Ask whether to install flux's guard hook here. It denies two shapes of Bash call and
+nothing else:
+
+- a beads read (`bd show`, `list`, `ready`, `dep list`, `stats`) that does not pass
+  `--json` — the plain output is a rendering clipped to the terminal width, so a ticket
+  body read out of it is the body as displayed rather than as stored
+- `git commit`, `git push`, `git reset --hard` — the commit is machinery and the agent's
+  contribution is the message text (ADR-0011)
+
+`no` is a first-class answer: `[declined]`, and the rest of the checklist runs. Every
+other flux hook only stamps a gitignored file; this one refuses work, which is why it is
+the repository's to accept rather than something a plugin update installs (ADR-0012).
+
+Resolve the script as step 3 resolves the status line — both lines must succeed, and
+either failing means a broken install and a `[blocked]` line naming the path:
+
+```bash
+GUARD_PATH="$(cd "${CLAUDE_PLUGIN_ROOT}/bin" && pwd)/flux-guard"
+[ -x "$GUARD_PATH" ] && echo "$GUARD_PATH"
+```
+
+`[exists]` when a `PreToolUse` entry already names that exact path — check before writing,
+so a second run writes nothing:
+
+```bash
+jq -e --arg cmd "$GUARD_PATH" \
+  '[.hooks.PreToolUse[]?.hooks[]?.command] | index($cmd)' .claude/settings.json >/dev/null
+```
+
+Otherwise merge the entry, never rewriting the file. Any earlier flux-guard entry is
+dropped in the same pass, which is how a rerun repairs the path after a plugin update;
+entries belonging to anything else are left where they are:
+
+```bash
+mkdir -p .claude
+[ -f .claude/settings.json ] || printf '{}\n' > .claude/settings.json
+jq --arg cmd "$GUARD_PATH" '
+  .hooks.PreToolUse = (
+    [ (.hooks.PreToolUse // [])[] | select(any(.hooks[]?.command; test("flux-guard")) | not) ]
+    + [{matcher: "Bash", hooks: [{type: "command", command: $cmd, timeout: 5}]}]
+  )' .claude/settings.json > .claude/settings.json.new \
+  && mv .claude/settings.json.new .claude/settings.json
+```
+
+Say how to remove it in the same breath as installing it: delete that `PreToolUse` entry
+from `.claude/settings.json`, which is the repository's own file. Say also that hooks are
+snapshotted at session start, so neither the install nor the removal takes effect until
+the next session — otherwise the first denial arrives a session later than expected and
+reads as a bug.
+
+## 8. Hand back
 
 Print the report, then name the files the user may want to commit — whichever of
 `CONTEXT.md`, `CLAUDE.md`, `.gitignore` and `.claude/settings.json` this run touched.
@@ -139,5 +191,6 @@ The commit is theirs to make.
 ## What this skill writes
 
 `CONTEXT.md` when it is absent, `docs/adr/`, `specs/`, `.flux/handoffs/`, one
-`.gitignore` line, the `statusLine` key of `.claude/settings.json`, and the
-`<!-- flux -->` region of `CLAUDE.md`. Everything else in the repository is left as found.
+`.gitignore` line, the `statusLine` key of `.claude/settings.json`, its own `PreToolUse`
+entry there when the guard offer is accepted, and the `<!-- flux -->` region of
+`CLAUDE.md`. Everything else in the repository is left as found.

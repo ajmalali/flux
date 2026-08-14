@@ -1,0 +1,1 @@
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"flux guard: `git commit` is not the agent's to run — the agent supplies the message, a script performs the act (ADR-0011). Write the message to .flux/commit-msg and hand the commit to the user."}}

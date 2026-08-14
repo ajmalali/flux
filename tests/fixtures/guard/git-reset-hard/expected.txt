@@ -1,0 +1,1 @@
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"flux guard: `git reset --hard` discards uncommitted work no ticket asked to discard. Undo one path with `git restore -- <path>`, or ask the user."}}

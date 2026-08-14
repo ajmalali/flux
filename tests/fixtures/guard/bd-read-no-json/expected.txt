@@ -1,0 +1,1 @@
+{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"flux guard: every beads read passes --json. The plain output is a rendering clipped to the terminal width, so a body read out of it is the body as displayed, not as stored. Run: bd show FLX-amg --json"}}

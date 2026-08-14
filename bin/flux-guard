@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+#
+# flux-guard — PreToolUse hook on Bash: deny two shapes prompts cannot hold.
+#
+#   1. A beads read without `--json`. The human-readable output is a rendering,
+#      wrapped and clipped to a terminal width, so a ticket body read out of it
+#      is the body as displayed rather than the body as stored. bin/flux-common
+#      already reads this way; the breakage is always a hand-typed command.
+#   2. `git commit`, `git push`, `git reset --hard`. The commit is machinery and
+#      the agent's only contribution is the message text (ADR-0011); a hard
+#      reset destroys work no ticket asked to destroy.
+#
+# This is the one flux hook that fails CLOSED, and it is the reason it does not
+# ship in hooks/hooks.json with the others (ADR-0012): a deny that arrives with
+# a plugin update nobody read is a broken repo. It is wired per repo by
+# /flux:init, into that repo's .claude/settings.json, after asking.
+#
+# Failing closed is a promise about the denials, not about the script: every
+# path here exits 0, and silence is an allow. Missing jq, unreadable event,
+# a tool that is not Bash, a command that matches nothing — all allow. The only
+# output this ever writes is a deny for a positive match.
+#
+# stdin:  PreToolUse hook JSON — {session_id, transcript_path, cwd,
+#         permission_mode, hook_event_name, tool_name, tool_input, tool_use_id}.
+#         The command is tool_input.command (docs re-read 2026-08-14).
+# stdout: nothing, or one line of deny JSON.
+
+set -u
+
+# shellcheck source=/dev/null
+. "$(dirname "${BASH_SOURCE[0]}")/flux-common" 2>/dev/null || exit 0
+
+# ---------------------------------------------------------------- scanner ---
+# One awk pass over the command, because "does this command run git commit" is
+# not a grep: `echo "git commit"` must run, and a heredoc that writes the words
+# into a file must run too. So the scan tracks quoting, splits the command into
+# segments at the operators that start a new command (`;`, `|`, `&`, `(`, `)`,
+# backtick, `{`, `}`, redirections), skips heredoc bodies wholesale, and only
+# then asks what the first word of each segment is. A quoted or heredoc'd
+# occurrence is never the first word of a segment, so it is never a match.
+#
+# What it deliberately does not see through: `bash -c '…'`, `xargs`, an alias,
+# a script that commits internally. Those are evasions, and this guard is aimed
+# at habit, not at an adversary — a wrapper wide enough to catch them would
+# start denying `bash tests/run.sh`.
+#
+# Prints nothing, or one line: <kind> TAB <the command being named>.
+# shellcheck disable=SC2016  # deliberate: $0 in here is awk's record, not the shell's
+GUARD_SCAN='
+function flush(s,   nt, k, j, i2, cmd, subc, dep, out) {
+  if (hit != "") return
+  nt = split(s, a, /[ \t\n]+/)
+  for (i2 = 1; i2 <= nt; i2++) { q[i2] = a[i2]; gsub(DQ, "", q[i2]); gsub(SQ, "", q[i2]) }
+
+  # Leading VAR=value assignments are not the command.
+  k = 1
+  while (k <= nt && (q[k] == "" || q[k] ~ /^[A-Za-z_][A-Za-z0-9_]*=/)) k++
+  if (k > nt) return
+  cmd = q[k]
+  sub(/^.*\//, "", cmd)
+  if (cmd != "bd" && cmd != "git") return
+
+  # Asking a command to describe itself is never the act itself.
+  for (j = k + 1; j <= nt; j++) if (q[j] == "--help" || q[j] == "-h") return
+
+  if (cmd == "bd") {
+    subc = ""
+    for (j = k + 1; j <= nt; j++) {
+      if (q[j] == "" || substr(q[j], 1, 1) == "-") continue
+      subc = q[j]
+      break
+    }
+    if (subc == "dep") {
+      dep = ""
+      for (j = j + 1; j <= nt; j++) {
+        if (q[j] == "" || substr(q[j], 1, 1) == "-") continue
+        dep = q[j]
+        break
+      }
+      if (dep != "list") return
+    } else if (subc != "show" && subc != "list" && subc != "ready" && subc != "stats") return
+    for (j = k + 1; j <= nt; j++) if (q[j] == "--json") return
+    out = s
+    gsub(/[ \t\n]+/, " ", out)
+    sub(/^ /, "", out)
+    sub(/ $/, "", out)
+    hit = "bd\t" out " --json"
+    return
+  }
+
+  # git: skip the global options that take a value, then the flags, and the
+  # first word left is the subcommand.
+  subc = ""
+  for (j = k + 1; j <= nt; j++) {
+    if (q[j] == "") continue
+    if (q[j] == "-C" || q[j] == "-c" || q[j] == "--git-dir" || q[j] == "--work-tree" ||
+        q[j] == "--namespace" || q[j] == "--exec-path") { j++; continue }
+    if (substr(q[j], 1, 1) == "-") continue
+    subc = q[j]
+    break
+  }
+  if (subc == "commit") {
+    for (j = k + 1; j <= nt; j++) if (q[j] == "--amend") { hit = "commit\tgit commit --amend"; return }
+    hit = "commit\tgit commit"
+    return
+  }
+  if (subc == "push") { hit = "push\tgit push"; return }
+  if (subc == "reset") {
+    for (j = k + 1; j <= nt; j++) if (q[j] == "--hard") { hit = "reset\tgit reset --hard"; return }
+  }
+}
+
+BEGIN { SQ = "\047"; DQ = "\042"; sq = 0; dq = 0; seg = ""; skip = ""; hit = "" }
+
+hit != "" { next }
+
+{
+  if (skip != "") {
+    t = $0
+    sub(/^[ \t]+/, "", t)
+    sub(/[ \t]+$/, "", t)
+    if (t == skip) skip = ""
+    next
+  }
+  line = $0
+  n = length(line)
+  for (i = 1; i <= n; i++) {
+    c = substr(line, i, 1)
+    if (sq) {
+      if (c == SQ) sq = 0
+      seg = seg c
+      continue
+    }
+    if (c == "\\") { seg = seg c substr(line, i + 1, 1); i++; continue }
+    if (dq) {
+      if (c == DQ) dq = 0
+      seg = seg c
+      continue
+    }
+    if (c == SQ) { sq = 1; seg = seg c; continue }
+    if (c == DQ) { dq = 1; seg = seg c; continue }
+    if (c == "<" && substr(line, i + 1, 1) == "<") {
+      rest = substr(line, i + 2)
+      sub(/^-/, "", rest)
+      gsub(SQ, "", rest)
+      gsub(DQ, "", rest)
+      if (match(rest, /^[A-Za-z_][A-Za-z0-9_]*/)) skip = substr(rest, RSTART, RLENGTH)
+      i++
+      flush(seg)
+      seg = ""
+      continue
+    }
+    if (index(";|&()`{}<>", c) > 0) { flush(seg); seg = ""; continue }
+    seg = seg c
+  }
+  if (sq || dq) seg = seg "\n"
+  else { flush(seg); seg = "" }
+}
+
+END { if (hit != "") print hit }
+'
+
+# ---------------------------------------------------------------- reasons ---
+# What the model is shown when a call is denied. Each one names the command it
+# refused and the command or act that replaces it — a deny with no forward move
+# just gets retried.
+
+guard_reason() {
+  case "$1" in
+    bd)
+      printf '%s' "flux guard: every beads read passes --json. The plain output is a rendering clipped to the terminal width, so a body read out of it is the body as displayed, not as stored. Run: $2"
+      ;;
+    commit)
+      printf '%s' "flux guard: \`$2\` is not the agent's to run — the agent supplies the message, a script performs the act (ADR-0011). Write the message to .flux/commit-msg and hand the commit to the user."
+      ;;
+    push)
+      printf '%s' "flux guard: \`$2\` is not the agent's to run (ADR-0011). Say the branch is ready and let the user push."
+      ;;
+    reset)
+      printf '%s' "flux guard: \`$2\` discards uncommitted work no ticket asked to discard. Undo one path with \`git restore -- <path>\`, or ask the user."
+      ;;
+  esac
+}
+
+# ------------------------------------------------------------------- main ---
+
+main() {
+  local stdin_json tool cmd verdict kind named reason
+  stdin_json=$(cat 2>/dev/null)
+  have jq || return 0
+  [ -n "$stdin_json" ] || return 0
+
+  tool=$(hook_field "$stdin_json" tool_name)
+  [ "$tool" = Bash ] || return 0
+
+  cmd=$(printf '%s' "$stdin_json" | jq -r '.tool_input.command // empty' 2>/dev/null)
+  [ -n "$cmd" ] || return 0
+
+  verdict=$(printf '%s\n' "$cmd" | awk "$GUARD_SCAN" 2>/dev/null)
+  [ -n "$verdict" ] || return 0
+
+  split_row "$verdict" kind named
+  reason=$(guard_reason "$kind" "$named")
+  [ -n "$reason" ] || return 0
+
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":%s}}\n' \
+    "$(json_str "$reason")"
+  return 0
+}
+
+main 2>/dev/null
+exit 0

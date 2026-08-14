@@ -113,6 +113,7 @@ run_hook_suite() {
 suite_prime() { run_hook_suite prime "$ROOT/bin/flux-prime"; }
 suite_heartbeat() { run_hook_suite heartbeat "$ROOT/bin/flux-heartbeat"; }
 suite_statusline() { run_hook_suite statusline "$ROOT/bin/flux-statusline"; }
+suite_guard() { run_hook_suite guard "$ROOT/bin/flux-guard"; }
 
 # ------------------------------------------------------------- manifest ----
 
@@ -162,6 +163,16 @@ suite_hooks() {
     bad "hooks/prime-sources: SessionStart matcher must cover every documented source"
     printf '       want: %s\n       got:  %s\n' "$want" "$got"
   fi
+
+  # flux-guard's absence from this manifest is the decision, not an oversight
+  # (ADR-0012): it is the one hook that denies, and a deny arriving with a
+  # plugin update nobody read is a broken repo. /flux:init wires it per repo.
+  # Asserted here so a later session reads a failing test rather than a comment.
+  if jq -e 'any(.hooks[]?[]?.hooks[]?.command; test("flux-guard"))' "$file" >/dev/null 2>&1; then
+    bad "hooks/guard-unregistered: flux-guard must not ship plugin-scoped (ADR-0012)"
+  else
+    ok "hooks/guard-unregistered"
+  fi
 }
 
 # ---------------------------------------------------------------- lint -----
@@ -191,13 +202,14 @@ suite_shellcheck() {
 # ---------------------------------------------------------------- driver ---
 
 SUITES=("$@")
-[ "${#SUITES[@]}" -gt 0 ] || SUITES=(prime heartbeat statusline hooks shellcheck)
+[ "${#SUITES[@]}" -gt 0 ] || SUITES=(prime heartbeat statusline guard hooks shellcheck)
 
 for s in "${SUITES[@]}"; do
   case "$s" in
     prime) suite_prime ;;
     heartbeat) suite_heartbeat ;;
     statusline) suite_statusline ;;
+    guard) suite_guard ;;
     hooks) suite_hooks ;;
     shellcheck) suite_shellcheck ;;
     *) bad "unknown suite: $s" ;;

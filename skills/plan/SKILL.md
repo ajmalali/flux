@@ -85,17 +85,14 @@ advice and is not the user's discretion. It is a real limit arriving, so pause o
 the next round boundary whatever the count reads. This is what keeps a run safe on a
 window too small to reach either mark.
 
-Pause when the user calls it, or when context pressure forces it — three steps, in order:
+Pause when the user calls it, or when context pressure forces it. The steps belong to the
+pause skill and are written down once, there — read that file and follow it:
 
-1. **Flush.** The draft is already current, so this covers only the round in progress: its
-   sections into `specs/<slug>/spec-draft.md`, its terms into `CONTEXT.md`, its ADR-bar
-   decisions into `docs/adr/`.
-2. **Residue.** Write `.flux/handoffs/<branch>-<slug>.md` with four headings — Open
-   questions, Current hypothesis, Next action, Deposited (the paths from step 1). It holds
-   zero facts that those paths do not already carry; a handoff restating a spec section is
-   a bug.
-3. **Hand back.** Tell the user: paused, `/clear` or close the terminal, and the next
-   session surfaces this handoff on its own.
+    ${CLAUDE_PLUGIN_ROOT}/skills/pause/SKILL.md
+
+It is user-invoked, so this run reaches it by reading it rather than by invoking it. Carry
+one fact in: the draft has been kept current every round, so its deposit step covers the
+round in progress and nothing earlier.
 
 That ends the run. Resuming happens in a fresh window, at step 1.
 

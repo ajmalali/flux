@@ -148,6 +148,18 @@ main() {
     done <<<"$handoffs"
     rest=$((n - MAX_HANDOFFS))
     [ "$rest" -gt 0 ] && printf '  (+%s more)\n' "$rest"
+
+    # A citation, never a copy. What reading a handoff obliges is stated once,
+    # in the pause skill, and a second copy here is the drift that statement was
+    # written to undo. But the statement only binds a reader who reaches it, and
+    # the only path every resuming reader walks is this block — a session that
+    # resumed from the relay line with no skill invoked included. Without the
+    # citation such a reader learns the handoff exists and never learns it owes
+    # an archive, so prime reprints it every session and "presence means
+    # unconsumed" stops being true. Listed handoffs only: with none, there is
+    # nothing for the obligation to attach to.
+    # shellcheck disable=SC2016  # deliberate: the model resolves the token, not bash
+    printf 'Reading a handoff is what consumes it; what that obliges is written once — read ${CLAUDE_PLUGIN_ROOT}/skills/pause/SKILL.md § Resuming and follow it.\n'
   fi
 
   # Both endings, always. A line that only ever says "run /sync" describes one

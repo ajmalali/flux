@@ -108,7 +108,14 @@ sitting in the tree rides along.
 
 **The close.**
 
-    bd close <id>
+    bd close <id> --actor "$(basename "$PWD")"
+
+The actor is the worktree because the assignee is. Beads defaults the actor to git
+`user.name` and refuses a close where the two disagree — `assignee is "flux", actor is
+"Ajmal Ali"; reclaim or use --force` — which every ticket claimed the way step 1 claims it
+would otherwise hit. Passing the same value the claim used is not the `--force` that error
+also offers: it overrides nothing, it just names the run's actual actor, and the refusal it
+avoids is there to catch closing *someone else's* claim, which this is not.
 
 That is the trigger: `bin/flux-commit` stages the ticket's files, commits from the slot,
 deletes it, and prints what it staged and what it left dirty. Read that output. A path left

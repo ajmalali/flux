@@ -21,8 +21,9 @@ One ticket per fresh session (ADR-0003). The frontier is computed, never maintai
     bd ready --json
 
 Work only within that ticket's Tasks and Boundaries, run each task's Verify command
-fresh, then `bd close <id>`. Beads is the source of truth for progress — nothing else
-tracks it. Reach it only through the store verbs (ADR-0002).
+fresh, then `bd close <id> --actor "$(basename "$PWD")"` — the actor matches the worktree
+the claim assigned it to, and without it beads compares against git `user.name` and
+refuses. Beads is the source of truth for progress — nothing else tracks it. Reach it only through the store verbs (ADR-0002).
 
 **Every read from beads passes `--json`** — `bd ready --json`, `bd show <id> --json`,
 `bd list --json`. Not a preference: the human-readable output is a rendering, wrapped and

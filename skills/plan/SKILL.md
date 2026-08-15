@@ -13,8 +13,12 @@ separate session (ADR-0003), and code stays out of bounds apart from a prototype
 The input arrives as an idea in prose, a ticket id, or an ADR pointer. A ticket id means
 `bd show <id>`, or the matching file under `specs/*/tickets/` when `bd` is absent; an ADR
 pointer means read that ADR. An unconsumed handoff in `.flux/handoffs/` naming this
-feature means a resumed discussion: read it, move it to `.flux/handoffs/done/`, and treat
-its Deposited paths as settled — the questions it lists are the frontier you start from.
+feature means a resumed discussion. What consuming it obliges belongs to the pause skill
+and is written down once, there — read that file and follow it:
+
+    ${CLAUDE_PLUGIN_ROOT}/skills/pause/SKILL.md
+
+The questions the handoff lists are the frontier you start from.
 
 Settle the slug before the first question: kebab-case, one directory, `specs/<slug>/`. A
 `spec-draft.md` already sitting there is the resumed draft; keep its sections and carry on.

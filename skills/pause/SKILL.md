@@ -62,10 +62,17 @@ that this window is the expensive one.
 ## Resuming
 
 Presence in `.flux/handoffs/` means unconsumed — prime prints filename and first line
-every session until something takes it. The skill that resumes reads the handoff, moves
-it to `.flux/handoffs/done/`, and treats its Deposited paths as settled: a resumed
-discussion never re-asks a question already answered, which is the acceptance criterion
-this whole skill exists for (AC-10).
+every session until something takes it. Whoever reads that file is what takes it, and the
+reading obliges three things, written here and in no other file: read the handoff, move it
+to `.flux/handoffs/done/`, and treat its Deposited paths as settled. The obligation binds
+a reader rather than a role — a skill, an agent, or a session that resumed from prime's
+line with nothing invoked at all owes the same three. A resumed discussion never re-asks a
+question already answered, which is the acceptance criterion this whole skill exists for
+(AC-10).
+
+Reading the handoff is the resume. There is no resume command and none is wanted: by the
+moment anyone could invoke one they have already read the file, so the command would only
+announce a step that had happened.
 
 ## Done
 

@@ -22,9 +22,13 @@ Updated: 2026-08-17 (planning session; no code written yet)
   entry point (`cli.py`) with stub subcommands. Implement `src/gus/executor/` (the `Executor`
   protocol, `ExecConfig`, `ExecResult`, `PromptPack`, `ClaudeAgentSDKExecutor`) and
   `src/gus/metrics/` (JSONL writer + `gus metrics` report) per design.md §1/§3.
-  **Done when:** one real `Executor.run()` round-trip against the SDK with explicit
-  model/effort completes and writes a correct metrics line; unit tests cover config validation
-  and metrics aggregation with the executor stubbed; gates green.
+  **Billing (ADR 0010):** executor preflight asserts subscription auth and strips
+  `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` from the child env; no API-fallback code paths yet
+  beyond detect-and-park.
+  **Done when:** one real `Executor.run()` round-trip **on subscription auth** with explicit
+  model/effort completes and writes a correct metrics line (billing mode recorded); a test
+  proves API keys are stripped from the child env; unit tests cover config validation and
+  metrics aggregation with the executor stubbed; gates green.
 - [ ] **T3 — M0 step 2: runner spine, no LLM.**
   `src/gus/runner/`: checkpoint store (atomic tmp+rename under `.gus/state/<ticket>/`),
   transition function, `run_ticket()` loop with artifact validation + one-retry-then-park, per
@@ -52,6 +56,9 @@ Updated: 2026-08-17 (planning session; no code written yet)
 
 ## Log
 
+- 2026-08-17 — ADR 0010: subscription-first billing. Executor rides logged-in subscription
+  auth; API billing only behind the approved fallback ladder; economics reframed to tokens +
+  usage-window; caps in turns/tokens not USD; limit-hit → park + resume at window reset.
 - 2026-08-17 — Repo created. Plan v1 written, then revised to v2.1 (change doc incorporated:
   metrics+A/B as P0, executor interface, buy-not-build knowledge layer, beads 1.x, re-sequenced
   milestones). design.md written. ADRs 0001–0009. CLAUDE.md + this status file added as the

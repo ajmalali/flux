@@ -30,12 +30,20 @@ class Executor(Protocol):                       # ADR 0007 — the ONLY seam to 
 class ClaudeAgentSDKExecutor:                   # sole module importing claude_agent_sdk
     ...
 
+# Billing (ADR 0010): the executor rides the logged-in Claude subscription. Preflight on every
+# run: assert CLI subscription auth is live and strip ANTHROPIC_API_KEY/AUTH_TOKEN from the
+# child environment. API billing engages only via the approved fallback ladder (auth broken /
+# policy change detected / usage limit hit) and never without user approval; on a usage-limit
+# hit the default is park + schedule resume at window reset, which the checkpoint model makes
+# free.
+
 @dataclass(frozen=True)
 class ExecConfig:
     model: str; effort: str                     # always explicit, never SDK defaults
     permission_mode: str                        # "acceptEdits" | "plan" | ...
     allowed_tools: list[str]
-    max_turns: int; max_budget_usd: float
+    max_turns: int; max_tokens: int             # caps in turns+tokens (subscription mode);
+                                                # max_budget_usd applies only in API fallback
     hooks: dict                                 # e.g. PreToolUse test-edit block
 
 class Stage(Protocol):
@@ -160,9 +168,11 @@ bodies directly.
 ## 3. Metrics store and A/B baseline (P0, per change doc A1/A2)
 
 - `metrics.record()` appends one JSON line per (ticket, stage) to `.gus/usage/metrics.jsonl`:
-  tokens in/out, cache read/write, `total_cost_usd` (estimate), wall time, gate results, retry
-  count, exploratory-call count (Read/Grep outside the context pack, from transcript), model,
-  effort. `gus metrics` aggregates into the KPI table.
+  tokens in/out, cache read/write, wall time, gate results, retry count, exploratory-call count
+  (Read/Grep outside the context pack, from transcript), model, effort, billing mode
+  (subscription | api-fallback), and `total_cost_usd` as a secondary estimate. On subscription
+  (ADR 0010) the primary economics are **tokens + usage-window consumption**; `gus metrics`
+  reports remaining-window pressure alongside the KPI table.
 - `gus run --vanilla <ticket>`: runs the same ticket through plain `claude -p` with just the
   ticket text, records identical metrics. 1-in-10 cadence. Standing kill-criterion (written into
   `gus.toml`): if vanilla wins on cost AND quality for 3 consecutive samples, freeze harness

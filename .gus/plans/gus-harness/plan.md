@@ -47,7 +47,7 @@ orchestrator is stateless and resumable (see design.md §1).
 │   artifacts · deterministic gates · reward-hacking hardening       │
 ├────────────────────────────────────────────────────────────────────┤
 │ L5 Scheduler (deterministic, no LLM)                               │
-│   bd ready → worktree per ticket · max_parallel · max_budget_usd   │
+│   bd ready → worktree per ticket · max_parallel · run token caps   │
 │   serialized merge queue (one merge in flight, rebase-on-green)    │
 │   CI is the merge arbiter                                          │
 ├────────────────────────────────────────────────────────────────────┤
@@ -69,12 +69,15 @@ orchestrator is stateless and resumable (see design.md §1).
 | 0007 | Executor behind an interface; no stage code imports the SDK directly |
 | 0008 | Metrics store + vanilla-Claude A/B baseline are P0 deliverables, with a written kill-criterion |
 | 0009 | Knowledge layer is bought, not built (repowiki map; OpenWiki / deepwiki-by-cc spike) |
+| 0010 | Subscription-first execution; API billing only via approved fallback (auth broken / policy change / limit hit + user approval) |
 
 ## 3. Tech choices
 
 - **Language/tooling:** Python ≥3.12, `uv`-managed, `ruff` + `pyright` + `pytest` on gus itself.
-- **Executor:** `Executor` protocol; first impl `claude-agent-sdk` (Python). Per-call `model`,
-  `effort` (always explicit), `max_turns`, `max_budget_usd`, `permission_mode`, `allowed_tools`,
+- **Executor:** `Executor` protocol; first impl `claude-agent-sdk` (Python) riding the
+  logged-in **subscription auth** (ADR 0010) — preflight verifies it and strips API keys from
+  the child env; API billing only via the approved fallback ladder. Per-call `model`, `effort`
+  (always explicit), `max_turns`, token caps, `permission_mode`, `allowed_tools`,
   `setting_sources=["project"]`; `fork_session` for critique branches.
 - **State:** beads 1.x pinned; on-disk artifacts + checkpoints under `.gus/` (design.md §1).
 - **Repo map:** `repowiki map` (zero-LLM, prompt-ready JSON) or Aider RepoMapper — whichever
@@ -217,7 +220,10 @@ and which planned feature does the data say to cut?"*
 - **Exit:** ≥90% of stages start with zero cold exploration (no Read/Grep outside the pack).
 
 ### M5 — Parallelism + merge discipline
-- Scheduler: `bd ready --json` → worktree per ticket; hard `max_parallel` + `max_budget_usd`.
+- Scheduler: `bd ready --json` → worktree per ticket; hard `max_parallel` + per-run token caps;
+  on subscription usage-limit hit: park all in-flight tickets, schedule resume at window reset
+  (ADR 0010) — parallel runs burn the shared window faster, so the scheduler tracks window
+  pressure before admitting new tickets.
 - Test Claude Code's **native worktree isolation** first; external viewer (Claude Squad /
   community vibe-kanban) only if native can't show N parallel runs (E1).
 - **Serialized merge queue (E2, Refinery pattern):** one merge in flight, rebase-next-on-green;
@@ -249,7 +255,11 @@ and which planned feature does the data say to cut?"*
   value is the beads graph, knowledge artifacts, ticket-sizing discipline, and gate suite.
 - **Stale context remains the dominant residual risk** — drift gate mitigates, doesn't eliminate.
 - **Sycophancy only partially mitigable** — human owns final architecture calls.
-- **`total_cost_usd` is a client-side estimate** — verify routing economics against real billing.
+- **Subscription programmatic-use policy can shift** (e.g. `--bare` requiring an API key
+  becoming the `-p` default) — the executor preflight detects this rather than assuming; the
+  fallback ladder (ADR 0010) is the response, never a silent billing switch.
+- **`total_cost_usd` is a client-side estimate** and only matters in API-fallback mode; primary
+  economics are tokens + usage-window consumption.
 - Landscape tools (Archon, Gas City, OpenWiki, deepwiki-by-cc, RepoWiki) are young — every
   adoption goes through a timeboxed spike with a written memo, never straight to dependency.
 

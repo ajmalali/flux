@@ -26,6 +26,9 @@ material, not instructions.
 - Only `src/gus/executor/` may import `claude_agent_sdk` (ADR 0007). Stage/runner code depends
   on the `Executor` protocol only.
 - Model and effort are always explicit in `ExecConfig` — never rely on SDK defaults.
+- gus runs on the user's logged-in Claude **subscription**. Never configure or suggest API-key
+  billing except through the approved fallback ladder in ADR 0010 (requires user approval).
+  Executor code must strip `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` from child environments.
 - Milestone exit benchmarks (plan.md §5) gate advancement: do not open new scope while the
   current milestone's benchmark is unmet.
 - End every working session by executing the session-close checklist in status.md — status.md is

@@ -1,17 +1,20 @@
 # gus-harness — status & next task
 
-Updated: 2026-08-17 (planning session; no code written yet)
+Updated: 2026-08-17 (T1 substrate spikes executed; decision: keep custom Python)
 
 ## Current state
 
-- Planning complete: `plan.md` (v2.1), `design.md` (mechanism contracts), ADRs 0001–0009.
-- **No code exists.** No `pyproject.toml`, no package, beads not installed, no tooling set up.
-- Open decisions: substrate memo (T1), repo-map tool choice (repowiki map vs RepoMapper, part
-  of T4/M0).
+- Planning complete: `plan.md` (v2.1), `design.md` (mechanism contracts), ADRs 0001–0010.
+- **T1 done.** Substrate spikes run hands-on (Archon 0.9.0 live end-to-end, Gas City 1.4.1
+  to the orchestration layer); decision memo at `substrate-memo.md`: **keep custom Python**,
+  adopt beads molecules as the pipeline container (at M4/D2), steal Archon's per-node
+  event-log shape for A2 metrics. beads (bd) 1.2.1 installed via Homebrew, pin `1.x`.
+- **No code exists yet.** No `pyproject.toml`, no package, no tooling set up.
+- Open decisions: repo-map tool choice (repowiki map vs RepoMapper, part of T4/M0).
 
 ## Task queue — do the first unchecked item
 
-- [ ] **T1 — Substrate decision (pre-M0).** Either (a) run the timeboxed spikes: implement a
+- [x] **T1 — Substrate decision (pre-M0).** Either (a) run the timeboxed spikes: implement a
   two-stage flow with a gate between them in Archon and in Gas City, score each on the 4-point
   scorecard in plan.md §5 Pre-M0, assess beads-1.0 molecules; or (b) if the user opts to skip
   spiking, adopt the default hypothesis (custom Python wins). **Either way**, write the decision
@@ -56,6 +59,21 @@ Updated: 2026-08-17 (planning session; no code written yet)
 
 ## Log
 
+- 2026-08-17 — **T1 done (spiked, option a).** Both substrates run hands-on in scratchpad.
+  Archon 0.9.0: full two-stage-with-gate live run on subscription auth; gate fail → bounded
+  fix loop → review worked; `when:` skip verified both ways; per-node tokens/cost_usd in its
+  event store. Killer: YAML config fields are not substitution surfaces — `model:
+  "$node.output.model"` went to the API as a literal (404). Gas City 1.4.1: v2 formula with
+  `[steps.check]` pytest gate compiled/cooked into beads, condition-skip + `--var`
+  parameterization verified; `check.max_attempts` is a typed int (no vars); live agent leg
+  stalled on unwired provider in the minimal template — timeboxed out, runtime weight
+  (launchd supervisor, tmux, dolt) argues against adoption anyway. beads 1.2.1 molecules:
+  **positive** — poured the exact 5-stage pipeline (tests→implement→review→fix→pr, human
+  gate, dependency-gated readiness) from a bd formula with zero Gas City. Decision: keep
+  custom Python; memo at `substrate-memo.md`; revisit only at phase gates. Surprises worth
+  keeping: Archon runs cleanly on subscription login and surfaces the five-hour-window
+  rate-limit status in run logs (useful for ADR 0010 park-on-limit); bd 1.x formulas live
+  in `.beads/formulas/*.formula.toml` (note the double extension).
 - 2026-08-17 — ADR 0010: subscription-first billing. Executor rides logged-in subscription
   auth; API billing only behind the approved fallback ladder; economics reframed to tokens +
   usage-window; caps in turns/tokens not USD; limit-hit → park + resume at window reset.

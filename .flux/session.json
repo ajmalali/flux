@@ -1,0 +1,11 @@
+{
+  "last_turn_at": "2026-08-17T20:51:50Z",
+  "branch": "main",
+  "head_sha": "1c5703c",
+  "dirty_files": 1,
+  "drift_commits": 0,
+  "context_tokens": 85512,
+  "claimed_ticket": null,
+  "last_done_ticket": null,
+  "last_synced_commit": "1c5703c8348d35bbfbf686d134e2a89a60d6124d"
+}

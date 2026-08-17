@@ -12,8 +12,10 @@ per-stage state transitions, `discovered-from` deps for newly-found work. Pin a 
 
 ## Consequences
 - Deterministic topological scheduling for free; git-backed JSONL merges cleanly.
-- Alpha-stage churn risk: expect `bd doctor --fix`; the `br` Rust port (frozen classic
-  SQLite+JSONL architecture) is the fallback if instability bites.
+- *(Amended 2026-08-17, v2.1 landscape update)* beads v1.0.0 shipped April 2026; pin the 1.x
+  minor. The earlier `br` Rust-port fallback is dropped. Assess 1.0 "molecules" (deterministic
+  step workflows with a full ledger) as a possible native container for the 5-stage pipeline —
+  feeds the Gas City substrate evaluation.
 - Graph construction from a plan is human-supervised (agents produce unlinked/mis-ordered graphs).
 - bd's store lives in `.beads/` (its default) — the one gus artifact not under `.gus/`; move it
   under `.gus/beads/` if bd gains a custom-path option.

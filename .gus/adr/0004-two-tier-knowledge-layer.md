@@ -1,6 +1,7 @@
 # 0004 — Two-tier knowledge layer; verification reads stay mandatory
 
-Status: accepted
+Status: accepted — amended by 0009 (the layer is bought, not built; the noise-vs-verification
+principle here is unchanged)
 
 ## Context
 Goal is to eliminate tool-call *noise* from interactive research/planning sessions — not to

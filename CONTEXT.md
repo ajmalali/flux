@@ -22,6 +22,9 @@ _Avoid_: context limit.
 
 **Drift**: Work that happened outside the harness — commits referencing no ticket, or a dirty diff with no claim. Detected by prime, repaired by /sync.
 
+**Baseline**: The commit up to which work is accounted for — ticketed, or accepted on the record by a declined reconciliation. Drift is measured from it and only /sync moves it. A baseline that is no longer in the current history, after a rebase or an amend, is *unresolvable*: drift reads zero until /sync re-anchors it, which is a different answer from a clean tree and is reported as one.
+_Avoid_: sync point, last synced commit (that is the field it is stored in, not the concept).
+
 **Durable home**: The one permanent place a piece of knowledge lives: glossary terms in CONTEXT.md, decisions in docs/adr/, specs in specs/. Everything else may only point at it.
 _Avoid_: notes, state file.
 

@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+#
+# flux-drift — list the commits since the sync baseline that name no ticket.
+#
+# The detector half of /sync (ADR-0001: detection is hook-work, repair is
+# skill-work). It walks, it matches, it prints; it never reads a diff, never
+# groups commits, and never writes anything. Everything a reader would want next
+# — what a commit changed, which commits are one piece of work — is /sync's own
+# `git show` over the shas printed here.
+#
+# The walk itself is drift_list in flux-common, which is also what prime and the
+# heartbeat count. One matcher, one definition of drift: a skill that built its
+# own would disagree with the drift line that sent the user here, silently and in
+# both directions. This passes 0 for the cap, so unlike the hooks it always
+# reports a complete set — that is what lets /sync --skip advance the baseline
+# over commits it has fully enumerated.
+#
+# stdin:  ignored.
+# stdout: one state line, then one `sha TAB subject` row per drifted commit,
+#         oldest first.
+#
+#   drift <base>          rows follow — the commits to reconcile
+#   synced <base>         baseline resolves, nothing unattributed since it
+#   unseeded              no baseline recorded yet; the harness has not started
+#                         counting, and history before it is not drift
+#   unresolvable <base>   the recorded baseline is gone — rebase, amend, reset.
+#                         Detection is off for this worktree, reporting 0, until
+#                         /sync re-anchors it
+#   no-repo               $PWD is not in a git repository
+#
+# Exit status is 0 for all of them (ADR-0001, fail-open): the state is the line,
+# never the code, because a caller reading a non-zero exit cannot tell "your
+# baseline was rewritten" from "flux-drift is not installed".
+
+set -u
+
+# shellcheck source=/dev/null
+. "$(dirname "${BASH_SOURCE[0]}")/flux-common" 2>/dev/null || exit 0
+
+main() {
+  local root base rows state
+
+  root=$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null)
+  if [ -z "$root" ] || [ ! -d "$root" ]; then
+    printf 'no-repo\n'
+    return 0
+  fi
+
+  # 0: no cap. A run the user asked for by hand has no 500ms budget to keep.
+  rows=$(drift_list "$root" 0)
+  state=$?
+  base=$(session_field "$root/.flux/session.json" last_synced_commit)
+
+  case "$state" in
+    "$DRIFT_UNSEEDED")
+      printf 'unseeded\n'
+      ;;
+    "$DRIFT_LOST")
+      printf 'unresolvable %s\n' "$base"
+      ;;
+    *)
+      if [ -n "$rows" ]; then
+        printf 'drift %s\n' "$base"
+        printf '%s\n' "$rows"
+      else
+        printf 'synced %s\n' "$base"
+      fi
+      ;;
+  esac
+  return 0
+}
+
+main "$@"
+exit 0

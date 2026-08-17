@@ -29,9 +29,17 @@ BD_BIN="${FLUX_BD:-bd}"
 TICKET_ID_ANY_RE='([A-Z][A-Z0-9]+|bd)-[0-9a-z]+'
 
 # How far back store_done reads for the commit that closed a ticket, and how far
-# drift_count reads for commits that name none.
+# drift_list reads for commits that name none.
 MAX_DONE_SCAN=40
 MAX_DRIFT_SCAN=200
+
+# The state of the sync baseline, as drift_list's exit status. All three of the
+# quiet states below produce no rows, so a caller that reads only stdout cannot
+# tell a clean tree from a detector that has stopped working.
+DRIFT_OK=0
+DRIFT_CAPPED=1
+DRIFT_UNSEEDED=2
+DRIFT_LOST=3
 
 # How much of a transcript's tail context_tokens reads. The record it wants is
 # the last one, and a whole transcript is unbounded — this caps the read at a
@@ -200,23 +208,92 @@ session_field() {
   printf '%s' "$val"
 }
 
-# How many commits since the sync baseline carry no ticket id — work that
-# happened outside the harness. Always a number; 0 whenever there is no usable
-# baseline, which is also the honest answer before the first /sync.
+# drift_list <root> [max] — the commits since the sync baseline that carry no
+# ticket id, one `sha TAB subject` row each, oldest first. Work that happened
+# outside the harness, in the order it happened.
+#
+# The exit status is the state of the baseline, because the three states that
+# produce no rows are not the same answer:
+#   DRIFT_OK (0)        the baseline resolves and every drifted commit is listed
+#   DRIFT_CAPPED (1)    the same, but the walk stopped at <max>: rows are a floor
+#   DRIFT_UNSEEDED (2)  no last_synced_commit yet — survives only until the first
+#                       heartbeat seeds it from HEAD, and pre-harness history is
+#                       not drift, so the honest count is 0
+#   DRIFT_LOST (3)      the baseline is no longer in this line of history:
+#                       rebase, amend, reset, a branch rewritten under a
+#                       worktree. Detection is off for that worktree until /sync
+#                       re-anchors it, which is the one thing that can.
+#
+# The test for that last state is reachability, not existence. An amended commit
+# is unreferenced, not deleted — its object sits in the database until a gc
+# weeks later, so `cat-file -e` says yes and `base..HEAD` then means "everything
+# not reachable from a commit that is no longer in this history", which is the
+# whole rewritten branch. Drift does not go quiet after a rebase; it inflates,
+# and the count it inflates to looks like an ordinary answer.
+#
+# <max> defaults to MAX_DRIFT_SCAN and 0 walks the whole window. The cap is a
+# budget rather than part of the definition: the hooks walk this every session
+# and every turn inside 500ms (ADR-0001) and print a floor, while /sync is
+# hand-invoked, passes 0, and so only ever acts on a complete set.
+#
+# The matcher lives here and nowhere else. ticket_id_re is per-repo and this
+# reads subject *and* body against it; a caller that rebuilds either half — a
+# `--grep` over subjects, a literal FLX-[0-9]+ — disagrees with prime's count
+# silently and in both directions.
+drift_list() {
+  local root="$1" max="${2-$MAX_DRIFT_SCAN}" base re rec sha rest n=0
+  base=$(session_field "$root/.flux/session.json" last_synced_commit)
+  [ -n "$base" ] || return "$DRIFT_UNSEEDED"
+  git -C "$root" merge-base --is-ancestor "$base" HEAD 2>/dev/null || return "$DRIFT_LOST"
+
+  # -n only when there is a cap; the ${a[@]+…} guard is what keeps an empty
+  # array expansion from tripping `set -u` on bash 3.2.
+  local -a lim=()
+  case "$max" in
+    '' | 0 | *[!0-9]*) ;;
+    *) lim=(-n "$max") ;;
+  esac
+
+  # One record per commit, NUL-separated: sha, then subject and body. Splitting
+  # on the first newline keeps the sha out of the match — it is git's hex, not
+  # the author's words.
+  re=$(ticket_id_re "$root")
+  while IFS= read -r -d '' rec; do
+    n=$((n + 1))
+    sha="${rec%%$'\n'*}"
+    rest="${rec#*$'\n'}"
+    [[ $rest =~ $re ]] || printf '%s\t%s\n' "$sha" "${rest%%$'\n'*}"
+  done < <(git -C "$root" log -z --reverse ${lim[@]+"${lim[@]}"} \
+    --format='%H%n%s%n%b' "${base}..HEAD" 2>/dev/null)
+
+  [ "${#lim[@]}" -gt 0 ] && [ "$n" -ge "$max" ] && return "$DRIFT_CAPPED"
+  return "$DRIFT_OK"
+}
+
+# How many commits since the sync baseline carry no ticket id: the rows of
+# drift_list, counted. Always a number, and 0 whenever there is no usable
+# baseline — the honest answer before the first /sync, and a silent one after a
+# rebase, which is why the state itself is drift_list's to report.
 #
 # The baseline is read, never written: only /sync (FLX-14) advances it. Both
 # hooks call this — prime to print its sentence, the heartbeat to keep the count
 # fresh through a session that commits — and the statusline only ever reads the
 # number they leave behind (FLX-04, ADR-0006).
 drift_count() {
-  local root="$1" base msg re n=0
-  base=$(session_field "$root/.flux/session.json" last_synced_commit)
-  if [ -n "$base" ] && git -C "$root" cat-file -e "${base}^{commit}" 2>/dev/null; then
-    re=$(ticket_id_re "$root")
-    while IFS= read -r -d '' msg; do
-      [[ $msg =~ $re ]] || n=$((n + 1))
-    done < <(git -C "$root" log -z -n "$MAX_DRIFT_SCAN" --format='%s%n%b' "${base}..HEAD" 2>/dev/null)
-  fi
+  local root="$1" rows="" state=0 n=0
+  rows=$(drift_list "$root")
+  state=$?
+  case "$state" in
+    "$DRIFT_OK" | "$DRIFT_CAPPED") ;;
+    *) rows="" ;;
+  esac
+  while [ -n "$rows" ]; do
+    n=$((n + 1))
+    case "$rows" in
+      *$'\n'*) rows="${rows#*$'\n'}" ;;
+      *) rows="" ;;
+    esac
+  done
   printf '%s' "$n"
 }
 

@@ -11,6 +11,10 @@
 #   setup.sh      builds the fixture repo in $PWD (the case work dir)
 #   stdin.json    hook input; the token __CWD__ is replaced with the work dir
 #   expected.txt  exact expected stdout (absent means "expect empty stdout")
+#   normalize.sed optional; stdout is filtered through it before the diff, for
+#                 values the fixture cannot know — a commit sha is git's, and a
+#                 case that pinned one would have to be regenerated every time
+#                 its setup.sh gained a line
 #   check.sh      optional; assertions about side effects, run in the work dir
 #                 after the hook, with tests/lib.sh available at $TESTS_ROOT
 #   bin/          optional; prepended to PATH so a case can stub a binary
@@ -87,6 +91,10 @@ run_hook_suite() {
     (cd "$work" && PATH="$path" FLUX_BD="${case}bin/bd" "$script" <"$in") >"$out" 2>"$err"
     code=$?
 
+    if [ -f "$case/normalize.sed" ] && sed -f "$case/normalize.sed" "$out" >"$out.norm" 2>/dev/null; then
+      mv -f "$out.norm" "$out"
+    fi
+
     expected="$case/expected.txt"
     if [ ! -f "$expected" ]; then
       expected="$tmp/$name.empty"
@@ -114,6 +122,7 @@ suite_prime() { run_hook_suite prime "$ROOT/bin/flux-prime"; }
 suite_heartbeat() { run_hook_suite heartbeat "$ROOT/bin/flux-heartbeat"; }
 suite_statusline() { run_hook_suite statusline "$ROOT/bin/flux-statusline"; }
 suite_guard() { run_hook_suite guard "$ROOT/bin/flux-guard"; }
+suite_drift() { run_hook_suite drift "$ROOT/bin/flux-drift"; }
 
 # ------------------------------------------------------------- manifest ----
 
@@ -202,7 +211,7 @@ suite_shellcheck() {
 # ---------------------------------------------------------------- driver ---
 
 SUITES=("$@")
-[ "${#SUITES[@]}" -gt 0 ] || SUITES=(prime heartbeat statusline guard hooks shellcheck)
+[ "${#SUITES[@]}" -gt 0 ] || SUITES=(prime heartbeat statusline guard drift hooks shellcheck)
 
 for s in "${SUITES[@]}"; do
   case "$s" in
@@ -210,6 +219,7 @@ for s in "${SUITES[@]}"; do
     heartbeat) suite_heartbeat ;;
     statusline) suite_statusline ;;
     guard) suite_guard ;;
+    drift) suite_drift ;;
     hooks) suite_hooks ;;
     shellcheck) suite_shellcheck ;;
     *) bad "unknown suite: $s" ;;

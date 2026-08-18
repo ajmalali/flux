@@ -212,6 +212,21 @@ harness was not about to exercise anyway: flux runs those same commands itself m
 `Stage.name` and `Gate.name` are declared as read-only properties so an implementation can be a
 frozen dataclass — the natural shape for something fully described by its configuration.
 
+### Reaching the artifact when the worktree is not the root (T5.1)
+
+`ExecConfig.add_dirs` grants a session directories outside its `cwd`, and every stage with a
+required artifact grants the ticket's context directory. This is not a convenience: handoff
+artifacts live under the *root* (`.flux/context/<ticket>/`) while the session works in the
+*worktree*, and those stop being the same directory the moment `flux run --worktree` is used —
+which is the normal case at M5, and the case the A/B baseline needs so both arms share one
+metrics store.
+
+Observed live, 2026-08-18, before the grant existed: told to write an absolute path it had no
+access to, the implement session wrote `impl-notes.md` at the same relative path *inside the
+worktree*, the runner did not find it there, and the ticket parked after two paid attempts
+(~36k uncached tokens). The failure mode is worth remembering in general — **a session denied
+access to what it was told to do does the nearest thing it can reach, and reports success.**
+
 ### The repo map (T4b, ADR 0009)
 
 Bought, and kept at arm's length: `[repo_map] command` in `flux.toml` names the ranker
@@ -293,6 +308,26 @@ bodies directly.
   ticket text, records identical metrics. 1-in-10 cadence. Standing kill-criterion (written into
   `flux.toml`): if vanilla wins on cost AND quality for 3 consecutive samples, freeze harness
   feature work and investigate.
+
+As built (T5.1) — `flux/ab.py` writes the baseline arm, `flux/metrics/ab.py` reads it:
+
+- **Three fairness rules, because breaking any of them hands the comparison to one side.**
+  The baseline runs the *same model and effort as `implement`*, mirrored live rather than copied
+  (re-routing the stage re-routes the baseline, or the A/B silently becomes a model comparison);
+  it gets the *same gate pre-approval*, since T4 measured what a session that cannot run its
+  gates does instead; and it *refuses to run in a worktree the harness already worked*, before
+  spending anything, because that number would say vanilla solved it in one cheap turn.
+- **A baseline sample writes no checkpoint and no artifact.** It is a measurement, not a
+  pipeline run, and must never make the transition function think a stage is done.
+- **"Wins" had to be defined, because the criterion's prose does not.** Cost is uncached input
+  plus output summed over every line the ticket cost, retries included (cache reads excluded, for
+  the same reason the runner's budget excludes them). Quality is an ordinal over the gates *flux*
+  ran — all green > no gates at all > any failure — taking the **latest** verdict per gate name,
+  so a gate that went red at implement and green after a fix ends green. Vanilla wins a ticket
+  when it is **strictly cheaper and not worse**: the harness is the thing on trial, so a tie on
+  quality at a lower price is a loss for it, not a draw.
+- **The block prints even when it is empty**, saying "no paired samples yet". Silence would read
+  as "nothing to report" at exactly the phase gate that exists to ask.
 
 ## 4. What gets built vs. bought
 

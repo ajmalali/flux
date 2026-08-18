@@ -341,3 +341,14 @@ def test_a_current_map_carries_no_caveat(tmp_path: Path) -> None:
     write_map(tmp_path, head=head_sha(tmp_path))
 
     assert "may not match" not in stage.hydrate(ticket).context_pack
+
+
+def test_the_stage_can_reach_the_directory_it_must_write_to(tmp_path: Path) -> None:
+    """The handoff artifact lives under the root; the session runs in the worktree.
+
+    Those are the same directory today and different at M5 (and under
+    ``flux run --worktree``), so the grant is unconditional — a stage told to write a
+    file it cannot reach writes it somewhere else and parks.
+    """
+    stage, ticket = make(tmp_path)
+    assert stage.config(ticket).add_dirs == (ticket.context_dir,)

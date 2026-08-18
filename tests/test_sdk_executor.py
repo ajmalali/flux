@@ -336,3 +336,23 @@ def test_preflight_can_be_disabled_for_tests() -> None:
     executor = ClaudeAgentSDKExecutor(verify_billing=False)
     assert executor.ensure_preflight() is None
     assert executor.auth is None
+
+
+def test_build_options_grants_directories_outside_the_worktree(tmp_path: Path) -> None:
+    """``add_dirs`` is how a stage reaches its artifact once worktree ≠ root.
+
+    Observed live on 2026-08-18: with the context directory out of reach, the implement
+    stage wrote `impl-notes.md` at the same relative path *inside the worktree*, where
+    the runner does not look, and the ticket parked after two paid attempts.
+    """
+    context = tmp_path / "context"
+    cfg = ExecConfig(model="m", effort="high", cwd=tmp_path, add_dirs=(context,))
+    assert build_options(PACK, cfg).add_dirs == [str(context)]
+
+
+def test_build_options_defaults_the_system_prompt_to_the_clis_own(tmp_path: Path) -> None:
+    """An empty pack prompt means "the CLI default", which is what the A/B baseline is."""
+    options = build_options(PromptPack(system_prompt="", context_pack="do it"), ExecConfig(
+        model="m", effort="high"
+    ))
+    assert options.system_prompt is None

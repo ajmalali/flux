@@ -121,8 +121,12 @@ def build_options(pack: PromptPack, cfg: ExecConfig) -> ClaudeAgentOptions:
         max_budget_usd=cfg.max_budget_usd,
         task_budget=task_budget,
         setting_sources=list(cfg.setting_sources),
-        system_prompt=pack.system_prompt,
+        # Empty means "the CLI's own default preset", which is what the A/B baseline
+        # arm needs: a vanilla session must not be handed a harness system prompt, and
+        # an empty string here would give it a blank one instead of the real default.
+        system_prompt=pack.system_prompt or None,
         cwd=cfg.cwd,
+        add_dirs=[str(path) for path in cfg.add_dirs],
         hooks=hooks,
         env={"CLAUDE_AGENT_SDK_CLIENT_APP": _CLIENT_APP},
     )

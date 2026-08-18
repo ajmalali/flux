@@ -1,6 +1,6 @@
 # flux-harness — status & next task
 
-Updated: 2026-08-18 (T4c done — gitnexus **refused**, ADR 0009 C2 upheld. Next: T5/M1, then T5b re-tests the knowledge layer on a large repo)
+Updated: 2026-08-18 (T5 opened and expanded; **T5.1 done** — the A/B baseline exists and its first live sample went *against* the harness. Next: T5.2, the tests stage)
 
 ## Current state
 
@@ -32,6 +32,21 @@ Updated: 2026-08-18 (T4c done — gitnexus **refused**, ADR 0009 C2 upheld. Next
   `tests/fakes.py` (`FakeStage`/`FakeGate`/`FakeExecutor`) and never touch the SDK.
 - **What T5 plugs into.** Four more `Stage` implementations against the same protocol, added to
   `flux.stages.build_pipeline`. Nothing in the runner or the gate layer needs to change.
+- **T5.1 done — the harness can now be compared against not having it.** `src/flux/ab.py`
+  (`flux run <ticket> --vanilla`: the ticket text, no pack, no repo map, no artifact contract,
+  then the same gates) and `src/flux/metrics/ab.py` (paired per-ticket table, the `vanilla_every`
+  cadence, and a machine-checked kill-criterion `flux metrics` prints whether or not it is
+  welcome). 432 tests. **First live pairing, and it went against the harness**: on a trivial
+  ticket in a scratch repo both arms passed the gates and the harness cost **1.41x** the tokens
+  (13.8k vs 9.8k billable) — cheaper on turns (9 vs 14) and wall time (32s vs 38s), dearer on
+  tokens. n=1 on a toy ticket proves nothing except that the measurement works, which was the
+  deliverable. Two more samples in that direction and the criterion fires.
+- **A real bug fell out of the first live run:** with `--worktree` pointing somewhere other than
+  `--root`, the implement session was told to write `impl-notes.md` to a path outside its reach,
+  so it wrote the same relative path *inside the worktree* and the ticket parked after two paid
+  attempts. `ExecConfig.add_dirs` now grants the ticket's context directory; design.md §1 has the
+  general lesson (a session denied access to what it was told to do does the nearest thing it
+  can reach, and reports success).
 - **This repo now dogfoods its own config** — `.flux/flux.toml` is committed, written by
   `flux init`, and its gate suite is the same three commands CLAUDE.md names.
 - **T4b done — M0 is complete.** Repo map resolved to **`repowiki map`** (bake-off memo at
@@ -108,14 +123,60 @@ Updated: 2026-08-18 (T4c done — gitnexus **refused**, ADR 0009 C2 upheld. Next
   4. CLI vs MCP — **pinned CLI**; the session's own MCP server is version-broken against the
      index format and returns empty results with exit 0.
 
-- [ ] **T5 — M1: full five-stage pipeline + hardening + A/B baseline** (expand into subtasks
-  when reached; specs in plan.md §5 M1 and the design.md stage I/O table). Before opening it,
-  answer the standing phase-gate question in writing (plan.md §5): *did the harness beat vanilla
-  Claude Code on the last A/B samples?* — at M0 there are none yet, so the honest answer is "no
-  data; the A/B harness is itself an M1 deliverable", and that is the first thing T5 should fix.
-  Carried into T5 from T4: the `PreToolUse` test-edit block (it needs a tests stage to protect),
-  and the review stage must use a **different model** from implement (`flux.toml` already routes
-  it to Opus with `permission_mode = "plan"`).
+- [ ] **T5 — M1: full five-stage pipeline + hardening + A/B baseline.** Expanded into T5.1–T5.6
+  below (specs in plan.md §5 M1 and the design.md stage I/O table). Do the subtasks in order.
+  Carried into T5 from T4: the `PreToolUse` test-edit block (it needs a tests stage to protect,
+  so it lands in T5.2), and the review stage must use a **different model** from implement
+  (`flux.toml` already routes it to Opus with `permission_mode = "plan"`).
+
+  **Phase-gate question, answered in writing before opening M1** (plan.md §5, ADR 0008):
+  *"did the harness beat vanilla Claude Code on the last A/B samples, and which planned feature
+  does the data say to cut?"*
+  **Answer: there are no A/B samples, so the harness has not been shown to beat anything.**
+  `variant` has been a metrics field since T2, but nothing has ever written a `vanilla` line —
+  `flux run --vanilla` did not exist. Every number in the store to date is harness-vs-harness.
+  This is not a neutral gap: it is the one comparison ADR 0008 exists to force, and M0 shipped
+  without it. It is therefore T5.1, before any new stage is built.
+  **Which feature does the data say to cut:** on the only comparative evidence that does exist
+  (T4c, nine live runs), the candidate is **`[repo_map]`** — the `none` arm was competitive with
+  both map variants on the exploratory-call KPI and had the lowest wall time. That is not yet a
+  verdict (n=1/cell, floor effect on an 88-file repo); T5.1 gives it a harness and T5b gives it
+  a fair repo. Nothing else in the plan has data either way, which is the finding.
+
+  - [x] **T5.1 — A/B baseline harness (A1). Done 2026-08-18.** `flux run <ticket> --vanilla`: the same ticket
+    through a plain session with *only* the ticket text — no pack, no repo map, no artifact
+    contract — then the same gate suite, recorded as `variant="vanilla"` on the same metrics
+    line shape. Plus the reading side: paired per-ticket comparison, the `vanilla_every` cadence
+    ("a baseline sample is due"), and a machine-checked kill-criterion in `flux metrics`.
+    Fairness rules that make the number mean something: same model/effort as `implement`
+    (so the comparison isolates the harness, not the model), the same gate-command
+    pre-approval (T4 proved a session that cannot run the gates argues instead of measuring),
+    and a hard refusal to run vanilla in a worktree where the harness already did the work.
+    **Done:** all four. One live vanilla sample and one live harness sample on the same ticket,
+    sharing one metrics store via `--worktree`; the paired table, cadence and criterion print;
+    35 new unit tests, none of which touch a model.
+  - [ ] **T5.2 — tests stage + the hardening that only it can carry.** `TestsStage` per the
+    stage I/O table (`tests.json`: paths + cases↔acceptance-criteria map), the **runner-verified
+    red step** (Rule 2 — flux runs the new tests itself and requires red-for-the-right-reason,
+    not a green suite and not a collection error), the **opaque test runner** (counts, failing
+    ids, first assertion line — never test source), the `PreToolUse` **test-edit block** on the
+    implement/fix stages, and held-out tests run at implement time.
+  - [ ] **T5.3 — review + fix stages: close the loop with real stages.** `ReviewStage`
+    (different model, `plan` mode, hydrates from the `git diff` of the stage commits per T4c,
+    produces `review.json`) and `FixStage` (unresolved-finding slices + the diff hunks they
+    point at, never the whole of anything). T3's transition function already turns the loop and
+    parks at `max_review_iters`; this is the first time real stages drive it.
+    Assert the reference-not-paste invariant here: pack size must not grow monotonically.
+  - [ ] **T5.4 — pr stage.** Haiku/low, PR body from impl-notes + resolved review + commit log,
+    branch pushed, "land the plane" verified by the runner rather than claimed by the session.
+  - [ ] **T5.5 — review bake-off (B3).** Stage 3 as a native-workflow multi-lens panel
+    (correctness / security / design-fit, adversarial-verify) vs the single different-model
+    reviewer from T5.3, scored on **planted defects**. Keep the cheaper config that catches at
+    least as many. Same standing rule as the knowledge layer: measured, not adopted on a claim.
+  - [ ] **T5.6 — M1 exit benchmark.** (a) one real ticket runs to a mergeable PR unattended;
+    (b) a deliberately gameable ticket (one a session could pass by weakening a test) is caught;
+    (c) ≥3 vanilla baseline samples in the comparison table. Then re-answer the phase-gate
+    question with actual data before opening M2 — including whether `[repo_map]` survives.
 
 - [ ] **T5b — knowledge-layer A/B on a *large* repo, four arms. Do this after T5, not before.**
   **Why it exists:** T4c's refusal of gitnexus was measured on flux itself (88 files), and the
@@ -189,6 +250,54 @@ Updated: 2026-08-18 (T4c done — gitnexus **refused**, ADR 0009 C2 upheld. Next
    surprises, deviations from design.md, or decisions made (new ADR if load-bearing).
 
 ## Log
+
+- 2026-08-18 — **T5 opened and expanded into T5.1–T5.6; T5.1 done.** The phase-gate question was
+  answered first, in the queue entry above, and the answer was **no data**: `variant` has been a
+  metrics field since T2 but nothing had ever written a `vanilla` line, so every number in the
+  store was harness-vs-harness. That is now fixed, and the first thing the fix produced was a
+  result against the harness.
+  - **The first paired sample: harness 1.41x vanilla on tokens, both green.** A trivial ticket
+    ("add a `sort=` keyword to `report()`, with tests") in a scratch `tinylib` repo, one arm per
+    clone, one shared metrics store. Vanilla: 6,757 uncached in / 3,029 out, 14 turns, 38.4s, 3
+    exploratory calls. Harness: 10,962 / 2,832, 9 turns, 31.9s, 2 exploratory calls. Both passed
+    the `pytest` gate. So the harness bought **fewer turns, less wall time and less exploration
+    for more tokens** — which is a coherent story (a pack costs input tokens to save turns) and
+    is worth exactly nothing at n=1 on a toy ticket. It is recorded because the whole point is
+    that the number is recorded before anyone has an opinion about it.
+  - **Defining "wins" was the substantive design work**, not the plumbing. The criterion's prose
+    says "cost AND quality" and stops. Cost: uncached in + out over every line including retries;
+    cache reads excluded (T4's 893k-token park is why). Quality: an ordinal over the gates *flux*
+    ran — green > ungated > failed — taking the **latest** verdict per gate name, so the
+    review↔fix loop is not scored as a defect for having done its job, and a failed-then-retried
+    session is cost rather than a defect. Vanilla wins on **strictly cheaper and not worse**: the
+    harness is the thing on trial, so a quality tie at a lower price is a loss for it.
+  - **Fairness rules are in the code, not in the method notes.** Same model/effort as `implement`
+    and *mirrored live* (`FluxConfig.profile`), so re-routing the stage re-routes the baseline —
+    a copy taken at parse time would quietly turn the A/B into a model comparison. Same gate
+    pre-approval, since T4 measured what an ungated headless session does instead of measuring.
+    And a **hard refusal**, before any spend, to run a baseline in a worktree the harness already
+    worked: that sample would read as "vanilla solved it in one cheap turn".
+  - **The live run found a real bug, which is the argument for live runs.** With `--worktree`
+    ≠ `--root` — the configuration the A/B needs so both arms share one metrics store — the
+    implement session had no access to `.flux/context/<ticket>/`, so it wrote `impl-notes.md` at
+    the same relative path *inside the worktree* and the ticket parked after two attempts and
+    ~36k uncached tokens. Fixed with `ExecConfig.add_dirs`; every stage with a required artifact
+    now grants its context directory. The general lesson is in design.md §1: **a session denied
+    access to what it was told to do does the nearest thing it can reach, and reports success.**
+    It had never shown up because T4's live runs had worktree == root.
+  - **`PromptPack.system_prompt=""` now means "the CLI's own default"** rather than an empty
+    system prompt. The baseline arm needs the real default preset — a blank one would be a
+    handicap invented by the harness — and no stage passes an empty system prompt.
+  - **`flux metrics` prints the A/B block even when it is empty** ("no paired samples yet"), and
+    `flux run` says when a baseline is due. A cadence nobody is reminded of is a cadence that
+    lapses, and silence at a phase gate reads as "nothing to report".
+  - **Config surface:** `[ab] kill_streak` (the machine-readable half of the prose criterion, so
+    the two are visibly adjacent), and *no* `[stages.vanilla]` in the generated `flux.toml` —
+    with a comment saying the omission is the mirror, and that adding one breaks it deliberately.
+  - Scratch evidence lives in the session scratchpad, not the repo: the contaminated first
+    pairing (the one with the parked attempts) was kept aside as `metrics-with-bug.jsonl` and the
+    clean pairing re-run from scratch. Neither is part of M1's ≥3 samples — those need real
+    tickets on a real repo, which is T5.6.
 
 - 2026-08-18 — **T4c's result challenged on repo size; challenge accepted, T5b queued.** The
   question raised was whether the null result is an artifact of flux being small, and whether

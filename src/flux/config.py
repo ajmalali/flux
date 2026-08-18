@@ -39,6 +39,11 @@ from flux.runner.stage import Gate
 CONFIG_FILENAME = "flux.toml"
 SCHEMA_VERSION = 1
 
+IMPLEMENT_STAGE = "implement"
+VANILLA_STAGE = "vanilla"
+"""The A/B baseline arm. Not a pipeline stage — it names the metrics rows and the
+optional ``[stages.vanilla]`` override (ADR 0008)."""
+
 SONNET = "claude-sonnet-5"
 OPUS = "claude-opus-5"
 HAIKU = "claude-haiku-4-5-20251001"
@@ -77,6 +82,7 @@ class StageProfile:
         cwd: Path | None = None,
         allowed_tools: Sequence[str] = (),
         disallowed_tools: Sequence[str] = (),
+        add_dirs: Sequence[Path] = (),
         hooks: Mapping[str, Sequence[Any]] | None = None,
     ) -> ExecConfig:
         """Turn the profile into the executor's per-call config."""
@@ -89,6 +95,7 @@ class StageProfile:
             max_turns=self.max_turns,
             max_tokens=self.max_tokens,
             cwd=cwd,
+            add_dirs=tuple(add_dirs),
             hooks=MappingProxyType(dict(hooks)) if hooks else NO_HOOKS,
         )
 
@@ -125,6 +132,13 @@ class AbConfig:
     vanilla_every: int = 10
     """Run every Nth ticket through plain ``claude -p`` for comparison. 0 disables."""
 
+    kill_streak: int = 3
+    """Consecutive paired samples vanilla must win before the criterion fires.
+
+    The machine-readable half of :attr:`kill_criterion`. The prose is what a human
+    reads at a phase gate; this is what ``flux metrics`` actually checks, and they are
+    kept adjacent so a change to one is visibly a change to the other."""
+
     kill_criterion: str = (
         "If vanilla Claude Code wins on cost AND quality for 3 consecutive samples, "
         "freeze harness feature work and investigate."
@@ -133,6 +147,8 @@ class AbConfig:
     def __post_init__(self) -> None:
         if self.vanilla_every < 0:
             raise ConfigError(f"[ab] vanilla_every must not be negative, got {self.vanilla_every}")
+        if self.kill_streak <= 0:
+            raise ConfigError(f"[ab] kill_streak must be positive, got {self.kill_streak}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,7 +181,16 @@ class FluxConfig:
         return config_path(self.root)
 
     def profile(self, stage: str) -> StageProfile:
-        """The profile for ``stage``, or a :class:`ConfigError` naming what is missing."""
+        """The profile for ``stage``, or a :class:`ConfigError` naming what is missing.
+
+        The baseline arm mirrors ``implement`` unless the repo states otherwise, and it
+        mirrors it *live* rather than by being copied at parse time: the A/B comparison
+        only isolates the harness if both arms run the same model at the same effort, so
+        re-routing ``implement`` must re-route the baseline with it. An explicit
+        ``[stages.vanilla]`` breaks the mirror deliberately.
+        """
+        if stage == VANILLA_STAGE and stage not in self.stages:
+            return self.profile(IMPLEMENT_STAGE)
         try:
             return self.stages[stage]
         except KeyError:
@@ -271,7 +296,12 @@ class FluxConfig:
                 "# (ADR 0008). Written down so it can be enforced, not remembered.",
                 "[ab]",
                 f"vanilla_every = {self.ab.vanilla_every}",
+                f"kill_streak = {self.ab.kill_streak}",
                 f"kill_criterion = {_toml_string(self.ab.kill_criterion)}",
+                "",
+                "# The baseline arm has no [stages.vanilla] entry on purpose: it mirrors",
+                "# [stages.implement] so the comparison isolates the harness, not the model.",
+                "# Add one only to break that mirror deliberately.",
                 "",
                 "# Repo map: bought, not built (ADR 0009). `flux index` runs this command and",
                 "# caches the ranked file list; stages fold a slice into their context pack.",
@@ -379,6 +409,7 @@ def _ab(table: JsonMapping) -> AbConfig:
     default = AbConfig()
     return AbConfig(
         vanilla_every=_int(table, "vanilla_every", default.vanilla_every),
+        kill_streak=_int(table, "kill_streak", default.kill_streak),
         kill_criterion=_str(table, "kill_criterion", default.kill_criterion),
     )
 

@@ -81,3 +81,9 @@ def test_relative_cwd_rejected() -> None:
 
 def test_absolute_cwd_accepted(tmp_path: Path) -> None:
     assert make(cwd=tmp_path).cwd == tmp_path
+
+
+def test_add_dirs_must_be_absolute() -> None:
+    """A relative grant would resolve against whatever the SDK's cwd happens to be."""
+    with pytest.raises(ConfigError, match="add_dirs"):
+        ExecConfig(model="m", effort="high", add_dirs=(Path("context"),))

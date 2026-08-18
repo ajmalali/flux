@@ -313,3 +313,69 @@ def test_index_reports_a_broken_ranker_rather_than_caching_an_empty_map(
     assert main(["index", "--root", str(tmp_path)]) == EXIT_ERROR
     assert "not on PATH" in capsys.readouterr().err
     assert not (tmp_path / ".flux" / "cache" / "repo-map.json").exists()
+
+
+def write_ticket(root: Path, ticket_id: str, brief: str) -> Path:
+    path = root / ".flux" / "context" / ticket_id / "ticket.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(brief, encoding="utf-8")
+    return path
+
+
+def test_vanilla_dry_run_shows_the_ticket_and_nothing_else(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The baseline's whole input is inspectable before a penny is spent (ADR 0008)."""
+    write_ticket(tmp_path, "flux-1", "Add a --json flag to report.")
+    assert main(["run", "flux-1", "--root", str(tmp_path), "--vanilla", "--dry-run"]) == EXIT_OK
+    out = capsys.readouterr().out
+    assert "next:    vanilla" in out
+    assert "Add a --json flag to report." in out
+    assert "Repo map" not in out
+
+
+def test_vanilla_refuses_a_worktree_the_harness_already_worked(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_ticket(tmp_path, "flux-1", "Add a --json flag to report.")
+    ticket = TicketContext(ticket_id="flux-1", root=tmp_path)
+    CheckpointStore(ticket.state_dir).write(Checkpoint(stage="implement", ok=True))
+
+    assert main(["run", "flux-1", "--root", str(tmp_path), "--vanilla"]) == EXIT_ERROR
+    assert "already run through the harness" in capsys.readouterr().err
+
+
+def test_metrics_says_when_no_baseline_has_ever_been_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Silence would read as "nothing to report"; the honest answer is "never checked"."""
+    path = tmp_path / "metrics.jsonl"
+    write_metrics(path)
+    assert main(["metrics", "--path", str(path)]) == EXIT_OK
+    out = capsys.readouterr().out
+    assert "A/B vs vanilla Claude Code" in out
+    assert "no paired samples yet" in out
+
+
+def test_metrics_prints_the_paired_comparison(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "metrics.jsonl"
+    store = MetricsStore(path)
+    for variant, tokens in (("harness", 900), ("vanilla", 300)):
+        store.record(
+            MetricRecord(
+                ticket="flux-9",
+                stage="implement" if variant == "harness" else "vanilla",
+                model="claude-sonnet-5",
+                effort="high",
+                billing_mode="subscription",
+                variant=variant,
+                input_tokens=tokens,
+            )
+        )
+    assert main(["metrics", "--path", str(path)]) == EXIT_OK
+    out = capsys.readouterr().out
+    assert "flux-9" in out
+    assert "3.00x" in out, "the harness cost three times the baseline"
+    assert "vanilla won 1/1" in out

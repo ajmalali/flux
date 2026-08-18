@@ -179,10 +179,16 @@ class ImplementStage:
         The gate commands are pre-approved so the session can check its own work: a
         headless session has nobody to answer a permission prompt, and a stage that
         cannot run the gates will reason about them instead of measuring them.
+
+        The ticket's context directory is granted for the same reason: once the worktree
+        is not the repo root, the handoff artifact the stage is required to write lives
+        outside the session's reach, and "write this file" becomes an instruction it
+        cannot follow.
         """
         return self.settings.profile(self.name).exec_config(
             cwd=ticket.worktree,
             allowed_tools=bash_permissions(self.settings.gates),
+            add_dirs=(ticket.context_dir,),
         )
 
     def required_artifact(self) -> ArtifactSpec | None:

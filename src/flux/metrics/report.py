@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 
+from flux.metrics.ab import AbPolicy, AbVerdict, Pairing, build_verdict
 from flux.metrics.record import MetricRecord
 
 Keyer = Callable[[MetricRecord], str]
@@ -175,16 +176,23 @@ class Report:
     by_ticket: Sequence[Aggregate] = ()
     by_variant: Sequence[Aggregate] = ()
     window: WindowSnapshot | None = None
+    ab: AbVerdict | None = None
     malformed_lines: int = 0
 
 
-def build_report(records: Sequence[MetricRecord], *, malformed_lines: int = 0) -> Report:
+def build_report(
+    records: Sequence[MetricRecord],
+    *,
+    malformed_lines: int = 0,
+    ab: AbPolicy | None = None,
+) -> Report:
     return Report(
         total=aggregate(records, key="all"),
         by_stage=group_by_stage(records),
         by_ticket=group_by_ticket(records),
         by_variant=group_by_variant(records),
         window=latest_window(records),
+        ab=build_verdict(records, ab=ab) if ab is not None else None,
         malformed_lines=malformed_lines,
     )
 
@@ -201,9 +209,10 @@ def render(report: Report) -> str:
 
     if len(report.by_variant) > 1:
         lines.append("")
-        lines.append(
-            _table("Harness vs vanilla (ADR 0008 kill-criterion)", report.by_variant, "variant")
-        )
+        lines.append(_table("Harness vs vanilla, totals", report.by_variant, "variant"))
+    if report.ab is not None:
+        lines.append("")
+        lines.append(render_ab(report.ab))
 
     total = report.total
     lines.append("")
@@ -248,4 +257,62 @@ def _table(title: str, rows: Sequence[Aggregate], label: str) -> str:
             f"{row.exploratory_calls}",
         )
         out.append(f"{row.key:<{width}}  " + "  ".join(f"{c:>12}" for c in cells))
+    return "\n".join(out)
+
+
+_AB_COLUMNS = ("harness tok", "vanilla tok", "ratio", "harness", "vanilla", "winner")
+
+
+def render_ab(verdict: AbVerdict) -> str:
+    """The A/B block: paired table, cadence, and the criterion's verdict (ADR 0008).
+
+    Printed whether or not there is anything in it. A phase gate has to be answerable
+    from this block alone, and "no baseline has ever been run" is one of the answers
+    it has to be able to give — silence would read as "nothing to report".
+    """
+    lines = ["A/B vs vanilla Claude Code (ADR 0008)"]
+    if not verdict.pairings:
+        lines.append(
+            "  no paired samples yet — the harness has not been compared against plain "
+            "Claude Code on any ticket"
+        )
+    else:
+        lines.append(_ab_table(verdict.pairings))
+        won = sum(1 for p in verdict.pairings if p.vanilla_wins)
+        lines.append(
+            f"  vanilla won {won}/{len(verdict.pairings)} paired tickets "
+            f"(current streak {verdict.streak}, criterion fires at {verdict.kill_streak})"
+        )
+    if verdict.unpaired_harness:
+        lines.append(
+            f"  unpaired harness tickets: {len(verdict.unpaired_harness)} "
+            f"({', '.join(verdict.unpaired_harness[:5])}"
+            f"{', …' if len(verdict.unpaired_harness) > 5 else ''})"
+        )
+    if verdict.vanilla_every:
+        due = " — DUE" if verdict.sample_due else ""
+        lines.append(
+            f"  cadence: {verdict.tickets_since_baseline} harness ticket(s) since the last "
+            f"baseline, every {verdict.vanilla_every}{due}"
+        )
+    if verdict.triggered:
+        lines.append(f"  *** KILL-CRITERION MET: {verdict.criterion}")
+    return "\n".join(lines)
+
+
+def _ab_table(pairings: Sequence[Pairing]) -> str:
+    width = max(len("ticket"), *(len(p.ticket) for p in pairings))
+    header = f"  {'ticket':<{width}}  " + "  ".join(f"{c:>12}" for c in _AB_COLUMNS)
+    out = [header, "  " + "-" * (len(header) - 2)]
+    for pairing in pairings:
+        ratio = pairing.token_ratio
+        cells = (
+            f"{pairing.harness.billable_tokens:,}",
+            f"{pairing.vanilla.billable_tokens:,}",
+            f"{ratio:.2f}x" if ratio is not None else "n/a",
+            pairing.harness.quality_label,
+            pairing.vanilla.quality_label,
+            "vanilla" if pairing.vanilla_wins else "harness/tie",
+        )
+        out.append(f"  {pairing.ticket:<{width}}  " + "  ".join(f"{c:>12}" for c in cells))
     return "\n".join(out)

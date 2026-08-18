@@ -69,7 +69,12 @@ command = ["uv", "run", "pytest", "-q", "-rf"]
 # (ADR 0008). Written down so it can be enforced, not remembered.
 [ab]
 vanilla_every = 10
+kill_streak = 3
 kill_criterion = "If vanilla Claude Code wins on cost AND quality for 3 consecutive samples, freeze harness feature work and investigate."
+
+# The baseline arm has no [stages.vanilla] entry on purpose: it mirrors
+# [stages.implement] so the comparison isolates the harness, not the model.
+# Add one only to break that mirror deliberately.
 
 # Repo map: bought, not built (ADR 0009). `flux index` runs this command and
 # caches the ranked file list; stages fold a slice into their context pack.

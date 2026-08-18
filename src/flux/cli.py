@@ -14,11 +14,13 @@ from dataclasses import replace
 from pathlib import Path
 
 from flux import __version__, knowledge
+from flux.ab import run_vanilla, vanilla_config, vanilla_pack
 from flux.config import FluxConfig
 from flux.errors import ConfigError, FluxError, ParkSignal
 from flux.executor.billing import detect_billing_redirects, preflight, sanitize_process_env
 from flux.executor.sdk import ClaudeAgentSDKExecutor
 from flux.git import head_sha
+from flux.metrics.ab import build_verdict
 from flux.metrics.record import DEFAULT_METRICS_PATH, MetricsStore
 from flux.metrics.report import build_report, render
 from flux.runner.checkpoint import CheckpointStore
@@ -89,6 +91,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="print the next stage and the prompt it would receive; spend nothing",
+    )
+    run.add_argument(
+        "--vanilla",
+        action="store_true",
+        help="A/B baseline: run the ticket as plain Claude Code, no harness (ADR 0008)",
+    )
+    run.add_argument(
+        "--force",
+        action="store_true",
+        help="with --vanilla, measure even though the harness already ran this ticket here",
     )
     run.set_defaults(func=cmd_run)
 
@@ -177,6 +189,9 @@ def cmd_run(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve()
     settings = FluxConfig.load(root)
     ticket = load_ticket(args.ticket, root=root, config=settings, worktree=args.worktree)
+    if args.vanilla:
+        return _run_vanilla(ticket, settings, dry_run=args.dry_run, force=args.force)
+
     pipeline = build_pipeline(settings)
     if args.dry_run:
         return _dry_run(ticket, pipeline)
@@ -196,7 +211,51 @@ def cmd_run(args: argparse.Namespace) -> int:
         print(f"         {result.park.note}")
         return EXIT_PARKED
     print("status:  completed")
+    _cadence_nudge(ticket, settings)
     return EXIT_OK
+
+
+def _cadence_nudge(ticket: TicketContext, settings: FluxConfig) -> None:
+    """Say when a baseline sample is owed (ADR 0008's 1-in-N cadence).
+
+    Here rather than only in ``flux metrics`` because the cadence is a thing to *do*,
+    and the moment a ticket finishes is the only moment anyone is looking.
+    """
+    verdict = build_verdict(MetricsStore(ticket.metrics_path).read(), ab=settings.ab)
+    if verdict.sample_due:
+        print(
+            f"\nA/B: a vanilla baseline is due — {verdict.tickets_since_baseline} harness "
+            f"ticket(s) since the last one (every {verdict.vanilla_every}). "
+            "Run one with `flux run <ticket> --vanilla` in a fresh clone.",
+            file=sys.stderr,
+        )
+
+
+def _run_vanilla(
+    ticket: TicketContext, settings: FluxConfig, *, dry_run: bool, force: bool
+) -> int:
+    """The A/B baseline arm: the same ticket with none of the harness (ADR 0008)."""
+    if dry_run:
+        pack = vanilla_pack(ticket)
+        cfg = vanilla_config(ticket, settings)
+        print(f"next:    vanilla  [{cfg.model} · effort={cfg.effort} · max_turns={cfg.max_turns}]")
+        print(f"gates:   {', '.join(g.name for g in settings.gates) or '(none)'}")
+        print(f"pack:    {pack.size_chars} chars (~{pack.approx_tokens} tokens)")
+        print(f"\n--- prompt ---\n{pack.prompt}")
+        return EXIT_OK
+
+    result = run_vanilla(ticket, settings, ClaudeAgentSDKExecutor(), force=force)
+    gates = ", ".join(f"{g.name}={'pass' if g.passed else 'FAIL'}" for g in result.gates)
+    print(f"ticket:  {result.ticket}")
+    print(f"ran:     vanilla baseline ({result.record.model}, {result.record.num_turns} turns)")
+    print(f"gates:   {gates or '(none configured — nothing verified this)'}")
+    print(
+        f"cost:    {result.record.input_tokens + result.record.cache_creation_tokens:,} "
+        f"uncached in / {result.record.output_tokens:,} out · "
+        f"{result.record.wall_ms / 1000:.1f}s"
+    )
+    print(f"status:  {'ok' if result.ok else 'FAILED'}")
+    return EXIT_OK if result.ok else EXIT_ERROR
 
 
 def _dry_run(ticket: TicketContext, pipeline: Pipeline) -> int:
@@ -238,7 +297,11 @@ def cmd_metrics(args: argparse.Namespace) -> int:
         records = [r for r in records if r.ticket == args.ticket]
     if args.stage:
         records = [r for r in records if r.stage == args.stage]
-    report = build_report(records, malformed_lines=store.count_malformed())
+    report = build_report(
+        records,
+        malformed_lines=store.count_malformed(),
+        ab=FluxConfig.load(Path.cwd()).ab,
+    )
     print(render(report))
     return EXIT_OK
 

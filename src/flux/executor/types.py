@@ -125,6 +125,16 @@ class ExecConfig:
     billing_mode: BillingMode = "subscription"
     setting_sources: tuple[SettingSource, ...] = ("project",)
     cwd: Path | None = None
+    add_dirs: tuple[Path, ...] = ()
+    """Directories the session may read and write outside :attr:`cwd`.
+
+    Needed the moment the worktree stops being the repo root (``flux run --worktree``,
+    and every ticket at M5): handoff artifacts live under the *root*'s ``.flux/context``
+    while the session works in the worktree, so without this the stage is told to write
+    a file it has no access to — and what it does instead is write the same relative
+    path inside the worktree, where the runner does not look. Observed live, 2026-08-18.
+    """
+
     hooks: Mapping[str, Sequence[Any]] = NO_HOOKS
     """Opaque SDK hook config, forwarded verbatim by ``sdk.py``.
 
@@ -168,6 +178,9 @@ class ExecConfig:
                 )
         if self.cwd is not None and not self.cwd.is_absolute():
             raise ConfigError(f"ExecConfig.cwd must be an absolute path, got {self.cwd}")
+        for extra in self.add_dirs:
+            if not extra.is_absolute():
+                raise ConfigError(f"ExecConfig.add_dirs entries must be absolute, got {extra}")
 
 
 @dataclass(frozen=True, slots=True)

@@ -21,8 +21,8 @@ from flux.metrics import MetricRecord, MetricsStore
 from flux.runner.checkpoint import Checkpoint, CheckpointStore, ParkRecord, RunState
 from flux.runner.context import TicketContext
 
-PLANNED = ["init", "index", "research", "plan", "tickets", "run"]
-IMPLEMENTED = ["metrics", "doctor", "status"]
+PLANNED = ["index", "research", "plan", "tickets"]
+IMPLEMENTED = ["metrics", "doctor", "status", "init", "run", "unpark"]
 
 
 def test_no_command_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
@@ -34,7 +34,7 @@ def test_no_command_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
 def test_every_planned_subcommand_is_registered(command: str) -> None:
     """The surface is fixed now so milestones fill commands in, not reshape the CLI."""
     parser = build_parser()
-    argv = [command, "flux-1"] if command == "status" else [command]
+    argv = [command, "flux-1"] if command in ("status", "run", "unpark") else [command]
     args = parser.parse_args(argv)
     assert args.command == command
 
@@ -204,3 +204,79 @@ def test_metrics_output_is_derived_from_the_stored_json(tmp_path: Path) -> None:
     write_metrics(path)
     stored = [json.loads(line) for line in path.read_text().splitlines()]
     assert {row["stage"] for row in stored} == {"tests", "implement"}
+
+
+def test_init_reports_what_it_created(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+
+    assert main(["init", "--root", str(tmp_path)]) == EXIT_OK
+
+    out = capsys.readouterr().out
+    assert "target:  python" in out
+    assert ".flux/flux.toml" in out
+    assert "flux run" in out
+    assert (tmp_path / ".flux" / "flux.toml").exists()
+
+
+def test_init_warns_on_stderr_when_it_cannot_gate_the_repo(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["init", "--root", str(tmp_path)]) == EXIT_OK
+    assert "no gates" in capsys.readouterr().err
+
+
+def test_run_on_a_ticket_with_no_brief_explains_rather_than_crashing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["run", "flux-1", "--root", str(tmp_path)]) == EXIT_ERROR
+    assert "ticket.md" in capsys.readouterr().err
+
+
+def test_status_names_the_next_stage(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Status and run read the same transition function, so they cannot disagree."""
+    assert main(["status", "flux-1", "--root", str(tmp_path)]) == EXIT_OK
+    assert "next:    implement" in capsys.readouterr().out
+
+
+def test_status_says_so_once_the_pipeline_is_complete(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ticket = TicketContext(ticket_id="flux-1", root=tmp_path)
+    CheckpointStore(ticket.state_dir).write(Checkpoint(stage="implement"))
+
+    assert main(["status", "flux-1", "--root", str(tmp_path)]) == EXIT_OK
+    assert "pipeline is complete" in capsys.readouterr().out
+
+
+def test_unpark_clears_the_park_so_the_ticket_runs_again(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ticket = TicketContext(ticket_id="flux-1", root=tmp_path)
+    store = CheckpointStore(ticket.state_dir)
+    store.write(Checkpoint(stage="implement", ok=False, note="gates failed"))
+    store.save_state(
+        RunState(
+            ticket="flux-1",
+            stage_runs=40,
+            parked=ParkRecord(stage="implement", reason="gates-failed", note="test failed"),
+        )
+    )
+
+    assert main(["unpark", "flux-1", "--root", str(tmp_path)]) == EXIT_OK
+
+    state = store.load_state("flux-1")
+    assert state.parked is None
+    assert state.stage_runs == 0
+    assert "gates-failed" in capsys.readouterr().out
+    # The failed checkpoint stays: it is not ok, so the stage reruns and triage keeps it.
+    checkpoint = store.read("implement")
+    assert checkpoint is not None and not checkpoint.ok
+    assert main(["status", "flux-1", "--root", str(tmp_path)]) == EXIT_OK
+    assert "next:    implement" in capsys.readouterr().out
+
+
+def test_unpark_on_a_running_ticket_says_so(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["unpark", "flux-1", "--root", str(tmp_path)]) == EXIT_OK
+    assert "is not parked" in capsys.readouterr().out

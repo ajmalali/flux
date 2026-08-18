@@ -36,6 +36,12 @@ class ClaudeAgentSDKExecutor:                   # sole module importing claude_a
 # `max_tokens` is a flux-side budget (recorded in metrics, enforced by the runner) and sending
 # it to the API is opt-in per stage via `advertise_token_budget`.
 #
+# T4 correction: `max_tokens` is measured in **uncached** tokens (`Usage.budget_tokens` =
+# uncached input + cache writes + output), not `total_tokens`. A cached prefix is re-read on
+# every turn, so a 31-turn Sonnet session on a 660-token pack reported 848k cache reads while
+# consuming ~44k. Budgeting on the total would cap how many *turns* a stage may take and would
+# punish the prompt caching the pack is structured to earn.
+#
 # Terminal CLI errors (turn cap hit, API error) arrive as a raised exception from the SDK
 # message stream, not as an error ResultMessage. The executor converts those to
 # ExecResult(ok=False) so the runner can retry or park; typed ClaudeSDKError (missing CLI,
@@ -168,6 +174,44 @@ Properties this buys:
 Each stage `commit()` also makes a git commit in the worktree tagged `flux/<ticket>/<stage>`,
 so "reset to last good stage" is a `git reset --hard`, not bookkeeping.
 
+As built (T4), that commit is **advisory, not a gate**: `flux.git.stage_commit` does `git add -A`
+(a stage's output includes files it created), tags, and returns a result the stage records in its
+checkpoint. A worktree that is not a repo, a repo with no `user.email`, and a clean tree all come
+back as an unsuccessful-but-not-fatal result. Throwing away work that already passed its gates
+over a bookkeeping problem would be the wrong trade; `stage_commits = false` turns it off.
+
+### Gates (T4)
+
+Gates are the merge authority (ADR 0005), so what they are *unable* to conclude matters as much
+as what they conclude. Three rules, all in `src/flux/gates/`:
+
+- **A gate that cannot run has failed.** Missing binary, missing worktree, timeout, empty command
+  — all produce `passed=False` with a one-line reason. Skipping an absent typechecker would let
+  "we did not check" be recorded as "there was nothing to find", which is the exact failure the
+  suite exists to prevent.
+- **The gate's environment is cleaned first.** flux is itself a Python program, normally launched
+  from its own virtualenv, and a gate is its subprocess. `flux.proc.clean_env` strips
+  `VIRTUAL_ENV`, `CONDA_PREFIX`, `PYTHONHOME`, `PYTHONPATH`, `UV_PROJECT*` and drops the
+  corresponding `bin` directories from `PATH`. This is the same principle as the ADR 0010
+  credential strip: the parent's environment must not change what the child measures. Observed
+  before the fix — a target repo with no typechecker got a confident green from *flux's* pyright,
+  and a bare `pytest` gate ran flux's pytest against the target and failed on an import.
+- **A gate is data, not code.** `[[gates]]` entries in `flux.toml` carry `name`, `command`
+  (string or argv; split with `shlex`, never run through a shell) and `kind`. `kind` picks only
+  how output is *summarised* — the verdict is always the exit status. The `pytest` summariser is
+  the opaque runner in gate form: counts, failing test ids and the first assertion line, never
+  test source.
+
+The implement session is granted `Bash(<gate command>:*)` for exactly its configured gates. A
+headless session has nobody to answer a permission prompt, so without it "run the gates before you
+finish" is an instruction the stage cannot follow — and the first live run did exactly what that
+predicts: it hand-traced seven test cases in prose instead of measuring them, over 31 turns. With
+pre-approval the same ticket took 30s and a third of the tokens. The grant adds no authority the
+harness was not about to exercise anyway: flux runs those same commands itself moments later.
+
+`Stage.name` and `Gate.name` are declared as read-only properties so an implementation can be a
+frozen dataclass — the natural shape for something fully described by its configuration.
+
 ## 2. The artifact handoff contract (offload + fresh-context pickup)
 
 The failure mode to design against: a stage "knows" something only in its transcript, the next
@@ -254,8 +298,10 @@ bodies directly.
    one `run()` round-trip with explicit model/effort and a metrics line written.
 2. ✅ (T3) Checkpoint store + transition function + `run_ticket()` loop with fake stages
    (executor stubbed) → idempotency and crash-resume proven with plain pytest, no LLM.
-3. Gates as subprocess wrappers + the tests/implement stages with their hooks → first real
-   ticket end-to-end (plan.md M0/M1 exit benchmarks).
+3. ✅ (T4) Gates as subprocess wrappers + `flux init` + the implement stage → a hand-written
+   ticket end to end in a scratch repo, gated and committed, with per-stage cost in
+   `flux metrics` (plan.md M0 exit benchmark). The `PreToolUse` test-edit block waits for M1,
+   when a tests stage exists for it to protect.
 
 Everything else (review/fix/pr stages, opaque runner, A/B harness) lands on top of this spine
 without changing it.

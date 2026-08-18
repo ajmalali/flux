@@ -1,6 +1,6 @@
 # flux-harness — status & next task
 
-Updated: 2026-08-18 (T3 done: runner spine — checkpoints, transition fn, run_ticket)
+Updated: 2026-08-18 (T4 done: gates, `flux init`, implement stage — M0 exit benchmark met)
 
 ## Current state
 
@@ -20,13 +20,22 @@ Updated: 2026-08-18 (T3 done: runner spine — checkpoints, transition fn, run_t
   `stage.py` (`Stage`/`Gate` protocols, `Outcome`), `checkpoint.py` (atomic checkpoint +
   `run.json` store), `transition.py` (`Pipeline`, pure `next_stage`), `loop.py` (`run_ticket`).
   Crash-safe writes live in `src/flux/fsio.py`. 203 tests, all four T3 proofs covered.
+- **T4 done. M0's exit benchmark is met.** `src/flux/gates/` (subprocess gates + `flux.proc`),
+  `src/flux/config.py` (`.flux/flux.toml`), `src/flux/scaffold.py` (`flux init`),
+  `src/flux/git.py` (stage commits), `src/flux/tickets.py`, and `src/flux/stages/implement.py`.
+  CLI: `init`, `run` (with `--dry-run`), `unpark` are real; `status` now names the next stage.
+  362 tests. **Live run verified**: a hand-written ticket in a scratch repo went brief →
+  implement → `lint`+`test` gates → tagged commit → `flux metrics` per-stage line, in 30s for
+  5.5k uncached-in / 2.5k out.
 - **Executor is usable now.** `ClaudeAgentSDKExecutor().run(pack, cfg)` works end to end and
   writes correct metrics lines. The runner drives any `Executor`; tests use fakes in
   `tests/fakes.py` (`FakeStage`/`FakeGate`/`FakeExecutor`) and never touch the SDK.
-- **What T4 plugs into.** Implement `Stage` (five of them) and `Gate` (subprocess wrappers),
-  hand `run_ticket(ticket, Pipeline(stages=...), executor)` the result. Nothing in the loop
-  needs to change to add a stage.
-- Open decisions: repo-map tool choice (repowiki map vs RepoMapper, part of T4/M0).
+- **What T5 plugs into.** Four more `Stage` implementations against the same protocol, added to
+  `flux.stages.build_pipeline`. Nothing in the runner or the gate layer needs to change.
+- **This repo now dogfoods its own config** — `.flux/flux.toml` is committed, written by
+  `flux init`, and its gate suite is the same three commands CLAUDE.md names.
+- Open decisions: repo-map tool choice (repowiki map vs RepoMapper) — **still open**, deferred
+  out of T4; neither tool is installed. It is the last unfinished piece of M0's scope.
 
 ## Task queue — do the first unchecked item
 
@@ -55,14 +64,16 @@ Updated: 2026-08-18 (T3 done: runner spine — checkpoints, transition fn, run_t
   **Done when:** pytest proves — completed stages skip on rerun; kill-mid-stage resumes
   cleanly; review↔fix loop parks after `max_review_iters`; a missing required artifact parks
   after exactly one retry.
-- [ ] **T4 — M0 step 3: gates + first end-to-end ticket.**
-  `src/flux/gates/` subprocess wrappers (Python target first: ruff/pyright/pytest + coverage),
-  `flux init` scaffolding `.flux/` + `.gitignore` in a target repo, minimal implement-stage using
-  the real executor, repo-map tool chosen and wired (`repowiki map` vs RepoMapper — pick
-  whichever ranks the test repo better, note choice here).
-  **Done when:** M0 exit benchmark (plan.md §5): a trivial hand-written ticket flows through one
-  implement stage + gates end-to-end in a scratch target repo; `flux metrics` prints per-stage
-  cost/time.
+- [x] **T4 — M0 step 3: gates + first end-to-end ticket.**
+  Done except the repo map, which is split out as T4b below (it needs a tool installed and a
+  bake-off, and nothing else in M0 depends on it).
+  **Benchmark met:** a hand-written ticket flowed through one implement stage + gates end to end
+  in a scratch target repo; `flux metrics` printed per-stage cost/time.
+- [ ] **T4b — M0 step 3b: repo map.**
+  Pick between `repowiki map` and Aider's RepoMapper — install both, rank this repo and the
+  scratch target with each, keep whichever ranks better; wire it behind `flux index` and a
+  post-merge hook, and note the choice here. **Done when:** `flux index` regenerates the map in
+  <30s with no LLM call, and `ImplementStage.hydrate` can fold a map slice into the context pack.
 - [ ] **T5 — M1: full five-stage pipeline + hardening + A/B baseline** (expand into subtasks
   when reached; specs in plan.md §5 M1 and the design.md stage I/O table).
 
@@ -74,6 +85,54 @@ Updated: 2026-08-18 (T3 done: runner spine — checkpoints, transition fn, run_t
    surprises, deviations from design.md, or decisions made (new ADR if load-bearing).
 
 ## Log
+
+- 2026-08-18 — **T4 done (bar the repo map, split out as T4b).** M0's exit benchmark is met:
+  a hand-written ticket in a scratch `tinylib` repo went brief → implement → gates → tagged
+  commit → metrics line. Gates green, 362 tests (was 203). New modules: `flux/proc.py`,
+  `flux/gates/`, `flux/config.py`, `flux/scaffold.py`, `flux/git.py`, `flux/tickets.py`,
+  `flux/stages/`. design.md §1 amended (gates section, stage-commit semantics, budget
+  correction). What the live runs taught, in the order it cost something:
+  - **The token budget was measuring the wrong thing.** `_hard_stop` compared
+    `Usage.total_tokens` against `max_tokens`; a 31-turn session reported 893k because a cached
+    prefix is re-read every turn, and the first live run parked at "893,257 tokens against a
+    budget of 200,000" having actually consumed ~44k. Now `Usage.budget_tokens` (uncached input
+    + cache writes + output). Budgeting on the total caps *turns*, not work, and penalises the
+    prompt caching the pack shape exists to earn.
+  - **A headless session cannot answer a permission prompt.** The first run could not execute a
+    single Bash command, so instead of running the gates it hand-traced all seven test cases in
+    prose and wrote a long caveat into `impl-notes.md`. The implement stage now grants
+    `Bash(<gate command>:*)` for exactly its configured gates. Same ticket afterwards: 31 turns →
+    ~10, 97s → 30s, ~44k → 8k uncached tokens. **Any stage that is told to verify something must
+    be given the means to.**
+  - **Gate subprocesses inherited flux's own virtualenv.** flux runs from `.venv`, so a target
+    repo with no typechecker got a confident `0 errors` from *flux's* pyright, and a bare
+    `pytest` gate ran flux's pytest against the target and failed on `No module named 'tinylib'`.
+    `flux.proc.clean_env` now strips `VIRTUAL_ENV`/`CONDA_PREFIX`/`PYTHON*`/`UV_PROJECT*` and the
+    matching `bin` entries from `PATH`. Same principle as ADR 0010's credential strip — the
+    parent's environment must not change what the child measures. No ADR: it is an
+    implementation of 0005, not a new decision.
+  - **A gate that cannot run is a failed gate**, never a skipped one. This is the rule the two
+    findings above both argue for.
+  - **`ExecConfig.hooks` read off the class is a slot descriptor**, not the default mapping —
+    `dict(ExecConfig.hooks)` crashed the first live run before any API call. `NO_HOOKS` is now
+    public in `executor/types.py` for callers that need the default *value*.
+  - **`Stage.name`/`Gate.name` became read-only properties** so implementations can be frozen
+    dataclasses. Nothing else changed in the runner: `ImplementStage` dropped into
+    `run_ticket(ticket, Pipeline(...), executor)` with no edits to T3's spine, which is the
+    claim T3 was making.
+  - **`flux unpark` added** (not in plan.md §4's command list). A park asks a human to look;
+    without a way to say "I looked", the only recovery was deleting the state directory, which
+    also discards the checkpoints triage wants. It clears the park and resets `stage_runs`,
+    and deliberately leaves the failed stage's checkpoint (not ok → the stage reruns).
+  - **`flux run --dry-run`** prints the next stage, its `ExecConfig`, its gates and the exact
+    pack. Hydration is pure, so this is the whole model input — the cheapest way to review a
+    context pack before paying for it, and how the packs above were checked.
+  - Gate suite is configuration (`[[gates]]` in `flux.toml`), commands are `shlex`-split and
+    never shell-run, and `flux init` writes a starter suite matched to the repo (uv/pnpm/yarn
+    detected from lockfiles). An unrecognised repo gets **no** gates and a warning, rather than
+    a guess that would make an ungated pipeline look green.
+  - Ticket briefs are `.flux/context/<ticket>/ticket.md` at M0; `flux.tickets.load_ticket` is
+    the single place M4 swaps in `bd show`.
 
 - 2026-08-18 — **T3 done.** Runner spine landed; gates green; 203 tests (was 126). All four
   acceptance proofs are in `tests/test_run_ticket.py`. Decisions and refinements worth

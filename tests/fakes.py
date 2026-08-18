@@ -75,6 +75,10 @@ class FakeStage:
     """Attempt indexes where the process dies before the stage can finish."""
 
     usage_tokens: int = 2
+    cache_read_tokens: int = 0
+    """Cached prefix re-read per turn. Deliberately large in the budget tests: it must
+    not count against ``ExecConfig.max_tokens``."""
+
     window: WindowPressure | None = None
     """Usage-window pressure the session reports back (ADR 0010)."""
 
@@ -160,7 +164,11 @@ class FakeExecutor:
             model=cfg.model,
             effort=cfg.effort,
             billing_mode=cfg.billing_mode,
-            usage=Usage(input_tokens=stage.usage_tokens, output_tokens=1),
+            usage=Usage(
+                input_tokens=stage.usage_tokens,
+                output_tokens=1,
+                cache_read_tokens=stage.cache_read_tokens,
+            ),
             num_turns=1,
             subtype="success" if ok else "error_during_execution",
             error=None if ok else "the model gave up",

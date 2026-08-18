@@ -29,7 +29,11 @@ class Gate(Protocol):
     verdicts are evidence the runner observed, never something read out of a transcript.
     """
 
-    name: str
+    @property
+    def name(self) -> str:
+        """Declared read-only so a gate may be a frozen dataclass — the ordinary shape,
+        since a gate is fully described by its command."""
+        ...
 
     def run(self, worktree: Path) -> GateOutcome: ...
 
@@ -68,7 +72,10 @@ class Stage(Protocol):
     the runner's own verification of what came back.
     """
 
-    name: str
+    @property
+    def name(self) -> str:
+        """Read-only, for the same reason as :attr:`Gate.name`."""
+        ...
 
     def hydrate(self, ticket: TicketContext) -> PromptPack:
         """Assemble the prompt pack from artifacts on disk. Deterministic (design.md §2)."""

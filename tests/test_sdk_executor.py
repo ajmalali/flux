@@ -163,6 +163,7 @@ def test_extract_usage_prefers_the_per_model_breakdown() -> None:
     assert (usage.input_tokens, usage.output_tokens) == (10, 20)
     assert usage.cache_read_tokens == 30
     assert usage.billable_input_tokens == 50
+    assert usage.budget_tokens == 70  # cache reads excluded: they recur every turn
     assert usage.total_tokens == 100
 
 

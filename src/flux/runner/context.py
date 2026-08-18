@@ -23,6 +23,20 @@ METRICS_RELPATH = Path("usage") / "metrics.jsonl"
 _TICKET_ID_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 
 
+def validate_ticket_id(ticket_id: str) -> str:
+    """Return ``ticket_id`` if it is safe to use as a path component, else raise.
+
+    Ticket ids come from outside flux and are turned straight into directory names,
+    so this runs before any path is *built* from one, not merely before it is used.
+    """
+    if not _TICKET_ID_RE.match(ticket_id):
+        raise ConfigError(
+            f"ticket id {ticket_id!r} is not a safe path component "
+            "(expected letters, digits, '.', '_' or '-', starting alphanumeric)"
+        )
+    return ticket_id
+
+
 @dataclass(frozen=True, slots=True)
 class RunnerConfig:
     """Loop bounds. Every one of these exists to make non-termination impossible."""
@@ -75,11 +89,7 @@ class TicketContext:
     config: RunnerConfig = DEFAULT_RUNNER_CONFIG
 
     def __post_init__(self) -> None:
-        if not _TICKET_ID_RE.match(self.ticket_id):
-            raise ConfigError(
-                f"TicketContext.ticket_id {self.ticket_id!r} is not a safe path component "
-                "(expected letters, digits, '.', '_' or '-', starting alphanumeric)"
-            )
+        validate_ticket_id(self.ticket_id)
         if not self.root.is_absolute():
             raise ConfigError(f"TicketContext.root must be an absolute path, got {self.root}")
         if self.worktree == Path():

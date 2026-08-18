@@ -343,7 +343,18 @@ def test_blowing_the_token_budget_parks_without_retrying(ticket: TicketContext) 
     assert result.status == "parked"
     assert result.park is not None
     assert result.park.reason == "token-budget-exceeded"
+    assert "uncached" in result.park.note
     assert len(executor.calls_for("tests")) == 1
+
+
+def test_cache_reads_do_not_count_against_the_token_budget(ticket: TicketContext) -> None:
+    """A cached prefix is re-read every turn, so counting it would cap turns, not work."""
+    pipeline, stages = full_pipeline(
+        tests=FakeStage("tests", spec=TESTS_SPEC, max_tokens=100, cache_read_tokens=900_000)
+    )
+    result, _ = drive(ticket, pipeline, stages)
+
+    assert result.completed
 
 
 # -- metrics (ADR 0008) --

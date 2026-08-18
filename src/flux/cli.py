@@ -10,15 +10,23 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from pathlib import Path
 
 from flux import __version__
+from flux.config import FluxConfig
 from flux.errors import ConfigError, ParkSignal
 from flux.executor.billing import detect_billing_redirects, preflight, sanitize_process_env
+from flux.executor.sdk import ClaudeAgentSDKExecutor
 from flux.metrics.record import DEFAULT_METRICS_PATH, MetricsStore
 from flux.metrics.report import build_report, render
 from flux.runner.checkpoint import CheckpointStore
-from flux.runner.context import TicketContext
+from flux.runner.context import CONTEXT_DIRNAME, FLUX_DIRNAME, TicketContext
+from flux.runner.loop import run_ticket
+from flux.runner.transition import Pipeline, next_stage
+from flux.scaffold import init_repo
+from flux.stages import build_pipeline
+from flux.tickets import TICKET_FILENAME, load_ticket
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -27,13 +35,13 @@ EXIT_NOT_IMPLEMENTED = 3
 
 # Subcommands whose milestone has not landed yet: (name, help, milestone).
 _PLANNED: tuple[tuple[str, str, str], ...] = (
-    ("init", "scaffold .flux/ in the target repo", "M0/T4"),
-    ("index", "regenerate the repo map", "M0/T4"),
+    ("index", "regenerate the repo map", "M0"),
     ("research", "run the research phase for a slug", "M3"),
     ("plan", "run the planning phase for a slug", "M3"),
     ("tickets", "turn a plan into a bd ticket graph", "M4"),
-    ("run", "run a ticket through the pipeline", "M0/T4"),
 )
+
+_ROOT_HELP = "repo to operate on (default: the current directory)"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -45,6 +53,31 @@ def build_parser() -> argparse.ArgumentParser:
         planned = sub.add_parser(name, help=f"{help_text} (not implemented — {milestone})")
         planned.add_argument("args", nargs="*", help=argparse.SUPPRESS)
         planned.set_defaults(func=_make_stub(name, milestone))
+
+    init = sub.add_parser("init", help="scaffold .flux/ in the target repo")
+    init.add_argument("--root", type=Path, default=Path.cwd(), help=_ROOT_HELP)
+    init.add_argument(
+        "--force",
+        action="store_true",
+        help="rewrite an existing flux.toml (its gate suite is otherwise left alone)",
+    )
+    init.set_defaults(func=cmd_init)
+
+    run = sub.add_parser("run", help="run a ticket through the pipeline")
+    run.add_argument("ticket", help="ticket id")
+    run.add_argument("--root", type=Path, default=Path.cwd(), help=_ROOT_HELP)
+    run.add_argument(
+        "--worktree",
+        type=Path,
+        default=None,
+        help="checkout the stages edit and the gates run in (default: --root)",
+    )
+    run.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the next stage and the prompt it would receive; spend nothing",
+    )
+    run.set_defaults(func=cmd_run)
 
     metrics = sub.add_parser("metrics", help="report per-stage cost, tokens, and time")
     metrics.add_argument(
@@ -67,6 +100,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     status.set_defaults(func=cmd_status)
 
+    unpark = sub.add_parser("unpark", help="clear a ticket's park so it can run again")
+    unpark.add_argument("ticket", help="ticket id")
+    unpark.add_argument("--root", type=Path, default=Path.cwd(), help=_ROOT_HELP)
+    unpark.set_defaults(func=cmd_unpark)
+
     doctor = sub.add_parser("doctor", help="verify subscription auth and a clean billing env")
     doctor.set_defaults(func=cmd_doctor)
 
@@ -79,6 +117,79 @@ def _make_stub(name: str, milestone: str) -> Callable[[argparse.Namespace], int]
         return EXIT_NOT_IMPLEMENTED
 
     return stub
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    """Lay down ``.flux/`` (ADR 0006)."""
+    report = init_repo(Path(args.root), force=args.force)
+    print(f"target:  {report.target}")
+    for path in report.created:
+        print(f"created  {path}")
+    for path in report.skipped:
+        print(f"kept     {path}")
+    for warning in report.warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    example = report.root / FLUX_DIRNAME / CONTEXT_DIRNAME / "<ticket-id>" / TICKET_FILENAME
+    print(f"\nNext: write a ticket brief to {example}")
+    print("      then run `flux run <ticket-id>`")
+    return EXIT_OK
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    """Drive one ticket through the pipeline until it finishes or parks."""
+    root = Path(args.root).resolve()
+    settings = FluxConfig.load(root)
+    ticket = load_ticket(args.ticket, root=root, config=settings, worktree=args.worktree)
+    pipeline = build_pipeline(settings)
+    if args.dry_run:
+        return _dry_run(ticket, pipeline)
+
+    if not settings.gates:
+        print(
+            f"warning: no gates configured in {settings.path} — nothing will verify this "
+            "change independently",
+            file=sys.stderr,
+        )
+    result = run_ticket(ticket, pipeline, ClaudeAgentSDKExecutor())
+    ran = ", ".join(result.stages_run) or "(nothing new to run)"
+    print(f"ticket:  {result.ticket}")
+    print(f"ran:     {ran}")
+    if result.park is not None:
+        print(f"status:  PARKED at {result.park.stage} ({result.park.reason})")
+        print(f"         {result.park.note}")
+        return EXIT_PARKED
+    print("status:  completed")
+    return EXIT_OK
+
+
+def _dry_run(ticket: TicketContext, pipeline: Pipeline) -> int:
+    """Show what the next stage would be sent, without starting a session.
+
+    Hydration is pure code (design.md §2), so this is the whole input to the model —
+    which makes it the cheapest way to check a context pack before paying for it.
+    """
+    store = CheckpointStore(ticket.state_dir)
+    decision = next_stage(
+        pipeline,
+        completed=store.completed_stages(),
+        state=store.load_state(ticket.ticket_id),
+        config=ticket.config,
+    )
+    if decision.kind != "run" or decision.stage is None:
+        print(f"next:    {decision.kind} ({decision.reason}) {decision.note}".rstrip())
+        return EXIT_PARKED if decision.kind == "park" else EXIT_OK
+    stage = decision.stage
+    pack = stage.hydrate(ticket)
+    cfg = stage.config(ticket)
+    print(
+        f"next:    {stage.name}  [{cfg.model} · effort={cfg.effort} · "
+        f"max_turns={cfg.max_turns} · {cfg.permission_mode}]"
+    )
+    print(f"gates:   {', '.join(g.name for g in stage.gates(ticket)) or '(none)'}")
+    print(f"pack:    {pack.size_chars} chars (~{pack.approx_tokens} tokens)")
+    print(f"\n--- system prompt ---\n{pack.system_prompt}")
+    print(f"\n--- prompt ---\n{pack.prompt}")
+    return EXIT_OK
 
 
 def cmd_metrics(args: argparse.Namespace) -> int:
@@ -99,10 +210,12 @@ def cmd_status(args: argparse.Namespace) -> int:
     """Print a ticket's position in the pipeline.
 
     A read of the checkpoint files and nothing else (design.md §1) — no model, no
-    subprocess. The *next* stage is not shown yet: that needs the concrete pipeline,
-    which lands with the stages in T4.
+    subprocess. The next stage comes from the same pure transition function the runner
+    uses, so status and run can never disagree about where a ticket is.
     """
-    ticket = TicketContext(ticket_id=args.ticket, root=Path(args.root).resolve())
+    root = Path(args.root).resolve()
+    settings = FluxConfig.load(root)
+    ticket = TicketContext(ticket_id=args.ticket, root=root, config=settings.runner)
     store = CheckpointStore(ticket.state_dir)
     state = store.load_state(ticket.ticket_id)
     # Chronological, not alphabetical: the order stages actually ran is the story.
@@ -123,8 +236,42 @@ def cmd_status(args: argparse.Namespace) -> int:
     if state.parked is not None:
         print(f"status:  PARKED at {state.parked.stage} ({state.parked.reason})")
         print(f"         {state.parked.note}")
+        return EXIT_OK
+    print(f"status:  active ({state.stage_runs} stage run(s) so far)")
+    decision = next_stage(
+        build_pipeline(settings),
+        completed=store.completed_stages(),
+        state=state,
+        config=ticket.config,
+    )
+    if decision.kind == "run" and decision.stage is not None:
+        print(f"next:    {decision.stage.name}")
+    elif decision.kind == "finished":
+        print("next:    (nothing — the pipeline is complete)")
     else:
-        print(f"status:  active ({state.stage_runs} stage run(s) so far)")
+        print(f"next:    park ({decision.reason}) — {decision.note}")
+    return EXIT_OK
+
+
+def cmd_unpark(args: argparse.Namespace) -> int:
+    """Clear the park record so the next ``flux run`` resumes the ticket.
+
+    A park means a human was asked to look; unparking is that human saying they did.
+    The failed stage's checkpoint is deliberately left in place — it is not ``ok``, so
+    the stage reruns — and the stage-run backstop resets, since a ticket that hit the
+    backstop would otherwise park again on the next invocation without running anything.
+    """
+    root = Path(args.root).resolve()
+    ticket = TicketContext(ticket_id=args.ticket, root=root)
+    store = CheckpointStore(ticket.state_dir)
+    state = store.load_state(ticket.ticket_id)
+    if state.parked is None:
+        print(f"ticket {ticket.ticket_id} is not parked")
+        return EXIT_OK
+    was = state.parked
+    store.save_state(replace(state, parked=None, stage_runs=0))
+    print(f"cleared the park at {was.stage} ({was.reason})")
+    print(f"         {was.note}")
     return EXIT_OK
 
 

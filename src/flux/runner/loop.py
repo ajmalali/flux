@@ -184,10 +184,10 @@ def _hard_stop(result: ExecResult, cfg: ExecConfig) -> ParkSignal | None:
     if result.window is not None and result.window.limit_hit:
         resets = f" (window resets at {result.window.resets_at})" if result.window.resets_at else ""
         return ParkSignal(f"subscription usage limit reached{resets}", reason="usage-limit")
-    spent = result.usage.total_tokens
+    spent = result.usage.budget_tokens
     if spent > cfg.max_tokens:
         return ParkSignal(
-            f"session used {spent:,} tokens against a budget of {cfg.max_tokens:,}",
+            f"session consumed {spent:,} uncached tokens against a budget of {cfg.max_tokens:,}",
             reason="token-budget-exceeded",
         )
     return None

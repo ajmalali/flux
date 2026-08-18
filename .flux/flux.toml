@@ -1,0 +1,72 @@
+# flux configuration (ADR 0006). Committed: a run is only reproducible if the
+# gate suite and the model routing are part of the repo, not of someone's shell.
+
+schema_version = 1
+target = "python"
+
+[runner]
+max_review_iters = 3
+artifact_retries = 1
+max_stage_runs = 40
+stage_commits = true
+
+# Model and effort are always explicit (ADR 0007) — never an SDK default.
+
+[stages.tests]
+model = "claude-sonnet-5"
+effort = "high"
+permission_mode = "acceptEdits"
+max_turns = 40
+max_tokens = 200000
+
+[stages.implement]
+model = "claude-sonnet-5"
+effort = "high"
+permission_mode = "acceptEdits"
+max_turns = 40
+max_tokens = 200000
+
+[stages.review]
+model = "claude-opus-5"
+effort = "high"
+permission_mode = "plan"
+max_turns = 30
+max_tokens = 200000
+
+[stages.fix]
+model = "claude-sonnet-5"
+effort = "high"
+permission_mode = "acceptEdits"
+max_turns = 40
+max_tokens = 200000
+
+[stages.pr]
+model = "claude-haiku-4-5-20251001"
+effort = "low"
+permission_mode = "acceptEdits"
+max_turns = 15
+max_tokens = 200000
+
+# Deterministic gates are the merge authority (ADR 0005). 'kind' only picks
+# how output is summarised; the verdict is always the command's exit status.
+
+[[gates]]
+name = "lint"
+kind = "ruff"
+command = ["uv", "run", "ruff", "check", "."]
+
+[[gates]]
+name = "typecheck"
+kind = "pyright"
+command = ["uv", "run", "pyright"]
+
+[[gates]]
+name = "test"
+kind = "pytest"
+command = ["uv", "run", "pytest", "-q", "-rf"]
+
+# A/B baseline against vanilla Claude Code, with a standing kill-criterion
+# (ADR 0008). Written down so it can be enforced, not remembered.
+[ab]
+vanilla_every = 10
+kill_criterion = "If vanilla Claude Code wins on cost AND quality for 3 consecutive samples, freeze harness feature work and investigate."

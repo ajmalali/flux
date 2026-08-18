@@ -28,8 +28,10 @@ BILLING_MODES: frozenset[str] = frozenset(get_args(BillingMode))
 # invariant (design.md §2). It is a comparison aid, never a billing figure.
 _CHARS_PER_TOKEN = 4
 
-# Shared immutable empties: frozen dataclasses need no factory for these.
-_NO_HOOKS: Mapping[str, Sequence[Any]] = MappingProxyType({})
+# Shared immutable empties: frozen dataclasses need no factory for these. NO_HOOKS is
+# public because callers building an ExecConfig need the default *value* — reading
+# ``ExecConfig.hooks`` off the class gives a slot descriptor, not an empty mapping.
+NO_HOOKS: Mapping[str, Sequence[Any]] = MappingProxyType({})
 _NO_TOOL_USES: Mapping[str, int] = MappingProxyType({})
 
 
@@ -105,8 +107,10 @@ class ExecConfig:
     disallowed_tools: tuple[str, ...] = ()
     max_turns: int = 40
     max_tokens: int = 200_000
-    """flux's own token budget for the call. Enforced by the runner and recorded in
-    metrics; see :attr:`advertise_token_budget` for the API-side variant."""
+    """flux's own token budget for the call, measured in *uncached* tokens
+    (:attr:`Usage.budget_tokens`) — cache reads do not count against it. Enforced by
+    the runner and recorded in metrics; see :attr:`advertise_token_budget` for the
+    API-side variant."""
 
     advertise_token_budget: bool = False
     """Send :attr:`max_tokens` to the model as an API task budget.
@@ -121,7 +125,7 @@ class ExecConfig:
     billing_mode: BillingMode = "subscription"
     setting_sources: tuple[SettingSource, ...] = ("project",)
     cwd: Path | None = None
-    hooks: Mapping[str, Sequence[Any]] = _NO_HOOKS
+    hooks: Mapping[str, Sequence[Any]] = NO_HOOKS
     """Opaque SDK hook config, forwarded verbatim by ``sdk.py``.
 
     Left untyped on purpose: the typed hook model (PreToolUse test-edit blocks and
@@ -179,6 +183,18 @@ class Usage:
     def billable_input_tokens(self) -> int:
         """Uncached input: what actually consumed fresh window capacity."""
         return self.input_tokens + self.cache_creation_tokens
+
+    @property
+    def budget_tokens(self) -> int:
+        """What a session actually consumed: uncached input, cache writes, and output.
+
+        Cache *reads* are excluded on purpose. A cached prefix is re-read on every
+        turn, so a 30-turn session over a 30k-token prefix reports ~900k cache reads
+        while consuming almost nothing — budgeting on :attr:`total_tokens` would
+        therefore cap how many *turns* a stage may take rather than how much work it
+        may do, and would punish the prompt caching flux is structured to get.
+        """
+        return self.billable_input_tokens + self.output_tokens
 
     @property
     def total_tokens(self) -> int:

@@ -1,5 +1,5 @@
-# ADR 0006: flux artifacts live under .flux/; runtime state is not committed.
+# Written by `flux init` (ADR 0006). Runtime state is rebuildable; artifacts are not.
+state/
 transcripts/
 usage/
 cache/
-state/

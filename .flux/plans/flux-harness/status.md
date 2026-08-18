@@ -167,6 +167,17 @@ Updated: 2026-08-18 (T4c done — gitnexus **refused**, ADR 0009 C2 upheld. Next
   result that kills the repo-map section entirely is a legitimate and welcome outcome.
 
 
+- [ ] **Housekeeping — decide what happens to `.claude/` (untracked).** `gitnexus setup` wrote
+  six skill files into `.claude/skills/gitnexus/` during the T4c spike, and a hook (global, not
+  in-repo) now prints "GitNexus index is stale — run `npx gitnexus analyze`" after Bash calls.
+  **Do not follow that nag as written:** `gitnexus analyze` without `--skip-agents-md` rewrites
+  `CLAUDE.md`, which is this project's session bootstrap. The skills also point sessions at the
+  gitnexus MCP surface, which T4c decided against and which is version-broken locally anyway.
+  Recommendation: delete `.claude/skills/gitnexus/`, gitignore `.claude/`, keep
+  `settings.local.json` if the accumulated permission allowlist is worth having. Left untouched
+  because it is the user's call.
+
+
 ## Session-close checklist (execute before ending any working session)
 
 1. Gates green (`uv run ruff check . && uv run pyright && uv run pytest`) — once T2 exists.

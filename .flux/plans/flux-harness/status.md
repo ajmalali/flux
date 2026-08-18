@@ -1,6 +1,6 @@
 # flux-harness — status & next task
 
-Updated: 2026-08-18 (T4 done: gates, `flux init`, implement stage — M0 exit benchmark met)
+Updated: 2026-08-18 (T4 + T4b done — **M0 complete**: gates, `flux init`, implement stage, repo map)
 
 ## Current state
 
@@ -34,8 +34,12 @@ Updated: 2026-08-18 (T4 done: gates, `flux init`, implement stage — M0 exit be
   `flux.stages.build_pipeline`. Nothing in the runner or the gate layer needs to change.
 - **This repo now dogfoods its own config** — `.flux/flux.toml` is committed, written by
   `flux init`, and its gate suite is the same three commands CLAUDE.md names.
-- Open decisions: repo-map tool choice (repowiki map vs RepoMapper) — **still open**, deferred
-  out of T4; neither tool is installed. It is the last unfinished piece of M0's scope.
+- **T4b done — M0 is complete.** Repo map resolved to **`repowiki map`** (bake-off memo at
+  `repo-map-memo.md`, ADR 0009 annotated). `src/flux/knowledge/` caches it to
+  `.flux/cache/repo-map.json`, records the git HEAD it was generated at, and slices it into the
+  implement pack; `flux index` regenerates it in **0.2s** with no LLM call, and
+  `--install-hook` writes an opt-in `post-merge` hook. 397 tests.
+- No open decisions. Next milestone is M1 (T5).
 
 ## Task queue — do the first unchecked item
 
@@ -69,13 +73,16 @@ Updated: 2026-08-18 (T4 done: gates, `flux init`, implement stage — M0 exit be
   bake-off, and nothing else in M0 depends on it).
   **Benchmark met:** a hand-written ticket flowed through one implement stage + gates end to end
   in a scratch target repo; `flux metrics` printed per-stage cost/time.
-- [ ] **T4b — M0 step 3b: repo map.**
-  Pick between `repowiki map` and Aider's RepoMapper — install both, rank this repo and the
-  scratch target with each, keep whichever ranks better; wire it behind `flux index` and a
-  post-merge hook, and note the choice here. **Done when:** `flux index` regenerates the map in
-  <30s with no LLM call, and `ImplementStage.hydrate` can fold a map slice into the context pack.
+- [x] **T4b — M0 step 3b: repo map.** `repowiki map` adopted; `flux index` regenerates in 0.2s,
+  the slice reaches the implement pack, staleness is labelled. **M0 exit benchmark fully met.**
 - [ ] **T5 — M1: full five-stage pipeline + hardening + A/B baseline** (expand into subtasks
-  when reached; specs in plan.md §5 M1 and the design.md stage I/O table).
+  when reached; specs in plan.md §5 M1 and the design.md stage I/O table). Before opening it,
+  answer the standing phase-gate question in writing (plan.md §5): *did the harness beat vanilla
+  Claude Code on the last A/B samples?* — at M0 there are none yet, so the honest answer is "no
+  data; the A/B harness is itself an M1 deliverable", and that is the first thing T5 should fix.
+  Carried into T5 from T4: the `PreToolUse` test-edit block (it needs a tests stage to protect),
+  and the review stage must use a **different model** from implement (`flux.toml` already routes
+  it to Opus with `permission_mode = "plan"`).
 
 ## Session-close checklist (execute before ending any working session)
 
@@ -85,6 +92,38 @@ Updated: 2026-08-18 (T4 done: gates, `flux init`, implement stage — M0 exit be
    surprises, deviations from design.md, or decisions made (new ADR if load-bearing).
 
 ## Log
+
+- 2026-08-18 — **T4b done. M0 complete.** Repo-map bake-off run for real against flux (85 files)
+  and the scratch target; memo at `repo-map-memo.md`, ADR 0009 annotated with the outcome.
+  **`repowiki map` adopted.** What the bake-off actually found:
+  - **RepoMapper is not adoptable.** Four blocking defects, and the last is fatal to its premise:
+    PageRank runs *only* when `--chat-files` is supplied, so in flux's case (a map built before
+    any file is chosen) the graph is built and discarded and **every file ranks 1.0**. Also: HEAD
+    does not execute on any tree-sitter version (it raised the floor to ≥0.25 for `QueryCursor`
+    while keeping `Language.query`, removed in 0.25); the CLI prints a Python tuple `repr`;
+    `token_count(None)` raises inside the verbose path; and the tags cache memoises *failures*
+    with no invalidation that `--force-refresh` can clear. Unmaintained since 2025-09-24 — the
+    commit that broke it. Its Aider-derived symbol-level extraction is genuinely richer than a
+    ranked file list, so **if flux later needs symbols, take them from Aider directly, not from
+    this fork.**
+  - **`repowiki map` works and ranks correctly**: on flux it put `errors.py`, `jsonio.py`,
+    `executor/types.py`, `proc.py` on top — the four most-imported modules — in 0.2s with no LLM.
+    On a 3-file repo everything ties, which is the right answer to "no signal", not a bug.
+  - **Not taken as a dependency.** The `map` subcommand ships inside a full wiki generator
+    (litellm, openai, numpy — 57 packages) for a zero-LLM feature, so the default command runs it
+    through `uvx` and `[repo_map] command` makes the ranker swappable — same "tool as
+    configuration" seam as the gate suite.
+  - **flux owns cache, staleness and slicing.** The git HEAD at generation time is stored, and a
+    map generated at a different commit is labelled as possibly out of date *inside the pack*
+    rather than presented as current — stale context is the dominant residual risk (plan.md §7).
+    A ranker that cannot run raises; caching an empty map would later read as "this repo has no
+    important files", which flux must never conclude by accident.
+  - Two smaller things worth keeping: exclusions are applied *after* the ranker picks its top N,
+    so flux over-fetches (`OVERFETCH = 3`) or the map silently shrinks by however many
+    flux-owned files happened to rank; and the `post-merge` hook is **opt-in**
+    (`flux index --install-hook`), never part of `flux init` — it runs on every merge in a repo
+    flux does not own, it refuses to clobber an existing hook, and it ends in `|| true` so a
+    ranker problem can never become a git problem.
 
 - 2026-08-18 — **T4 done (bar the repo map, split out as T4b).** M0's exit benchmark is met:
   a hand-written ticket in a scratch `tinylib` repo went brief → implement → gates → tagged

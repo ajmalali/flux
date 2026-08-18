@@ -212,6 +212,19 @@ harness was not about to exercise anyway: flux runs those same commands itself m
 `Stage.name` and `Gate.name` are declared as read-only properties so an implementation can be a
 frozen dataclass — the natural shape for something fully described by its configuration.
 
+### The repo map (T4b, ADR 0009)
+
+Bought, and kept at arm's length: `[repo_map] command` in `flux.toml` names the ranker
+(`uvx --from repowiki repowiki map` by default), and `flux index` runs it. flux owns only what a
+ranker cannot know — the cache at `.flux/cache/repo-map.json`, the git HEAD it was generated at,
+and how much of it a pack may carry (`pack_entries`, 25, against a cache of 60).
+
+The staleness rule matters more than the ranking. `ImplementStage.hydrate` folds the map into the
+context pack, and if HEAD has moved since generation it says so in the pack rather than presenting
+the map as current: stale context is the dominant residual risk (plan.md §7), and a confident map
+of an older tree is worse than no map. A ranker that cannot run raises rather than caching an
+empty map — "no important files" is not a thing flux may conclude by accident.
+
 ## 2. The artifact handoff contract (offload + fresh-context pickup)
 
 The failure mode to design against: a stage "knows" something only in its transcript, the next
@@ -287,7 +300,7 @@ bodies directly.
 |---|---|
 | Runner, transition fn, stages, gates, hydrator, metrics | **build** (this doc; it's small) |
 | Substrate (before building runner) | **spike first**: Archon + Gas City, half-day each, hard timebox; keep-custom is the default hypothesis; steal Archon's run-logging model regardless |
-| Repo map | **buy**: `repowiki map` (zero-LLM) or Aider RepoMapper — whichever ranks better on the target repo |
+| Repo map | **bought**: `repowiki map` (zero-LLM), chosen in the T4b bake-off (`repo-map-memo.md`). Invoked as a configured command, not a dependency; flux owns the cache, the staleness signal and the slicing |
 | Wiki / architecture docs | **buy** (Phase 2): OpenWiki vs deepwiki-by-cc spike; keep custom only ADR log, interface catalog, exploration-call KPI hook |
 | Research/planning templates | **mine**: GSD + OpenSpec formats; keep custom the mandatory dissent sections and different-model plan review |
 | Intra-stage fan-out (e.g. multi-lens review) | **evaluate**: Claude Code native workflows bake-off vs single different-model reviewer |

@@ -13,6 +13,7 @@ suite for an unrecognised target — a pipeline with no gates is a real decision
 
 from __future__ import annotations
 
+import shlex
 import tomllib
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -30,7 +31,8 @@ from flux.executor.types import (
     PermissionMode,
 )
 from flux.gates.spec import GateSpec, build_gates
-from flux.jsonio import JsonMapping, as_json_mapping
+from flux.jsonio import JsonMapping, as_json_list, as_json_mapping
+from flux.knowledge.repomap import RepoMapConfig
 from flux.runner.context import FLUX_DIRNAME, RunnerConfig
 from flux.runner.stage import Gate
 
@@ -147,6 +149,7 @@ class FluxConfig:
     so "reset to the last good stage" is a ``git reset``, not bookkeeping (design.md §1)."""
 
     ab: AbConfig = field(default_factory=AbConfig)
+    repo_map: RepoMapConfig = field(default_factory=RepoMapConfig)
     schema_version: int = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -215,6 +218,7 @@ class FluxConfig:
             gates=gates,
             stage_commits=_bool(runner_table, "stage_commits", True),
             ab=_ab(_table(payload, "ab")),
+            repo_map=_repo_map(_table(payload, "repo_map")),
             schema_version=version,
         )
 
@@ -268,6 +272,13 @@ class FluxConfig:
                 "[ab]",
                 f"vanilla_every = {self.ab.vanilla_every}",
                 f"kill_criterion = {_toml_string(self.ab.kill_criterion)}",
+                "",
+                "# Repo map: bought, not built (ADR 0009). `flux index` runs this command and",
+                "# caches the ranked file list; stages fold a slice into their context pack.",
+                "[repo_map]",
+                f"command = {list(self.repo_map.command)!r}".replace("'", '"'),
+                f"top = {self.repo_map.top}",
+                f"pack_entries = {self.repo_map.pack_entries}",
             ]
         )
         return "\n".join(blocks).rstrip() + "\n"
@@ -344,6 +355,24 @@ def _stage_profiles(table: JsonMapping) -> Mapping[str, StageProfile]:
             max_tokens=_int(entry, "max_tokens", base.max_tokens if base else 200_000),
         )
     return MappingProxyType(profiles)
+
+
+def _repo_map(table: JsonMapping) -> RepoMapConfig:
+    default = RepoMapConfig()
+    raw = table.get("command")
+    command = default.command
+    if isinstance(raw, str):
+        command = tuple(shlex.split(raw))
+    elif (items := as_json_list(raw)) is not None:
+        command = tuple(str(part) for part in items)
+    elif raw is not None:
+        raise ConfigError("[repo_map] command must be a string or a list of strings")
+    return RepoMapConfig(
+        command=command,
+        top=_int(table, "top", default.top),
+        pack_entries=_int(table, "pack_entries", default.pack_entries),
+        timeout_s=_int(table, "timeout_s", default.timeout_s),
+    )
 
 
 def _ab(table: JsonMapping) -> AbConfig:

@@ -13,6 +13,10 @@ source files the diff touched).
 ## Decision
 - Repo map: adopt `repowiki map` or Aider RepoMapper (whichever ranks better on the target
   repo); post-merge hook regeneration. No custom extractor.
+  **Resolved 2026-08-18 (T4b): `repowiki map`.** RepoMapper's PageRank only runs when
+  `--chat-files` is supplied — every file otherwise ranks 1.0 — and its HEAD does not execute on
+  any tree-sitter version. Bake-off in `plans/flux-harness/repo-map-memo.md`. The tool is invoked
+  as a configured command (`[repo_map] command`), not taken as a flux dependency.
 - Wiki: timeboxed spike (1 day) of OpenWiki vs deepwiki-by-cc; selection criteria: Markdown
   in-repo, incremental sync works on real diffs, acceptable sync cost, pages sliceable into
   hydration packs.

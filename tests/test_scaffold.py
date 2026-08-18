@@ -9,7 +9,7 @@ import pytest
 
 from flux.config import CONFIG_FILENAME, FluxConfig
 from flux.errors import ConfigError
-from flux.scaffold import COMMITTED_DIRS, IGNORED_DIRS, init_repo
+from flux.scaffold import COMMITTED_DIRS, IGNORED_DIRS, init_repo, install_post_merge_hook
 
 
 def python_repo(tmp_path: Path) -> Path:
@@ -114,3 +114,69 @@ def test_a_directory_that_already_has_content_gets_no_placeholder(tmp_path: Path
 
     assert not (adr / ".gitkeep").exists()
     assert (tmp_path / ".flux" / "plans" / ".gitkeep").exists()
+
+
+# -- the post-merge hook (opt-in) --------------------------------------------------
+
+
+def git_repo(tmp_path: Path) -> Path:
+    (tmp_path / ".git" / "hooks").mkdir(parents=True)
+    return tmp_path
+
+
+def test_the_hook_is_not_installed_by_plain_init(tmp_path: Path) -> None:
+    """A hook runs on every merge in a repo flux does not own — never install it silently."""
+    git_repo(python_repo(tmp_path))
+    init_repo(tmp_path)
+    assert not (tmp_path / ".git" / "hooks" / "post-merge").exists()
+
+
+def test_installing_the_hook_writes_an_executable_script(tmp_path: Path) -> None:
+    git_repo(tmp_path)
+    path, note = install_post_merge_hook(tmp_path)
+
+    assert note == "installed"
+    assert path.read_text(encoding="utf-8").startswith("#!/bin/sh")
+    assert "flux.cli index" in path.read_text(encoding="utf-8")
+    assert path.stat().st_mode & 0o111
+
+
+def test_the_hook_can_never_fail_a_merge(tmp_path: Path) -> None:
+    """A ranker problem must not become a git problem; staleness is caught at hydration."""
+    git_repo(tmp_path)
+    path, _ = install_post_merge_hook(tmp_path)
+    assert path.read_text(encoding="utf-8").rstrip().endswith("|| true")
+
+
+def test_installing_twice_is_a_no_op(tmp_path: Path) -> None:
+    git_repo(tmp_path)
+    install_post_merge_hook(tmp_path)
+    _, note = install_post_merge_hook(tmp_path)
+    assert note == "already installed"
+
+
+def test_someone_elses_hook_is_never_clobbered(tmp_path: Path) -> None:
+    git_repo(tmp_path)
+    existing = tmp_path / ".git" / "hooks" / "post-merge"
+    existing.write_text("#!/bin/sh\nmake deps\n", encoding="utf-8")
+
+    _, note = install_post_merge_hook(tmp_path)
+
+    assert "already exists" in note
+    assert "make deps" in existing.read_text(encoding="utf-8")
+
+
+def test_force_replaces_an_existing_hook(tmp_path: Path) -> None:
+    git_repo(tmp_path)
+    existing = tmp_path / ".git" / "hooks" / "post-merge"
+    existing.write_text("#!/bin/sh\nmake deps\n", encoding="utf-8")
+
+    _, note = install_post_merge_hook(tmp_path, force=True)
+
+    assert note == "installed"
+    assert "make deps" not in existing.read_text(encoding="utf-8")
+
+
+def test_a_non_git_repo_says_so(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="not a git repository"):
+        install_post_merge_hook(tmp_path)

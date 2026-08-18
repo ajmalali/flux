@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -21,8 +22,8 @@ from flux.metrics import MetricRecord, MetricsStore
 from flux.runner.checkpoint import Checkpoint, CheckpointStore, ParkRecord, RunState
 from flux.runner.context import TicketContext
 
-PLANNED = ["index", "research", "plan", "tickets"]
-IMPLEMENTED = ["metrics", "doctor", "status", "init", "run", "unpark"]
+PLANNED = ["research", "plan", "tickets"]
+IMPLEMENTED = ["metrics", "doctor", "status", "init", "run", "unpark", "index"]
 
 
 def test_no_command_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
@@ -280,3 +281,35 @@ def test_unpark_on_a_running_ticket_says_so(
 ) -> None:
     assert main(["unpark", "flux-1", "--root", str(tmp_path)]) == EXIT_OK
     assert "is not parked" in capsys.readouterr().out
+
+
+def test_index_generates_and_reports_the_map(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    payload = json.dumps(
+        {"file_count": 9, "entries": [{"path": "src/core.py", "score": 1.0, "lines": 12}]}
+    )
+    script = tmp_path / "ranker.py"
+    script.write_text(f"print({payload!r})", encoding="utf-8")
+    config = tmp_path / ".flux" / "flux.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text(f'[repo_map]\ncommand = ["{sys.executable}", "{script}"]\n', encoding="utf-8")
+
+    assert main(["index", "--root", str(tmp_path)]) == EXIT_OK
+
+    out = capsys.readouterr().out
+    assert "mapped:  9 file(s) -> 1 ranked" in out
+    assert "src/core.py" in out
+    assert (tmp_path / ".flux" / "cache" / "repo-map.json").exists()
+
+
+def test_index_reports_a_broken_ranker_rather_than_caching_an_empty_map(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = tmp_path / ".flux" / "flux.toml"
+    config.parent.mkdir(parents=True)
+    config.write_text('[repo_map]\ncommand = "flux-no-such-ranker"\n', encoding="utf-8")
+
+    assert main(["index", "--root", str(tmp_path)]) == EXIT_ERROR
+    assert "not on PATH" in capsys.readouterr().err
+    assert not (tmp_path / ".flux" / "cache" / "repo-map.json").exists()

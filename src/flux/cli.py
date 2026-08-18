@@ -13,18 +13,19 @@ from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 
-from flux import __version__
+from flux import __version__, knowledge
 from flux.config import FluxConfig
-from flux.errors import ConfigError, ParkSignal
+from flux.errors import ConfigError, FluxError, ParkSignal
 from flux.executor.billing import detect_billing_redirects, preflight, sanitize_process_env
 from flux.executor.sdk import ClaudeAgentSDKExecutor
+from flux.git import head_sha
 from flux.metrics.record import DEFAULT_METRICS_PATH, MetricsStore
 from flux.metrics.report import build_report, render
 from flux.runner.checkpoint import CheckpointStore
 from flux.runner.context import CONTEXT_DIRNAME, FLUX_DIRNAME, TicketContext
 from flux.runner.loop import run_ticket
 from flux.runner.transition import Pipeline, next_stage
-from flux.scaffold import init_repo
+from flux.scaffold import init_repo, install_post_merge_hook
 from flux.stages import build_pipeline
 from flux.tickets import TICKET_FILENAME, load_ticket
 
@@ -35,7 +36,6 @@ EXIT_NOT_IMPLEMENTED = 3
 
 # Subcommands whose milestone has not landed yet: (name, help, milestone).
 _PLANNED: tuple[tuple[str, str, str], ...] = (
-    ("index", "regenerate the repo map", "M0"),
     ("research", "run the research phase for a slug", "M3"),
     ("plan", "run the planning phase for a slug", "M3"),
     ("tickets", "turn a plan into a bd ticket graph", "M4"),
@@ -53,6 +53,19 @@ def build_parser() -> argparse.ArgumentParser:
         planned = sub.add_parser(name, help=f"{help_text} (not implemented — {milestone})")
         planned.add_argument("args", nargs="*", help=argparse.SUPPRESS)
         planned.set_defaults(func=_make_stub(name, milestone))
+
+    index = sub.add_parser("index", help="regenerate the ranked repo map")
+    index.add_argument("--root", type=Path, default=Path.cwd(), help=_ROOT_HELP)
+    index.add_argument("--top", type=int, default=None, help="entries to keep in the cache")
+    index.add_argument(
+        "--install-hook",
+        action="store_true",
+        help="also install a git post-merge hook that regenerates the map",
+    )
+    index.add_argument(
+        "--force", action="store_true", help="with --install-hook, replace an existing hook"
+    )
+    index.set_defaults(func=cmd_index)
 
     init = sub.add_parser("init", help="scaffold .flux/ in the target repo")
     init.add_argument("--root", type=Path, default=Path.cwd(), help=_ROOT_HELP)
@@ -132,6 +145,30 @@ def cmd_init(args: argparse.Namespace) -> int:
     example = report.root / FLUX_DIRNAME / CONTEXT_DIRNAME / "<ticket-id>" / TICKET_FILENAME
     print(f"\nNext: write a ticket brief to {example}")
     print("      then run `flux run <ticket-id>`")
+    return EXIT_OK
+
+
+def cmd_index(args: argparse.Namespace) -> int:
+    """Regenerate the repo map (ADR 0009). Zero LLM calls — it is a ranker, not a model."""
+    root = Path(args.root).resolve()
+    settings = FluxConfig.load(root)
+    config = settings.repo_map
+    if args.top is not None:
+        config = replace(config, top=args.top)
+
+    report = knowledge.generate(root, config, head=head_sha(root))
+    print(f"tool:    {' '.join(config.command)}")
+    print(f"mapped:  {report.map.file_count} file(s) -> {len(report.map.entries)} ranked")
+    print(f"cache:   {report.path}")
+    print(f"took:    {report.duration_ms / 1000:.1f}s")
+    for warning in report.warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    if args.install_hook:
+        path, note = install_post_merge_hook(root, force=args.force)
+        print(f"hook:    {path} — {note}")
+    top = report.map.render(limit=5)
+    if top:
+        print(f"\ntop of the map:\n{top}")
     return EXIT_OK
 
 
@@ -300,6 +337,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_PARKED
     except ConfigError as bad:
         print(f"flux: {bad}", file=sys.stderr)
+        return EXIT_ERROR
+    except FluxError as failed:
+        print(f"flux: {failed}", file=sys.stderr)
         return EXIT_ERROR
 
 

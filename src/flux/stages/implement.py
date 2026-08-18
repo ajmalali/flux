@@ -17,10 +17,11 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from flux import knowledge
 from flux.config import FluxConfig
 from flux.executor.types import ExecConfig, ExecResult, PromptPack
 from flux.gates.spec import bash_permissions
-from flux.git import stage_commit
+from flux.git import head_sha, stage_commit
 from flux.metrics.record import GateOutcome
 from flux.runner.artifact import ArtifactSpec
 from flux.runner.context import TicketContext
@@ -94,12 +95,39 @@ class ImplementStage:
             context_pack=join(
                 section("Ticket", ticket.brief),
                 read_text(context / CONTEXT_PACK_FILENAME),
+                self._repo_map_section(ticket),
             ),
             stage_tail=join(
                 self._tests_section(context),
                 self._gates_section(),
                 self._output_section(ticket),
             ),
+        )
+
+    def _repo_map_section(self, ticket: TicketContext) -> str:
+        """The cached repo map, sliced to what a pack can afford (ADR 0009).
+
+        Absent is normal — a repo that has never run ``flux index`` simply gets no
+        section. A *stale* map is stated as stale rather than quietly presented as
+        current: an out-of-date map that looks authoritative is worse than none
+        (plan.md §7, stale context is the dominant residual risk).
+        """
+        repo_map = knowledge.load(ticket.root)
+        if repo_map is None:
+            return ""
+        body = repo_map.render(limit=self.settings.repo_map.pack_entries)
+        if not body:
+            return ""
+        stale = repo_map.is_stale(head_sha(ticket.worktree))
+        caveat = (
+            "\n\nThis map was generated at an earlier commit and may not match the "
+            "current tree. Verify anything load-bearing before relying on it."
+            if stale
+            else ""
+        )
+        return section(
+            "Repo map (files ranked by import centrality)",
+            f"```\n{body}\n```{caveat}",
         )
 
     def _tests_section(self, context: Path) -> str:

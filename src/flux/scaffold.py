@@ -9,6 +9,8 @@ says so, rather than pretending a green pipeline means something.
 
 from __future__ import annotations
 
+import shlex
+import sys
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,6 +38,16 @@ GITKEEP = (
     "# Keeps this directory in git while it is empty. flux writes here; delete freely\n"
     "# once the directory has real content.\n"
 )
+
+POST_MERGE_HOOK = """\
+#!/bin/sh
+# Installed by `flux index --install-hook`: keep the repo map current after a merge
+# (ADR 0009). Never fails the merge — a stale map is already detected and labelled at
+# hydration time, so a ranker problem must not become a git problem.
+{python} -m flux.cli index --root "$(git rev-parse --show-toplevel)" >/dev/null 2>&1 || true
+"""
+
+HOOK_MARKER = "flux index --install-hook"
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +120,35 @@ def init_repo(root: Path, *, force: bool = False) -> InitReport:
         skipped=tuple(skipped),
         warnings=tuple(warnings),
     )
+
+
+def install_post_merge_hook(root: Path, *, force: bool = False) -> tuple[Path, str]:
+    """Write a ``post-merge`` hook that regenerates the repo map. Returns (path, note).
+
+    Opt-in rather than part of ``flux init``: a git hook runs on every merge in a repo
+    flux does not own, so installing one silently would be a surprise. An existing hook
+    is never clobbered — the note says so and the user can merge the two lines by hand.
+    """
+    hooks = root / ".git" / "hooks"
+    if not (root / ".git").exists():
+        raise ConfigError(f"{root} is not a git repository, so it has no hooks directory")
+    path = hooks / "post-merge"
+    if path.exists() and not force:
+        existing = _read(path)
+        if HOOK_MARKER in existing:
+            return path, "already installed"
+        return path, "left alone: a post-merge hook already exists (pass --force to replace it)"
+    hooks.mkdir(parents=True, exist_ok=True)
+    write_atomic(path, POST_MERGE_HOOK.format(python=shlex.quote(sys.executable)))
+    path.chmod(0o755)
+    return path, "installed"
+
+
+def _read(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
 
 
 def _config_warnings(config: FluxConfig) -> Sequence[str]:

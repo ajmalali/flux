@@ -18,3 +18,15 @@ def as_json_mapping(value: object) -> JsonMapping | None:
     if isinstance(value, dict):
         return cast(JsonMapping, value)
     return None
+
+
+def as_json_list(value: object) -> list[object] | None:
+    """Return ``value`` as a list of unknowns, or ``None`` if it is not an array.
+
+    Returning the narrowed value beats an ``isinstance`` guard at the call site: the
+    guard narrows to ``list[Unknown]``, which strict type checking then rejects at
+    every use.
+    """
+    if isinstance(value, list):
+        return cast(list[object], value)
+    return None

@@ -13,6 +13,8 @@ from typing import cast
 from flux.config import FluxConfig, StageProfile
 from flux.executor.types import ExecResult, Usage
 from flux.gates.spec import GateSpec
+from flux.git import head_sha
+from flux.knowledge import RepoMap, RepoMapConfig, RepoMapEntry, cache_path
 from flux.metrics.record import GateOutcome
 from flux.proc import run_command
 from flux.runner.context import TicketContext
@@ -267,3 +269,75 @@ def test_no_gates_means_no_bash_permission_is_granted(tmp_path: Path) -> None:
     stage = ImplementStage(settings=FluxConfig(root=tmp_path, gates=()))
     ticket = TicketContext(ticket_id="flux-1", root=tmp_path, brief=BRIEF)
     assert stage.config(ticket).allowed_tools == ()
+
+
+# -- repo map (ADR 0009) ---------------------------------------------------------
+
+
+def write_map(root: Path, *, head: str = "", entries: int = 3) -> None:
+    path = cache_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    generated = RepoMap(
+        entries=tuple(
+            RepoMapEntry(path=f"src/mod{n}.py", score=1.0 / (n + 1), lines=10 * n)
+            for n in range(entries)
+        ),
+        head=head,
+    )
+    path.write_text(json.dumps(generated.to_json()), encoding="utf-8")
+
+
+def test_the_pack_carries_the_repo_map_when_one_has_been_generated(tmp_path: Path) -> None:
+    stage, ticket = make(tmp_path)
+    write_map(tmp_path)
+
+    pack = stage.hydrate(ticket)
+    assert "Repo map" in pack.context_pack
+    assert "src/mod0.py" in pack.context_pack
+
+
+def test_no_repo_map_is_normal_not_fatal(tmp_path: Path) -> None:
+    stage, ticket = make(tmp_path)
+    assert "Repo map" not in stage.hydrate(ticket).context_pack
+
+
+def test_the_pack_slice_is_bounded_by_the_configured_size(tmp_path: Path) -> None:
+    """The cache is for humans; the pack is on a token budget."""
+    settings = FluxConfig(root=tmp_path, repo_map=RepoMapConfig(pack_entries=2))
+    stage = ImplementStage(settings=settings)
+    ticket = TicketContext(ticket_id="flux-1", root=tmp_path, brief=BRIEF)
+    write_map(tmp_path, entries=9)
+
+    pack = stage.hydrate(ticket)
+    assert "src/mod1.py" in pack.context_pack
+    assert "src/mod2.py" not in pack.context_pack
+    assert "and 7 further files" in pack.context_pack
+
+
+def test_a_stale_map_is_labelled_stale_rather_than_presented_as_current(tmp_path: Path) -> None:
+    """Stale context is the dominant residual risk (plan.md §7) — say so in the pack."""
+    stage, ticket = make(tmp_path)
+    git_repo(tmp_path)
+    (tmp_path / "seed.txt").write_text("x", encoding="utf-8")
+    run_command(["git", "add", "-A"], cwd=tmp_path)
+    run_command(
+        ["git", "-c", "user.email=a@b.c", "-c", "user.name=a", "commit", "-qm", "seed"],
+        cwd=tmp_path,
+    )
+    write_map(tmp_path, head="0000000000000000000000000000000000000000")
+
+    assert "may not match the current tree" in stage.hydrate(ticket).context_pack
+
+
+def test_a_current_map_carries_no_caveat(tmp_path: Path) -> None:
+    stage, ticket = make(tmp_path)
+    git_repo(tmp_path)
+    (tmp_path / "seed.txt").write_text("x", encoding="utf-8")
+    run_command(["git", "add", "-A"], cwd=tmp_path)
+    run_command(
+        ["git", "-c", "user.email=a@b.c", "-c", "user.name=a", "commit", "-qm", "seed"],
+        cwd=tmp_path,
+    )
+    write_map(tmp_path, head=head_sha(tmp_path))
+
+    assert "may not match" not in stage.hydrate(ticket).context_pack

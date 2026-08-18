@@ -70,3 +70,10 @@ command = ["uv", "run", "pytest", "-q", "-rf"]
 [ab]
 vanilla_every = 10
 kill_criterion = "If vanilla Claude Code wins on cost AND quality for 3 consecutive samples, freeze harness feature work and investigate."
+
+# Repo map: bought, not built (ADR 0009). `flux index` runs this command and
+# caches the ranked file list; stages fold a slice into their context pack.
+[repo_map]
+command = ["uvx", "--from", "repowiki", "repowiki", "map"]
+top = 60
+pack_entries = 25

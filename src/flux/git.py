@@ -49,6 +49,16 @@ def is_git_repo(worktree: Path) -> bool:
     return _git(["rev-parse", "--git-dir"], worktree).returncode == 0
 
 
+def head_sha(worktree: Path) -> str:
+    """The worktree's current commit, or ``""`` if there is none to read.
+
+    Used as the staleness signal for generated artifacts: what a cached map describes
+    is the tree at this commit.
+    """
+    run = _git(["rev-parse", "HEAD"], worktree)
+    return run.stdout.strip() if run.returncode == 0 else ""
+
+
 def stage_tag(ticket: str, stage: str) -> str:
     """The tag naming a stage's commit. Sanitised so it is always a legal ref."""
     return f"flux/{_safe(ticket)}/{_safe(stage)}"

@@ -1,0 +1,5 @@
+# ADR 0006: gus artifacts live under .gus/; runtime state is not committed.
+transcripts/
+usage/
+cache/
+state/

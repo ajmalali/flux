@@ -1,6 +1,6 @@
 # gus-harness — status & next task
 
-Updated: 2026-08-17 (T1 substrate spikes executed; decision: keep custom Python)
+Updated: 2026-08-18 (T2 done: package skeleton, executor seam, metrics store)
 
 ## Current state
 
@@ -9,7 +9,14 @@ Updated: 2026-08-17 (T1 substrate spikes executed; decision: keep custom Python)
   to the orchestration layer); decision memo at `substrate-memo.md`: **keep custom Python**,
   adopt beads molecules as the pipeline container (at M4/D2), steal Archon's per-node
   event-log shape for A2 metrics. beads (bd) 1.2.1 installed via Homebrew, pin `1.x`.
-- **No code exists yet.** No `pyproject.toml`, no package, no tooling set up.
+- **T2 done.** Package scaffolded (`uv`, Python ≥3.12, ruff + pyright *strict* + pytest, all
+  green). `src/gus/executor/` holds the ADR 0007 seam (`Executor` protocol, `ExecConfig`,
+  `ExecResult`, `PromptPack`, `ClaudeAgentSDKExecutor`, `StubExecutor`) and the ADR 0010
+  billing preflight; `src/gus/metrics/` holds the JSONL store + `gus metrics` report.
+  `gus` CLI has stubs for init/index/research/plan/tickets/run/status, plus working
+  `metrics` and a new `doctor`. 126 tests; live round-trip verified on subscription auth.
+- **Executor is usable now.** `ClaudeAgentSDKExecutor().run(pack, cfg)` works end to end and
+  writes correct metrics lines. T3 can stub it via `StubExecutor` without touching the SDK.
 - Open decisions: repo-map tool choice (repowiki map vs RepoMapper, part of T4/M0).
 
 ## Task queue — do the first unchecked item
@@ -20,7 +27,7 @@ Updated: 2026-08-17 (T1 substrate spikes executed; decision: keep custom Python)
   spiking, adopt the default hypothesis (custom Python wins). **Either way**, write the decision
   memo to `.gus/plans/gus-harness/substrate-memo.md` (decision, scorecard or "not spiked —
   default hypothesis adopted", molecules note, revisit-at-phase-gates rule) and check this box.
-- [ ] **T2 — M0 step 1: package skeleton + Executor + metrics.**
+- [x] **T2 — M0 step 1: package skeleton + Executor + metrics.**
   Scaffold: `uv init` (package `gus`, Python ≥3.12), ruff/pyright/pytest configured, `gus` CLI
   entry point (`cli.py`) with stub subcommands. Implement `src/gus/executor/` (the `Executor`
   protocol, `ExecConfig`, `ExecResult`, `PromptPack`, `ClaudeAgentSDKExecutor`) and
@@ -58,6 +65,44 @@ Updated: 2026-08-17 (T1 substrate spikes executed; decision: keep custom Python)
    surprises, deviations from design.md, or decisions made (new ADR if load-bearing).
 
 ## Log
+
+- 2026-08-18 — **T2 done.** Skeleton + executor seam + metrics store landed; gates green;
+  one live round-trip on subscription auth (Haiku, effort=low) wrote a correct metrics line
+  and `gus metrics` printed per-stage tokens/time. Findings that shape later work:
+  - **Preflight primitive found:** `claude auth status --json` returns
+    `{loggedIn, authMethod, apiProvider, apiKeySource, subscriptionType, email}`. `apiKeySource`
+    appears **only** when an API key is overriding the subscription login (and blanks out
+    `email`/`subscriptionType`) — that field is the ADR 0010 check.
+  - **Credential strip must happen in the parent.** The SDK spawns the CLI with
+    `{**os.environ, **options.env}` (`_internal/transport/subprocess_cli.py`), so `options.env`
+    can *set* but never *unset* an inherited var. gus therefore deletes
+    `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` from `os.environ` before spawning; a test asserts
+    on the reproduced merge, and a second test pins the SDK behaviour that forces this.
+  - **Deviation from design.md §1 (`max_tokens`):** the SDK's `task_budget` → `--task-budget` is
+    model-gated. Haiku 4.5 rejects it with `400 This model does not support user-configurable
+    task budgets`. So `ExecConfig.max_tokens` is now a **gus-side** budget (recorded, enforced by
+    the runner) and sending it to the API is opt-in via `advertise_token_budget=False`.
+    `max_turns` is the cap that always applies. Not ADR-level, but design.md should say so.
+  - **The SDK raises on terminal CLI errors** (turn cap, budget cap, API error) — a bare
+    `Exception` from the message stream, not an error `ResultMessage`. The executor converts
+    those to `ExecResult(ok=False)` so the runner can retry/park, and re-raises typed
+    `ClaudeSDKError` (missing CLI, dead process) as genuine environment faults.
+  - **Window pressure has a real signal:** `RateLimitEvent` carries
+    `{status, rate_limit_type: "five_hour", resets_at, utilization}`. Captured into
+    `ExecResult.window` and the metrics line, so ADR 0010's park-on-limit + resume-at-reset has
+    its input. `utilization` came back `None` on these runs — status/`resets_at` are reliable,
+    utilization may not be.
+  - **Billing surface is verifiable per run:** `ResultMessage.model_usage[...]["provider"]`
+    reports `firstParty`. Recorded as `MetricRecord.provider` so a silent policy shift shows up
+    in the history, not just in a preflight that ran hours earlier.
+  - **Stage sessions inherit the target repo's CLAUDE.md** via `setting_sources=["project"]`.
+    A context pack that merely *names* files provoked 6 Read calls and blew `max_turns=3`.
+    Reinforces design.md §2: the hydrator must resolve slices into the pack rather than pointing
+    at paths, and stage `max_turns` needs headroom.
+  - Added `gus doctor` (not in plan.md §4's command list) — it runs the preflight and reports
+    auth, provider, what was stripped, and any billing redirects.
+  - Tooling note: pyright runs in **strict** mode; `ruff format` is used but is not one of the
+    three gates.
 
 - 2026-08-17 — **T1 done (spiked, option a).** Both substrates run hands-on in scratchpad.
   Archon 0.9.0: full two-stage-with-gate live run on subscription auth; gate fail → bounded

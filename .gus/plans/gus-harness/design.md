@@ -30,6 +30,17 @@ class Executor(Protocol):                       # ADR 0007 — the ONLY seam to 
 class ClaudeAgentSDKExecutor:                   # sole module importing claude_agent_sdk
     ...
 
+# Cap semantics (established in T2): `max_turns` is the only cap the CLI always enforces.
+# The SDK's task budget (`--task-budget`) is model-gated — models without support reject the
+# request with `400 This model does not support user-configurable task budgets` — so
+# `max_tokens` is a gus-side budget (recorded in metrics, enforced by the runner) and sending
+# it to the API is opt-in per stage via `advertise_token_budget`.
+#
+# Terminal CLI errors (turn cap hit, API error) arrive as a raised exception from the SDK
+# message stream, not as an error ResultMessage. The executor converts those to
+# ExecResult(ok=False) so the runner can retry or park; typed ClaudeSDKError (missing CLI,
+# dead process) surfaces as a genuine environment fault.
+
 # Billing (ADR 0010): the executor rides the logged-in Claude subscription. Preflight on every
 # run: assert CLI subscription auth is live and strip ANTHROPIC_API_KEY/AUTH_TOKEN from the
 # child environment. API billing engages only via the approved fallback ladder (auth broken /
@@ -44,6 +55,7 @@ class ExecConfig:
     allowed_tools: list[str]
     max_turns: int; max_tokens: int             # caps in turns+tokens (subscription mode);
                                                 # max_budget_usd applies only in API fallback
+    advertise_token_budget: bool                # send max_tokens to the API as a task budget
     hooks: dict                                 # e.g. PreToolUse test-edit block
 
 class Stage(Protocol):

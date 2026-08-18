@@ -1,0 +1,65 @@
+[project]
+name = "gus"
+version = "0.1.0"
+description = "Deterministic orchestration harness around Claude Code"
+authors = [{ name = "Ajmal Ali", email = "ajmal@akstudios.com" }]
+requires-python = ">=3.12"
+dependencies = [
+    "claude-agent-sdk>=0.2.139",
+]
+
+[project.scripts]
+gus = "gus.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.9.17,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4",
+    "pyright>=1.1.400",
+    "ruff>=0.14",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+# .gus/ holds design docs; their fenced code samples are prose, not source.
+extend-exclude = [".gus"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes
+    "I",         # isort
+    "UP",        # pyupgrade
+    "B",         # bugbear
+    "SIM",       # simplify
+    "TID",       # tidy imports
+    "RUF",       # ruff-specific
+]
+ignore = [
+    # Prose in docstrings uses en/em dashes deliberately.
+    "RUF001", "RUF002", "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests deliberately poke at private/edge behaviour and use assert.
+"tests/*" = ["B011"]
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
+reportMissingTypeStubs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+markers = [
+    "live: hits the real Claude subscription; skipped unless GUS_LIVE_TESTS=1",
+]

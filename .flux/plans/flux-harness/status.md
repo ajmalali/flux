@@ -1,6 +1,6 @@
 # flux-harness — status & next task
 
-Updated: 2026-08-18 (T4 + T4b done — **M0 complete**. T4c queued: gitnexus may supersede the repo map)
+Updated: 2026-08-18 (T4c done — gitnexus measured and **refused**; ADR 0009 C2 upheld. Next: T5/M1)
 
 ## Current state
 
@@ -39,11 +39,22 @@ Updated: 2026-08-18 (T4 + T4b done — **M0 complete**. T4c queued: gitnexus may
   `.flux/cache/repo-map.json`, records the git HEAD it was generated at, and slices it into the
   implement pack; `flux index` regenerates it in **0.2s** with no LLM call, and
   `--install-hook` writes an opt-in `post-merge` hook. 397 tests.
-- **One open decision: T4c.** A hands-on look at **gitnexus** (already installed here as an MCP
-  server) says it is a materially better knowledge source than `repowiki map` and probably
-  supersedes ADR 0009's C2. Findings are in the log below so T4c does not have to re-spike it.
-  Next milestone is M1 (T5); T4c should be settled first only because it changes what the
-  implement and review stages hydrate.
+- **T4c done — gitnexus refused, `repowiki map` stays.** Measured, not argued: three tickets x
+  three pack variants (`none` / `repowiki` / `gitnexus`) on a real 88-file clone of flux, nine
+  live runs, all gates green. gitnexus was **worse** on the KPI (23 exploratory calls vs 19) for
+  more wall time and output tokens. Memo: `gitnexus-memo.md`, raw data:
+  `gitnexus-memo-data.jsonl`, ADR 0009 annotated. `flux/knowledge/` is unchanged.
+- **The bigger finding, now open for M1:** carrying **no** repo map was competitive with both —
+  lowest total wall time, tied on turns, and it won one ticket outright. Between-ticket variance
+  exceeded any between-variant difference at n=1/cell, so nothing is proven either way. Whether
+  the `[repo_map]` pack section earns its place at all is the first concrete question for T5's
+  A/B harness.
+- **Settled for T5 by T4c:** the review stage hydrates from the `git diff` of the stage commits
+  (design.md's stage I/O table is unchanged). `detect-changes` may only *append* a flow overlay
+  alongside the diff — its symbol attribution slips on short symbols and it has no JSON output.
+- **Available opt-in, not adopted by default:** `gitnexus check --cycles --json -r .` as a
+  `[[gates]]` entry, validated through flux's own gate machinery. Not in `flux init` defaults —
+  it answers about the *indexed* commit and flux does not manage a gitnexus index.
 
 ## Task queue — do the first unchecked item
 
@@ -79,30 +90,17 @@ Updated: 2026-08-18 (T4 + T4b done — **M0 complete**. T4c queued: gitnexus may
   in a scratch target repo; `flux metrics` printed per-stage cost/time.
 - [x] **T4b — M0 step 3b: repo map.** `repowiki map` adopted; `flux index` regenerates in 0.2s,
   the slice reaches the implement pack, staleness is labelled. **M0 exit benchmark fully met.**
-- [ ] **T4c — reconsider the knowledge source: gitnexus vs `repowiki map`.**
-  T4b's bake-off compared the two tools ADR 0009 happened to name, both of which emit a ranked
-  *file list*. The actual requirement is "reduce cold exploration", and gitnexus answers it far
-  better (evidence in the 2026-08-18 T4c log entry — it is already indexed on this repo, so
-  start by reading that entry, not by re-spiking).
-  Decide, in this order:
-  1. **Does the symbol map beat the file list in the pack?** Measure, do not argue: run the same
-     ticket with each pack variant and compare `exploratory_calls` in `metrics.jsonl`. That KPI
-     already exists and is what M4's exit benchmark is written against.
-  2. **Adopt `gitnexus check --cycles --json` as a gate?** Near-free — it is deterministic and
-     exit-status-shaped, so it is a `[[gates]]` entry and no new flux code.
-  3. **Does the review stage hydrate from `detect-changes` instead of a raw `git diff`?** This is
-     the one that must be settled *before* T5 designs the review stage.
-  4. **CLI at hydration time, or MCP attached to the stage session?** Recommendation: CLI. An MCP
-     query tool is still exploration — better aimed, but non-deterministic and invisible to
-     `pack_chars`, which breaks design.md §2 Rule 3 (a fresh session receives exactly the pack,
-     which is what makes the handoff testable without a model). Keep the MCP surface as a
-     separate A/B, not the default.
-  **Scope guard:** this is *swapping one bought repo map for another* plus a gate — not opening
-  M2's knowledge layer. If it starts turning into wiki work, stop; that is M2 (ADR 0009 C1).
-  **Done when:** a written memo (amending or superseding ADR 0009's C2) records the measurement
-  from step 1, and either the `flux/knowledge/` adapter is repointed at gitnexus or the memo says
-  why not. Never a silent binary swap — `[repo_map] command` assumes "ranked file list" and would
-  need a second seam method for "symbol context for these files".
+- [x] **T4c — reconsider the knowledge source: gitnexus vs `repowiki map`.**
+  **Refused, on measurement.** Nine live runs (3 tickets x `none`/`repowiki`/`gitnexus` pack
+  variants) on a real 88-file clone of flux: gitnexus scored 23 exploratory calls to repowiki's
+  19, for more wall time and output tokens, so the claim it was raised on is unsupported.
+  Memo `gitnexus-memo.md`, raw data `gitnexus-memo-data.jsonl`, ADR 0009 annotated.
+  All four sub-decisions are settled there:
+  1. symbol map vs file list — **no detectable difference**; `flux/knowledge/` not repointed;
+  2. `check --cycles` gate — **validated, opt-in**, not in `flux init` defaults;
+  3. review hydration — **`git diff` stays ground truth**; `detect-changes` may only overlay;
+  4. CLI vs MCP — **pinned CLI**; the session's own MCP server is version-broken against the
+     index format and returns empty results with exit 0.
 
 - [ ] **T5 — M1: full five-stage pipeline + hardening + A/B baseline** (expand into subtasks
   when reached; specs in plan.md §5 M1 and the design.md stage I/O table). Before opening it,
@@ -121,6 +119,61 @@ Updated: 2026-08-18 (T4 + T4b done — **M0 complete**. T4c queued: gitnexus may
    surprises, deviations from design.md, or decisions made (new ADR if load-bearing).
 
 ## Log
+
+- 2026-08-18 — **T4c done: gitnexus measured against `repowiki map` and refused.** The T4c
+  raise was a good challenge answered honestly, and the answer went against it. Nine live
+  implement-stage runs on a clone of flux at `38bb6d9` (88 files, 1,689 indexed symbols), three
+  tickets x three pack variants, everything held constant but the knowledge section. Totals:
+  `none` 18 exploratory calls / 87 turns / 483s, `repowiki` 19 / 87 / 696s, `gitnexus` 23 / 73 /
+  716s. **gitnexus lost the KPI it was proposed on.** Memo: `gitnexus-memo.md`; raw data:
+  `gitnexus-memo-data.jsonl`.
+  - **The uncomfortable part is the control.** Carrying *no* map was competitive with both — it
+    had the lowest wall time and won `gate-timing` outright. Direction disagreed per ticket
+    (both maps beat `none` on `map-check`; `none` beat both on `gate-timing`; `repowiki` hit a
+    near-perfect 1 on `park-detail` where `gitnexus` needed 8). Between-ticket variance exceeds
+    any between-variant difference at n=1/cell, so the correct claim is "no effect detectable",
+    **not** "the file list wins". That is enough to refuse a swap and not enough to conclude the
+    pack section is worth its tokens — which is now T5's first A/B question.
+  - **Why the good-looking pack section did not pay.** The gitnexus slice *reads* far better than
+    a centrality ranking — for `map-check` it named `repomap.py`, `RepoMap`, `cli.py`,
+    `build_parser`, `head_sha` and the two existing staleness tests, all with file:line — and it
+    still did not reduce exploration. Worth remembering the next time a knowledge artifact is
+    adopted because it looks informative rather than because it moved a number.
+  - **`query` is only as good as the brief.** A two-word query ("gate") returned noise flows;
+    a full-sentence ticket brief returned exactly the right symbols. Any future use must feed it
+    the whole brief.
+  - **Version drift is the real operational risk, and it bit twice.** `which gitnexus` was 1.6.1
+    while latest was 1.6.9; `check` and `detect-changes` do not exist in 1.6.1 at all. Worse, the
+    1.6.1 build cannot read the v42 index the 1.6.9 CLI writes: `context` raises, and **`query`
+    returns an empty result set with exit 0**. The gitnexus MCP server attached to this very
+    session is the broken one. That is the strongest argument for the pinned-CLI recommendation —
+    stronger than the determinism argument it was originally made on.
+  - **An empty index reports success.** Analyzing a clone whose identity collided with the
+    already-registered `flux` entry produced `0 nodes | 0 edges`, exit 0, "indexed successfully".
+    Sticky: `rm -rf .gitnexus`, `gitnexus remove`, `-f` and a fresh `--name` all still gave 0;
+    only re-cloning recovered. Same failure class `knowledge/repomap.py` already guards against,
+    and the reason that guard exists.
+  - **Registry is machine-global** (`~/.gitnexus/registry.json`), resolved by alias, and `-r` is
+    mandatory once more than one repo is indexed. `-r .` works and is what keeps a committed
+    `[[gates]]` entry portable — `-r <alias>` would not be.
+  - **The cycles gate is real** and was validated through flux's own `GateSpec`/`CommandGate`,
+    not just at a shell: green on a clean repo, red with the cycle in `detail` on a two-module
+    circular-import repo. Left **opt-in**: it answers about the *indexed* commit, and flux does
+    not manage a gitnexus index, so wiring it into `flux init` would ship a gate that silently
+    describes an older tree — the exact failure T4b built staleness labelling to prevent.
+  - **`detect-changes` cannot be the reviewer's input.** A mid-body edit attributed perfectly
+    (`generate` + three correct flows), but a 2-line insertion into the 4-line `is_stale` was
+    attributed to the *next* method and `is_stale` never appeared. Plus there is no `--json`.
+    So: diff stays ground truth, overlay is advisory. This settles the one T4c question T5 was
+    blocked on.
+  - **Cost, for the record:** `gitnexus analyze` 3.1–5.0s cold and 7.4s after a one-line change
+    (not meaningfully incremental) against `repowiki map`'s 0.5s — ~15x on `flux index`.
+  - **Method note / self-criticism:** `gate-timing` was a partly degenerate ticket —
+    `GateOutcome.duration_ms` already existed, so it asked for work already done. All three
+    variants faced it identically so the comparison holds, but it was not the test intended, and
+    it should be replaced when this is re-run through T5's A/B harness.
+  - `src/flux/knowledge/` was not touched. The seam's payoff here was making the swap question
+    answerable by measurement rather than argument — the answer just happened to be "no".
 
 - 2026-08-18 — **T4c raised: gitnexus looks like the right knowledge source, and T4b asked the
   wrong question.** Prompted by "does `repowiki map` actually save the agent tokens, or is it

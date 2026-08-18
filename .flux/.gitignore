@@ -1,11 +1,5 @@
-# Written by `flux init` (ADR 0006), then edited for this repo. Runtime state is
-# rebuildable; artifacts are not.
-#
-# `state/` is deliberately NOT ignored here, unlike the flux init default. flux's own
-# repo is also the project record, and a ticket's checkpoints are part of what a run
-# left behind. Consequence to know about: `flux.git.stage_commit` does `git add -A`, so
-# checkpoints written during a run are swept into that stage's own commit. `flux init`
-# will not restore the default over this file — it warns instead.
+# Written by `flux init` (ADR 0006). Runtime state is rebuildable; artifacts are not.
+state/
 transcripts/
 usage/
 cache/

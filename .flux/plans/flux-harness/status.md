@@ -228,19 +228,22 @@ Updated: 2026-08-18 (T5 opened and expanded; **T5.1 done** — the A/B baseline 
   result that kills the repo-map section entirely is a legitimate and welcome outcome.
 
 
-- [x] **Housekeeping — this repo tracks `.flux/state/` (2026-08-18).** Deliberate divergence
-  from the `flux init` default, decided by the user: flux's own repo is also the project
-  record, so a ticket's checkpoints are part of what a run left behind. `transcripts/`,
-  `usage/` and `cache/` stay ignored here, and `scaffold.IGNORED_DIRS` is **unchanged** — every
-  other repo flux scaffolds still gets the default.
-  **Two things to know before touching it:** `flux.git.stage_commit` does `git add -A`, so
-  checkpoints written during a run are swept into that stage's own tagged commit; and a
-  `git checkout`/`reset` across commits now moves flux's idea of a ticket's progress, since the
-  transition function reads those files. If that becomes a nuisance, re-adding `state/` to
-  `.flux/.gitignore` is the whole fix.
-  **`flux init` can no longer revert it:** an existing `.flux/.gitignore` is never rewritten,
-  not even under `--force` (which is scoped to `flux.toml`), and init warns naming the
-  directories this repo tracks that the default would ignore.
+- [x] **Housekeeping — `.flux/state/` tried tracked, then reverted (2026-08-18).** For the
+  record, because the reasoning is worth keeping: tracking a ticket's checkpoints was tried on
+  the argument that flux's own repo is also the project record. It was reverted once the
+  consequence was clear — flux addresses `state/`, `context/` and `usage/` under **`--root`**
+  and never under the worktree, so committing state does not give a worktree anything (the
+  `add_dirs` fix is what made `--worktree` work). It only creates a hazard: a clone or
+  `git worktree` used as its *own* root arrives carrying committed checkpoints and skips stages
+  it thinks are done. `.flux/.gitignore` is back to the `flux init` default, and
+  `scaffold.IGNORED_DIRS` never changed.
+  **What survives from the attempt, and is worth having:** `flux init` no longer rewrites an
+  existing `.flux/.gitignore` — not even under `--force`, which is scoped to `flux.toml`. What a
+  repo tracks is that repo's decision, and restoring the default over it would revert that
+  decision with no trace (the same rule `flux index --install-hook` follows for a live hook).
+  Init warns instead, naming the ignored-by-default directories the repo tracks, and the check
+  reads patterns rather than the whole file so a comment explaining a choice is not mistaken for
+  the choice.
 
 - [x] **Housekeeping — `.claude/` resolved (2026-08-18).** The six `gitnexus setup` skill files
   under `.claude/skills/gitnexus/` are deleted and `.claude/` is gitignored;

@@ -1,2 +1,0 @@
-# Keeps this directory in git while it is empty. Unlike the `flux init` default, this
-# repo tracks `.flux/state/` — see .flux/.gitignore.

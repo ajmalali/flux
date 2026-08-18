@@ -1,8 +1,8 @@
-"""Aggregation and rendering behind ``gus metrics`` (ADR 0008)."""
+"""Aggregation and rendering behind ``flux metrics`` (ADR 0008)."""
 
 from __future__ import annotations
 
-from gus.metrics import (
+from flux.metrics import (
     GateOutcome,
     MetricRecord,
     aggregate,
@@ -17,7 +17,7 @@ from gus.metrics import (
 def rec(
     stage: str = "implement",
     *,
-    ticket: str = "gus-1",
+    ticket: str = "flux-1",
     variant: str = "harness",
     ok: bool = True,
     tokens: tuple[int, int, int, int] = (0, 0, 0, 0),

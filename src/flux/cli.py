@@ -1,4 +1,4 @@
-"""``gus`` command line entry point.
+"""``flux`` command line entry point.
 
 Subcommands mirror the pipeline in plan.md §4. Only ``metrics`` and ``doctor`` do
 real work at T2; the rest are declared stubs so the surface is fixed early and each
@@ -12,11 +12,11 @@ import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from gus import __version__
-from gus.errors import ParkSignal
-from gus.executor.billing import detect_billing_redirects, preflight, sanitize_process_env
-from gus.metrics.record import DEFAULT_METRICS_PATH, MetricsStore
-from gus.metrics.report import build_report, render
+from flux import __version__
+from flux.errors import ParkSignal
+from flux.executor.billing import detect_billing_redirects, preflight, sanitize_process_env
+from flux.metrics.record import DEFAULT_METRICS_PATH, MetricsStore
+from flux.metrics.report import build_report, render
 
 EXIT_OK = 0
 EXIT_ERROR = 1
@@ -25,7 +25,7 @@ EXIT_NOT_IMPLEMENTED = 3
 
 # Subcommands whose milestone has not landed yet: (name, help, milestone).
 _PLANNED: tuple[tuple[str, str, str], ...] = (
-    ("init", "scaffold .gus/ in the target repo", "M0/T4"),
+    ("init", "scaffold .flux/ in the target repo", "M0/T4"),
     ("index", "regenerate the repo map", "M0/T4"),
     ("research", "run the research phase for a slug", "M3"),
     ("plan", "run the planning phase for a slug", "M3"),
@@ -36,8 +36,8 @@ _PLANNED: tuple[tuple[str, str, str], ...] = (
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="gus", description=__doc__)
-    parser.add_argument("--version", action="version", version=f"gus {__version__}")
+    parser = argparse.ArgumentParser(prog="flux", description=__doc__)
+    parser.add_argument("--version", action="version", version=f"flux {__version__}")
     sub = parser.add_subparsers(dest="command", metavar="<command>")
 
     for name, help_text, milestone in _PLANNED:
@@ -64,7 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _make_stub(name: str, milestone: str) -> Callable[[argparse.Namespace], int]:
     def stub(_args: argparse.Namespace) -> int:
-        print(f"gus {name}: not implemented yet (lands in {milestone})", file=sys.stderr)
+        print(f"flux {name}: not implemented yet (lands in {milestone})", file=sys.stderr)
         return EXIT_NOT_IMPLEMENTED
 
     return stub

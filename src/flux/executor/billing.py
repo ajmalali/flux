@@ -1,6 +1,6 @@
 """Subscription-auth preflight and child-environment sanitation (ADR 0010).
 
-gus runs on the user's logged-in Claude subscription. Two things have to be true
+flux runs on the user's logged-in Claude subscription. Two things have to be true
 before any session starts, and neither can be assumed:
 
 1. **No API credential reaches the child process.** The Agent SDK spawns the Claude
@@ -13,7 +13,7 @@ before any session starts, and neither can be assumed:
    winning over the subscription login. Preflight runs that probe in the sanitized
    environment, so it sees what the child will see.
 
-Any deviation parks (:class:`~gus.errors.BillingPolicyError`). There is no code path
+Any deviation parks (:class:`~flux.errors.BillingPolicyError`). There is no code path
 here that switches to API billing — the fallback ladder needs user approval and lands
 with the runner.
 """
@@ -28,8 +28,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from gus.errors import BillingPolicyError
-from gus.jsonio import as_json_mapping
+from flux.errors import BillingPolicyError
+from flux.jsonio import as_json_mapping
 
 # Credentials that would bill this run to an API account instead of the subscription.
 API_CREDENTIAL_VARS: tuple[str, ...] = (
@@ -137,7 +137,7 @@ def query_auth_status(
 
     Raises:
         BillingPolicyError: the CLI is missing, failed, or emitted unparseable output.
-            Parking is the right response: gus cannot prove it is on subscription auth.
+            Parking is the right response: flux cannot prove it is on subscription auth.
     """
     executable = cli_path or shutil.which("claude")
     if executable is None:
@@ -208,7 +208,7 @@ def preflight(*, cli_path: str | None = None, strip_env: bool = True) -> AuthSta
     if redirects:
         raise BillingPolicyError(
             "billing-redirect environment variables are set: "
-            f"{', '.join(redirects)}. gus runs on subscription auth (ADR 0010); "
+            f"{', '.join(redirects)}. flux runs on subscription auth (ADR 0010); "
             "unset them or approve an API fallback explicitly.",
             reason="billing-redirect",
         )
@@ -223,7 +223,7 @@ def preflight(*, cli_path: str | None = None, strip_env: bool = True) -> AuthSta
         raise BillingPolicyError(
             "Claude CLI is not on first-party subscription auth "
             f"(authMethod={status.auth_method!r}, apiProvider={status.api_provider!r}, "
-            f"apiKeySource={status.api_key_source!r}). gus will not bill to an API "
+            f"apiKeySource={status.api_key_source!r}). flux will not bill to an API "
             "account without explicit approval (ADR 0010).",
             reason="not-subscription",
         )

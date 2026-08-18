@@ -9,9 +9,9 @@ from typing import Any
 
 import pytest
 
-from gus.errors import BillingPolicyError
-from gus.executor import AuthStatus, preflight
-from gus.executor import billing as billing_mod
+from flux.errors import BillingPolicyError
+from flux.executor import AuthStatus, preflight
+from flux.executor import billing as billing_mod
 
 SUBSCRIPTION_PAYLOAD: dict[str, Any] = {
     "loggedIn": True,

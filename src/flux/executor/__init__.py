@@ -1,6 +1,6 @@
-"""The executor seam: the only place gus talks to a model (ADR 0007)."""
+"""The executor seam: the only place flux talks to a model (ADR 0007)."""
 
-from gus.executor.billing import (
+from flux.executor.billing import (
     API_CREDENTIAL_VARS,
     BILLING_REDIRECT_VARS,
     AuthStatus,
@@ -9,10 +9,10 @@ from gus.executor.billing import (
     preflight,
     sanitize_process_env,
 )
-from gus.executor.protocol import Executor
-from gus.executor.sdk import ClaudeAgentSDKExecutor, build_options
-from gus.executor.stub import StubExecutor, ok_result
-from gus.executor.types import (
+from flux.executor.protocol import Executor
+from flux.executor.sdk import ClaudeAgentSDKExecutor, build_options
+from flux.executor.stub import StubExecutor, ok_result
+from flux.executor.types import (
     BillingMode,
     EffortLevel,
     ExecConfig,

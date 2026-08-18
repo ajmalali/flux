@@ -10,10 +10,10 @@ net overhead relative to vanilla Claude Code.
 ## Decision
 - The Stage runner writes a metrics line per (ticket, stage): tokens in/out, cache read/write,
   `total_cost_usd` (estimate), wall time, gate results, retry count, exploratory-call count,
-  model/effort. `gus metrics` prints the KPI report.
+  model/effort. `flux metrics` prints the KPI report.
 - Every ~10th ticket also runs through **vanilla Claude Code** (`claude -p`, no harness) with
   identical metrics recorded, maintained in a running comparison table.
-- Standing kill-criterion, written in `gus.toml` and answered at every phase gate: if vanilla
+- Standing kill-criterion, written in `flux.toml` and answered at every phase gate: if vanilla
   wins on cost AND quality for 3 consecutive samples, freeze harness feature work and
   investigate. Each phase gate also names which planned feature the data says to cut.
 

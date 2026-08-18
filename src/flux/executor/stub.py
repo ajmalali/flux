@@ -1,7 +1,7 @@
-"""A scripted :class:`~gus.executor.protocol.Executor` for tests.
+"""A scripted :class:`~flux.executor.protocol.Executor` for tests.
 
 The runner spine (T3) is specified to be provable without an LLM, so the stub is
-library code rather than a test fixture: tests, and later ``gus run --dry-run``,
+library code rather than a test fixture: tests, and later ``flux run --dry-run``,
 drive the real state machine through it.
 """
 
@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
-from gus.executor.types import ExecConfig, ExecResult, PromptPack, Usage
+from flux.executor.types import ExecConfig, ExecResult, PromptPack, Usage
 
 ResponseFn = Callable[[PromptPack, ExecConfig], ExecResult]
 CallLog = list[tuple[PromptPack, ExecConfig]]

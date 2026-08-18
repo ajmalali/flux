@@ -1,13 +1,13 @@
 """Metrics store and report (ADR 0008, design.md §3)."""
 
-from gus.metrics.record import (
+from flux.metrics.record import (
     DEFAULT_METRICS_PATH,
     SCHEMA_VERSION,
     GateOutcome,
     MetricRecord,
     MetricsStore,
 )
-from gus.metrics.report import (
+from flux.metrics.report import (
     Aggregate,
     Report,
     WindowSnapshot,

@@ -1,8 +1,8 @@
-"""Exception hierarchy shared across gus.
+"""Exception hierarchy shared across flux.
 
 Two families matter to the runner:
 
-* :class:`GusError` — a bug or a misuse of gus itself (bad config, bad call order).
+* :class:`FluxError` — a bug or a misuse of flux itself (bad config, bad call order).
   These should surface as a stack trace during development.
 * :class:`ParkSignal` — the ticket cannot proceed and a human must look at it.
   The runner catches these, writes a park note, and stops. Never a stack trace.
@@ -11,15 +11,15 @@ Two families matter to the runner:
 from __future__ import annotations
 
 
-class GusError(Exception):
-    """Base class for all gus errors."""
+class FluxError(Exception):
+    """Base class for all flux errors."""
 
 
-class ConfigError(GusError):
-    """An :class:`~gus.executor.types.ExecConfig` or gus.toml value is invalid."""
+class ConfigError(FluxError):
+    """An :class:`~flux.executor.types.ExecConfig` or flux.toml value is invalid."""
 
 
-class ParkSignal(GusError):
+class ParkSignal(FluxError):
     """Raised when work must stop and wait for a human.
 
     Args:
@@ -36,5 +36,5 @@ class ParkSignal(GusError):
 class BillingPolicyError(ParkSignal):
     """Preflight found an execution environment that would not bill to the subscription.
 
-    ADR 0010: gus never silently switches to API billing. Detect and park.
+    ADR 0010: flux never silently switches to API billing. Detect and park.
     """

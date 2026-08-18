@@ -7,17 +7,17 @@ from pathlib import Path
 
 import pytest
 
-from gus.cli import EXIT_NOT_IMPLEMENTED, EXIT_OK, EXIT_PARKED, build_parser, main
-from gus.errors import BillingPolicyError
-from gus.executor import AuthStatus
-from gus.metrics import MetricRecord, MetricsStore
+from flux.cli import EXIT_NOT_IMPLEMENTED, EXIT_OK, EXIT_PARKED, build_parser, main
+from flux.errors import BillingPolicyError
+from flux.executor import AuthStatus
+from flux.metrics import MetricRecord, MetricsStore
 
 PLANNED = ["init", "index", "research", "plan", "tickets", "run", "status"]
 
 
 def test_no_command_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert main([]) == EXIT_OK
-    assert "usage: gus" in capsys.readouterr().out
+    assert "usage: flux" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("command", [*PLANNED, "metrics", "doctor"])
@@ -40,7 +40,7 @@ def write_metrics(path: Path) -> MetricsStore:
     store = MetricsStore(path)
     store.record(
         MetricRecord(
-            ticket="gus-1",
+            ticket="flux-1",
             stage="tests",
             model="claude-sonnet-5",
             effort="high",
@@ -52,7 +52,7 @@ def write_metrics(path: Path) -> MetricsStore:
     )
     store.record(
         MetricRecord(
-            ticket="gus-2",
+            ticket="flux-2",
             stage="implement",
             model="claude-sonnet-5",
             effort="high",
@@ -86,7 +86,7 @@ def test_metrics_prints_per_stage_cost_and_time(
 def test_metrics_filters_by_ticket(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     path = tmp_path / "metrics.jsonl"
     write_metrics(path)
-    assert main(["metrics", "--path", str(path), "--ticket", "gus-2"]) == EXIT_OK
+    assert main(["metrics", "--path", str(path), "--ticket", "flux-2"]) == EXIT_OK
     out = capsys.readouterr().out
     assert "Totals: 1 runs" in out
     assert "tests" not in out
@@ -125,7 +125,7 @@ def test_doctor_reports_a_healthy_subscription(
     def fake_preflight(**_kwargs: object) -> AuthStatus:
         return AuthStatus.from_json(payload)
 
-    monkeypatch.setattr("gus.cli.preflight", fake_preflight)
+    monkeypatch.setattr("flux.cli.preflight", fake_preflight)
     assert main(["doctor"]) == EXIT_OK
     out = capsys.readouterr().out
     assert "dev@example.com" in out
@@ -140,7 +140,7 @@ def test_a_park_signal_exits_with_the_park_code(
     def boom(**_kwargs: object) -> None:
         raise BillingPolicyError("not logged in", reason="not-logged-in")
 
-    monkeypatch.setattr("gus.cli.preflight", boom)
+    monkeypatch.setattr("flux.cli.preflight", boom)
     assert main(["doctor"]) == EXIT_PARKED
     err = capsys.readouterr().err
     assert "parked (not-logged-in)" in err

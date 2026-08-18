@@ -1,5 +1,5 @@
 [project]
-name = "gus"
+name = "flux"
 version = "0.1.0"
 description = "Deterministic orchestration harness around Claude Code"
 authors = [{ name = "Ajmal Ali", email = "ajmal@akstudios.com" }]
@@ -9,7 +9,7 @@ dependencies = [
 ]
 
 [project.scripts]
-gus = "gus.cli:main"
+flux = "flux.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.9.17,<0.10.0"]
@@ -26,8 +26,8 @@ dev = [
 line-length = 100
 target-version = "py312"
 src = ["src", "tests"]
-# .gus/ holds design docs; their fenced code samples are prose, not source.
-extend-exclude = [".gus"]
+# .flux/ holds design docs; their fenced code samples are prose, not source.
+extend-exclude = [".flux"]
 
 [tool.ruff.lint]
 select = [
@@ -61,5 +61,5 @@ reportMissingTypeStubs = false
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
 markers = [
-    "live: hits the real Claude subscription; skipped unless GUS_LIVE_TESTS=1",
+    "live: hits the real Claude subscription; skipped unless FLUX_LIVE_TESTS=1",
 ]

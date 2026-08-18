@@ -12,7 +12,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Literal, get_args
 
-from gus.errors import ConfigError
+from flux.errors import ConfigError
 
 EffortLevel = Literal["low", "medium", "high", "xhigh", "max"]
 PermissionMode = Literal["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk"]
@@ -93,7 +93,7 @@ def _join_sections(*parts: str) -> str:
 class ExecConfig:
     """Per-call execution policy. Model and effort are always explicit (ADR 0007).
 
-    Caps are expressed in turns and tokens because gus runs on a subscription
+    Caps are expressed in turns and tokens because flux runs on a subscription
     (ADR 0010); ``max_budget_usd`` is only meaningful once API fallback is active,
     and validation enforces that.
     """
@@ -105,7 +105,7 @@ class ExecConfig:
     disallowed_tools: tuple[str, ...] = ()
     max_turns: int = 40
     max_tokens: int = 200_000
-    """gus's own token budget for the call. Enforced by the runner and recorded in
+    """flux's own token budget for the call. Enforced by the runner and recorded in
     metrics; see :attr:`advertise_token_budget` for the API-side variant."""
 
     advertise_token_budget: bool = False

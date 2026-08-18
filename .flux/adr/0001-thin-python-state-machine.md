@@ -8,7 +8,7 @@ Candidates: plain Python, LangGraph, Temporal/Prefect/Dagster/Airflow, CrewAI/Au
 
 ## Decision
 A plain Python package: a `Stage` abstraction, each stage idempotent and keyed on
-`(ticket_id, stage)`, state externalized to beads + git + `.gus/` artifacts. No framework.
+`(ticket_id, stage)`, state externalized to beads + git + `.flux/` artifacts. No framework.
 
 ## Consequences
 - Full control, trivially resumable, no infra, no learning curve.

@@ -1,14 +1,14 @@
-# gus — Implementation Plan (v2.1)
+# flux — Implementation Plan (v2.1)
 
 A deterministic orchestration harness around Claude Code that owns the full lifecycle of a
 software change: **knowledge layer → research → planning → ticketing → per-ticket pipeline →
 parallel execution**, with deterministic gates enforced by the environment rather than the model.
 
-Everything gus generates lives under a single `.gus/` folder in the target repo. This repo
+Everything flux generates lives under a single `.flux/` folder in the target repo. This repo
 dogfoods that layout. Concrete mechanism design (state machine, executor interface, artifact
 handoff contract) lives in **[`design.md`](design.md)**.
 
-Sources, imported under `.gus/research/`:
+Sources, imported under `.flux/research/`:
 1. `upstream-phases-and-knowledge-layer.md` — research/planning as durably-artifacted stages;
    two-tier knowledge layer; eliminate noise, keep verification reads.
 2. `per-ticket-pipeline.md` — thin Python state machine over the Claude Agent SDK; beads as
@@ -19,8 +19,8 @@ Sources, imported under `.gus/research/`:
 
 ## 1. Shape of the system
 
-`gus` is an installable CLI tool run *inside a target repo* (not a service). All durable state
-lives in the target repo (`.gus/` artifacts, beads DB) keyed by `(ticket, stage)` — the
+`flux` is an installable CLI tool run *inside a target repo* (not a service). All durable state
+lives in the target repo (`.flux/` artifacts, beads DB) keyed by `(ticket, stage)` — the
 orchestrator is stateless and resumable (see design.md §1).
 
 ```
@@ -31,12 +31,12 @@ orchestrator is stateless and resumable (see design.md §1).
 ├────────────────────────────────────────────────────────────────────┤
 │ L1 Research (interactive, Opus-tier, high/xhigh)                   │
 │   GSD/OpenSpec-derived templates + mandatory dissent sections      │
-│   → .gus/research/<slug>/research.md                               │
+│   → .flux/research/<slug>/research.md                               │
 ├────────────────────────────────────────────────────────────────────┤
 │ L2 Planning (Opus-tier, xhigh)                                     │
 │   critique (INVEST·ambiguity·premortem) · ≥2 architectures ·       │
 │   different-model plan review · verification-read drift gate       │
-│   → .gus/plans/<slug>/plan.md + .gus/adr/NNNN-*.md                 │
+│   → .flux/plans/<slug>/plan.md + .flux/adr/NNNN-*.md                 │
 ├────────────────────────────────────────────────────────────────────┤
 │ L3 Ticketing (decomposition-while-hot; core differentiator)        │
 │   plan.md → bd graph (human-reviewed) · per-ticket context pack    │
@@ -56,7 +56,7 @@ orchestrator is stateless and resumable (see design.md §1).
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-## 2. Core decisions (ADRs in .gus/adr/)
+## 2. Core decisions (ADRs in .flux/adr/)
 
 | # | Decision |
 |---|---|
@@ -65,7 +65,7 @@ orchestrator is stateless and resumable (see design.md §1).
 | 0003 | Fresh session per stage; context packs as the interface |
 | 0004 | Two-tier knowledge layer; verification reads stay mandatory (amended by 0009) |
 | 0005 | Deterministic gates + environment hardening over LLM judgment |
-| 0006 | All gus artifacts under a single `.gus/` folder |
+| 0006 | All flux artifacts under a single `.flux/` folder |
 | 0007 | Executor behind an interface; no stage code imports the SDK directly |
 | 0008 | Metrics store + vanilla-Claude A/B baseline are P0 deliverables, with a written kill-criterion |
 | 0009 | Knowledge layer is bought, not built (repowiki map; OpenWiki / deepwiki-by-cc spike) |
@@ -73,13 +73,13 @@ orchestrator is stateless and resumable (see design.md §1).
 
 ## 3. Tech choices
 
-- **Language/tooling:** Python ≥3.12, `uv`-managed, `ruff` + `pyright` + `pytest` on gus itself.
+- **Language/tooling:** Python ≥3.12, `uv`-managed, `ruff` + `pyright` + `pytest` on flux itself.
 - **Executor:** `Executor` protocol; first impl `claude-agent-sdk` (Python) riding the
   logged-in **subscription auth** (ADR 0010) — preflight verifies it and strips API keys from
   the child env; API billing only via the approved fallback ladder. Per-call `model`, `effort`
   (always explicit), `max_turns`, token caps, `permission_mode`, `allowed_tools`,
   `setting_sources=["project"]`; `fork_session` for critique branches.
-- **State:** beads 1.x pinned; on-disk artifacts + checkpoints under `.gus/` (design.md §1).
+- **State:** beads 1.x pinned; on-disk artifacts + checkpoints under `.flux/` (design.md §1).
 - **Repo map:** `repowiki map` (zero-LLM, prompt-ready JSON) or Aider RepoMapper — whichever
   ranks better on the target repo; post-merge hook regeneration; no custom extractor.
 - **Wiki:** OpenWiki or deepwiki-by-cc (Phase 2 spike); plain Markdown in-repo; load-bearing
@@ -108,13 +108,13 @@ orchestrator is stateless and resumable (see design.md §1).
 ## 4. Repository layout
 
 ```
-gus/                                # this repo (the tool)
+flux/                                # this repo (the tool)
 ├── pyproject.toml
 ├── README.md
-├── .gus/                           # dogfooded: gus's own plans/ADRs/research
-├── src/gus/
-│   ├── cli.py                      # gus init|index|research|plan|tickets|run|status|metrics
-│   ├── config.py                   # .gus/gus.toml loader (models, efforts, gates, caps, kill-criteria)
+├── .flux/                           # dogfooded: flux's own plans/ADRs/research
+├── src/flux/
+│   ├── cli.py                      # flux init|index|research|plan|tickets|run|status|metrics
+│   ├── config.py                   # .flux/flux.toml loader (models, efforts, gates, caps, kill-criteria)
 │   ├── executor/                   # Executor protocol + ClaudeAgentSDKExecutor (ADR 0007)
 │   ├── runner/                     # transition fn, run_ticket loop, checkpoints (design.md §1)
 │   ├── stages/                     # tests, implement, review, fix, pr (hydrate/config/artifact/gates/commit)
@@ -122,17 +122,17 @@ gus/                                # this repo (the tool)
 │   ├── knowledge/                  # adapters over bought tools: repo map, wiki slicing, freshness
 │   ├── phases/                     # research.py, planning.py, ticketing.py
 │   ├── scheduler/                  # bd ready pull, worktrees, merge queue, caps
-│   ├── metrics/                    # metrics.jsonl writer + `gus metrics` report + A/B harness
-│   └── hooks/                      # hook scripts gus installs into target repos
+│   ├── metrics/                    # metrics.jsonl writer + `flux metrics` report + A/B harness
+│   └── hooks/                      # hook scripts flux installs into target repos
 └── tests/
 ```
 
-Target-repo artifacts (created by `gus init`), committed vs. gitignored:
+Target-repo artifacts (created by `flux init`), committed vs. gitignored:
 
 ```
 target-repo/
-└── .gus/
-    ├── gus.toml                    # config incl. kill-criteria (committed)
+└── .flux/
+    ├── flux.toml                    # config incl. kill-criteria (committed)
     ├── research/<slug>/            # committed
     ├── plans/<slug>/               # committed
     ├── adr/                        # committed
@@ -141,7 +141,7 @@ target-repo/
     ├── transcripts/                # gitignored
     ├── usage/metrics.jsonl         # gitignored
     ├── cache/                      # repo map, hash manifests (gitignored)
-    └── .gitignore                  # written by gus init
+    └── .gitignore                  # written by flux init
 ```
 
 beads keeps `.beads/` (its default) — the one exception, tolerated until bd supports a custom path.
@@ -164,20 +164,20 @@ and which planned feature does the data say to cut?"*
   assessment; revisited only at phase gates.
 
 ### M0 — Skeleton: executor, runner spine, gates, metrics, repo map
-- `Executor` protocol + SDK impl + `ExecConfig` (design.md §1); `gus init` scaffolds `.gus/`.
+- `Executor` protocol + SDK impl + `ExecConfig` (design.md §1); `flux init` scaffolds `.flux/`.
 - Checkpoint store + transition function + `run_ticket()` loop; idempotency and crash-resume
   proven with a stubbed executor in plain pytest (no LLM).
 - Gate suite as subprocess wrappers (Python: ruff/pyright/pytest; TS: eslint/tsc/vitest).
-- **Metrics store (A2):** per-(ticket, stage) JSONL + `gus metrics` report.
+- **Metrics store (A2):** per-(ticket, stage) JSONL + `flux metrics` report.
 - **Repo map (C2, pulled forward):** `repowiki map` or RepoMapper wired to a post-merge hook.
 - **Exit:** one trivial hand-written ticket flows through a single implement stage + gates end
-  to end; `gus metrics` prints per-stage cost/time; `just repomap` regenerates in <30s, no LLM.
+  to end; `flux metrics` prints per-stage cost/time; `just repomap` regenerates in <30s, no LLM.
 
 ### M1 — Full pipeline, hardened + A/B baseline
 - All five stages per the design.md stage I/O table, with runner-validated required artifacts.
 - Hardening: opaque test runner, PreToolUse test-edit block, held-out tests, red-step verified
   by the runner, bounded review loop (max 3) → park with note.
-- **A/B baseline (A1):** `gus run --vanilla` harness; 1-in-10 cadence; kill-criterion in gus.toml.
+- **A/B baseline (A1):** `flux run --vanilla` harness; 1-in-10 cadence; kill-criterion in flux.toml.
 - **Review bake-off (B3):** Stage 3 as a Claude Code native workflow (adversarial-verify,
   multi-lens reviewers: correctness / security / design-fit) vs single different-model reviewer;
   keep the cheaper config that catches ≥ as many planted defects.
@@ -198,17 +198,17 @@ and which planned feature does the data say to cut?"*
 - Templates mined from GSD (run one feature through its flow first) and OpenSpec's change-spec
   format (start from the published Beads+OpenSpec workflow cheatsheet); dissent sections are
   harness-validated before a phase can close.
-- `gus research <slug>`: read-only interview session, Opus/high, Explore subagents for lookups
+- `flux research <slug>`: read-only interview session, Opus/high, Explore subagents for lookups
   → `research.md` (problem, current behavior w/ file:line, constraints, non-goals, open
   questions, glossary).
-- `gus plan <slug>`: critique passes (INVEST, ambiguity vs glossary, premortem fork), ≥2
+- `flux plan <slug>`: critique passes (INVEST, ambiguity vs glossary, premortem fork), ≥2
   architectures scored, different-model plan review, **verification-read drift gate** — no plan
   finalizes with load-bearing claims referencing stale-hash files unchecked.
 - **Exit:** one real feature flows research → plan → approved using the mined templates;
   planning catches ≥1 stale-abstraction or ambiguity before implementation.
 
 ### M4 — Ticketing: decomposition-while-hot (core differentiator, stays custom)
-- `gus tickets <slug>`: plan.md → bd graph (human-reviewed before live); interface-first
+- `flux tickets <slug>`: plan.md → bd graph (human-reviewed before live); interface-first
   ordering, file-level ownership.
 - Each ticket carries at creation: relevant-file list, repo-map slice, interfaces, test
   strategy, model/effort estimate — as **references, not pasted content** (B4); and its stage

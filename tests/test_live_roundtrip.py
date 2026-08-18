@@ -1,9 +1,9 @@
 """One real session against the live subscription — the T2 acceptance test.
 
-Skipped unless ``GUS_LIVE_TESTS=1``, because it spends real usage-window budget and
+Skipped unless ``FLUX_LIVE_TESTS=1``, because it spends real usage-window budget and
 needs a logged-in CLI. Run it with::
 
-    GUS_LIVE_TESTS=1 uv run pytest -m live
+    FLUX_LIVE_TESTS=1 uv run pytest -m live
 
 What it proves, end to end: preflight confirms subscription auth, a fresh session
 runs with an explicit model and effort, usage comes back populated, and the metrics
@@ -17,14 +17,14 @@ from pathlib import Path
 
 import pytest
 
-from gus.executor import ClaudeAgentSDKExecutor, ExecConfig, PromptPack
-from gus.metrics import MetricRecord, MetricsStore
+from flux.executor import ClaudeAgentSDKExecutor, ExecConfig, PromptPack
+from flux.metrics import MetricRecord, MetricsStore
 
 pytestmark = [
     pytest.mark.live,
     pytest.mark.skipif(
-        os.environ.get("GUS_LIVE_TESTS") != "1",
-        reason="live subscription test; set GUS_LIVE_TESTS=1 to run",
+        os.environ.get("FLUX_LIVE_TESTS") != "1",
+        reason="live subscription test; set FLUX_LIVE_TESTS=1 to run",
     ),
 ]
 

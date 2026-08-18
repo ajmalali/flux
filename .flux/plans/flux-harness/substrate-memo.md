@@ -9,8 +9,8 @@ with two adoptions from the spikes:
 
 1. **beads molecules are adopted as the per-ticket pipeline container** (positive B2
    assessment, below) — the 5-stage pipeline is poured from a bd formula at ticket-creation
-   time; the gus runner drives ready→claim→execute→close. This complements, not replaces,
-   the `.gus/state/` checkpoint layer (ADR 0002 amendment candidate at M4/D2).
+   time; the flux runner drives ready→claim→execute→close. This complements, not replaces,
+   the `.flux/state/` checkpoint layer (ADR 0002 amendment candidate at M4/D2).
 2. **Steal Archon's run-logging model for A2** (metrics): an append-only per-run event log
    where every `node_completed` event carries `{duration_ms, tokens{input,output},
    cost_usd, num_turns, node_output-preview}` — this maps 1:1 onto the planned
@@ -23,7 +23,7 @@ per-ticket exec config), and each fails an additional fit test (below).
 ## Spike setup (what was actually run)
 
 - **Archon 0.9.0** (Homebrew, compiled binary + `CLAUDE_BIN_PATH`): two-stage workflow
-  `gus-spike.yaml` in a scratch repo — bash node reading `bd show <ticket> --json`
+  `flux-spike.yaml` in a scratch repo — bash node reading `bd show <ticket> --json`
   metadata → implement (prompt node, per-node `model`/`effort`) → deterministic pytest
   gate (bash node, JSON verdict) → `when:`-guarded bounded fix loop (`until` signal,
   `max_iterations: 2`, fresh context) → `when:`-guarded review stage. **One full live run
@@ -48,7 +48,7 @@ per-ticket exec config), and each fails an additional fit test (below).
 |---|---|---|---|---|
 | 1 | Per-ticket config from beads | **Partial.** A bash node reads `bd show --json`; `when:` can branch on any metadata field. But YAML config fields are *not* substitution surfaces: `model: "$read-config.output.model"` is sent to the API as a literal string (404 `model_not_found`, observed). Per-ticket model/effort requires one duplicated `when:`-guarded node per model, or generating YAML per ticket. | **Partial.** `--var` at sling time parameterizes titles/descriptions/metadata (enum-validated, stamped as `gc.var.*` on beads — clean). But model/effort attach to *agents* (`option_defaults`), selected via per-step `gc.run_target` routing — per-ticket model = pre-provisioned agent per model tier. And `check.max_attempts` is a typed int: var substitution rejected at parse (observed). | **Yes by construction** — `ExecConfig` is computed per ticket in Python; model/effort/max_iters are just values. |
 | 2 | Conditional stage skip | **Yes.** `when:` on upstream JSON output; skip observed both directions (`when_condition` skip + fix-loop trigger on gate fail). | **Yes.** `condition` + vars, resolved at instantiation (= ticket-dispatch time); skipped step dropped from the graph and downstream `needs` rewired (observed in compile preview). | **Yes** — `next_stage()` transition function. |
-| 3 | Bounded fix loop | **Yes.** Loop node: `until` completion-signal + `max_iterations` hard cap; exhaustion **fails** the node/workflow (gus wants *park*; `workflow resume` exists but park-with-note is not native). Observed live: loop entered on gate fail, exited on signal after 1/2 iterations. | **Yes (strongest design).** `[steps.check]`: orchestrator (never the agent) runs an exec script after each attempt; fail + budget → next iteration bead; exhaustion → step failed, downstream blocked. Bound is static per formula (typed int, not per-ticket). Verified to the bead level: `gc.check_mode/check_path/max_attempts` on the step, iteration scaffolding compiled. | **Yes** — loop keyed on beads state, `max_review_iters` from ticket config, park-with-note per design.md. |
+| 3 | Bounded fix loop | **Yes.** Loop node: `until` completion-signal + `max_iterations` hard cap; exhaustion **fails** the node/workflow (flux wants *park*; `workflow resume` exists but park-with-note is not native). Observed live: loop entered on gate fail, exited on signal after 1/2 iterations. | **Yes (strongest design).** `[steps.check]`: orchestrator (never the agent) runs an exec script after each attempt; fail + budget → next iteration bead; exhaustion → step failed, downstream blocked. Bound is static per formula (typed int, not per-ticket). Verified to the bead level: `gc.check_mode/check_path/max_attempts` on the step, iteration scaffolding compiled. | **Yes** — loop keyed on beads state, `max_review_iters` from ticket config, park-with-note per design.md. |
 | 4 | Per-stage cost surfacing | **Yes.** Per-node `tokens{input,output}`, `cost_usd`, `num_turns`, `duration_ms` in the run event store (sqlite) + dashboard; `maxBudgetUsd` per-node cap. Not printed by the CLI text output — DB/dashboard only. USD-denominated (ADR 0010 wants tokens+window; tokens are present). | **Yes (design).** `gc costs` aggregates `.gc/usage.jsonl` (model tokens + compute wall-seconds) per run, flags unpriced runs; pricing overrides configurable. Not observed live (run did not complete within the spike timebox). | **Yes by construction** — metrics JSONL per (ticket, stage) is M0 scope (ADR 0008), token-denominated per ADR 0010. |
 
 Auxiliary observations:
@@ -61,7 +61,7 @@ Auxiliary observations:
   git remote; `--no-worktree` works). Gas City = tmux + dolt + flock + launchd supervisor
   daemon + controller/API server + agent sessions; `gc init` is wizard-interactive. It is a
   *city* — a persistent multi-agent runtime — not a per-ticket pipeline runner.
-- **Archon loop-exhaustion semantics** are fail-the-workflow; gus's park-with-note +
+- **Archon loop-exhaustion semantics** are fail-the-workflow; flux's park-with-note +
   `bd`-visible resume would have to be built around it (resume exists, park reason doesn't).
 - **Both tools are pre-1.0/young** (Archon 0.9.0; Gas City 1.4.1 but the packs/doc canon is
   actively migrating), matching plan.md §6's churn-risk note.
@@ -69,11 +69,11 @@ Auxiliary observations:
 ## Why custom still wins (the decision rationale)
 
 The default hypothesis survived contact with both tools, for the predicted reason:
-**the gus pipeline is dynamic exactly where declarative substrates are static.** Per-ticket
-`ExecConfig` (model, effort, max iterations, stage skip) is first-class data in gus's
+**the flux pipeline is dynamic exactly where declarative substrates are static.** Per-ticket
+`ExecConfig` (model, effort, max iterations, stage skip) is first-class data in flux's
 design; in both substrates half of it lives outside the declarative surface (Archon: config
 fields not templatable; Gas City: model-per-agent-role, typed loop bounds). Both would push
-gus into either config-explosion (node/agent variants per model tier) or YAML/TOML
+flux into either config-explosion (node/agent variants per model tier) or YAML/TOML
 generation — at which point Python generating a DSL is strictly worse than Python running
 the loop. Park semantics (ADR 0005: park-with-note, resume from beads) and
 artifact-validation-with-one-retry are also custom behaviors neither engine natively has.
@@ -86,7 +86,7 @@ for it later touches the runner module, not the stages.
 ## B2 — beads 1.x molecules assessment: **positive**
 
 bd 1.2.1 (pinned `1.x`, Homebrew) natively expresses the 5-stage pipeline **without Gas
-City**: a formula in `.beads/formulas/gus-pipeline.formula.toml` (tests → implement →
+City**: a formula in `.beads/formulas/flux-pipeline.formula.toml` (tests → implement →
 review → fix → pr, `{{ticket}}` var, human gate on pr) was written, `bd formula show`
 compiled it, and `bd mol pour --var ticket=…` instantiated **7 beads**: root molecule +
 5 steps with dependency-gated readiness (only `tests` ready; rest pending) + the human
@@ -95,12 +95,12 @@ gate-resume work; wisp/squash/burn manage ephemeral instances and digests.
 
 Limits: molecules are *state*, not execution — nothing runs steps or evaluates exec-check
 gates (bd gate types: human/timer/gh:run/gh:pr/bead — no arbitrary command). The bounded
-review↔fix loop and artifact validation remain gus-runner logic. That division (bd = state
-+ readiness + gates; gus = execute + validate + park) is exactly ADR 0002's shape.
+review↔fix loop and artifact validation remain flux-runner logic. That division (bd = state
++ readiness + gates; flux = execute + validate + park) is exactly ADR 0002's shape.
 
 Feeds D2 (M4): attach the stage molecule at ticket-creation time; the runner's
 `next_stage()` can be *derived from* `bd mol current` instead of a parallel checkpoint
-file — evaluate at M4, keep `.gus/state/` authoritative until then.
+file — evaluate at M4, keep `.flux/state/` authoritative until then.
 
 ## Gas City runtime observation (timebox note)
 
@@ -120,7 +120,7 @@ adoption for a single-developer per-ticket loop regardless of whether it runs.
 
 Per plan.md §5: this decision is revisited **only at phase gates** (milestone exits). The
 concrete triggers that would reopen it: (a) Archon ships templatable config fields
-(per-ticket model from node output), or (b) gus's scope grows to multi-agent fleets/pools
+(per-ticket model from node output), or (b) flux's scope grows to multi-agent fleets/pools
 (Gas City's actual sweet spot), or (c) beads molecules gain exec-check gates that could
 replace the runner's gate loop.
 

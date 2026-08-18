@@ -17,5 +17,5 @@ per-stage state transitions, `discovered-from` deps for newly-found work. Pin a 
   step workflows with a full ledger) as a possible native container for the 5-stage pipeline —
   feeds the Gas City substrate evaluation.
 - Graph construction from a plan is human-supervised (agents produce unlinked/mis-ordered graphs).
-- bd's store lives in `.beads/` (its default) — the one gus artifact not under `.gus/`; move it
-  under `.gus/beads/` if bd gains a custom-path option.
+- bd's store lives in `.beads/` (its default) — the one flux artifact not under `.flux/`; move it
+  under `.flux/beads/` if bd gains a custom-path option.

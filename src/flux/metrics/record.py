@@ -1,6 +1,6 @@
 """The metrics record and its JSONL store (ADR 0008, design.md §3).
 
-One line per ``(ticket, stage)`` attempt appended to ``.gus/usage/metrics.jsonl``.
+One line per ``(ticket, stage)`` attempt appended to ``.flux/usage/metrics.jsonl``.
 Append-only and schema-versioned: every kill-switch and threshold in the plan reads
 this file, so it has to survive format changes without losing history.
 
@@ -19,11 +19,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-from gus.executor.types import ExecResult
-from gus.jsonio import as_json_mapping
+from flux.executor.types import ExecResult
+from flux.jsonio import as_json_mapping
 
 SCHEMA_VERSION = 1
-DEFAULT_METRICS_PATH = Path(".gus/usage/metrics.jsonl")
+DEFAULT_METRICS_PATH = Path(".flux/usage/metrics.jsonl")
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,7 +268,7 @@ class MetricsStore:
                     yield MetricRecord.from_json(mapping)
 
     def count_malformed(self) -> int:
-        """Number of non-empty lines that failed to parse. Reported by ``gus metrics``."""
+        """Number of non-empty lines that failed to parse. Reported by ``flux metrics``."""
         if not self.path.exists():
             return 0
         bad = 0

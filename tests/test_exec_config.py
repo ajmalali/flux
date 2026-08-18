@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 
-from gus.errors import ConfigError
-from gus.executor import ExecConfig
+from flux.errors import ConfigError
+from flux.executor import ExecConfig
 
 
 def make(**overrides: Any) -> ExecConfig:

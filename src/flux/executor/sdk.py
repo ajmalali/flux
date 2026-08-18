@@ -1,4 +1,4 @@
-"""The Claude Agent SDK executor — the only module in gus that imports the SDK (ADR 0007).
+"""The Claude Agent SDK executor — the only module in flux that imports the SDK (ADR 0007).
 
 Every ``run()`` is a fresh, one-shot session (ADR 0003) that rides the logged-in
 subscription (ADR 0010). Preflight runs before the first session of the process and
@@ -25,8 +25,8 @@ from claude_agent_sdk import (
     query,
 )
 
-from gus.executor.billing import AuthStatus, preflight
-from gus.executor.types import (
+from flux.executor.billing import AuthStatus, preflight
+from flux.executor.types import (
     ExecConfig,
     ExecResult,
     PromptPack,
@@ -35,11 +35,11 @@ from gus.executor.types import (
 )
 
 # Set by the SDK-spawned CLI's User-Agent so runs are attributable in usage logs.
-_CLIENT_APP = "gus/0.1.0"
+_CLIENT_APP = "flux/0.1.0"
 
 
 class ClaudeAgentSDKExecutor:
-    """Runs a :class:`~gus.executor.types.PromptPack` through the Claude Agent SDK.
+    """Runs a :class:`~flux.executor.types.PromptPack` through the Claude Agent SDK.
 
     Args:
         cli_path: Explicit path to the ``claude`` binary. Defaults to PATH lookup.
@@ -70,7 +70,7 @@ class ClaudeAgentSDKExecutor:
         return self._auth
 
     def run(self, pack: PromptPack, cfg: ExecConfig) -> ExecResult:
-        """Execute one fresh session. See :class:`~gus.executor.protocol.Executor`."""
+        """Execute one fresh session. See :class:`~flux.executor.protocol.Executor`."""
         self.ensure_preflight()
         return asyncio.run(self._run_async(pack, cfg))
 
@@ -100,12 +100,12 @@ class ClaudeAgentSDKExecutor:
 
 
 def build_options(pack: PromptPack, cfg: ExecConfig) -> ClaudeAgentOptions:
-    """Translate gus config into SDK options. Pure — no I/O, so it is directly testable.
+    """Translate flux config into SDK options. Pure — no I/O, so it is directly testable.
 
     Note what is *not* here: ``env`` carries no credential overrides. The SDK merges
     ``env`` over the inherited process environment, so an override cannot unset an
     inherited ``ANTHROPIC_API_KEY``; the removal happens in
-    :func:`gus.executor.billing.sanitize_process_env` before the process spawns.
+    :func:`flux.executor.billing.sanitize_process_env` before the process spawns.
     """
     # SDK hook types are re-exported as implicit aliases; keeping this Any avoids
     # dragging them across the ADR 0007 seam just to satisfy a cast.

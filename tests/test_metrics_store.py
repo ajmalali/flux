@@ -8,15 +8,15 @@ from pathlib import Path
 
 import pytest
 
-from gus.executor import ExecResult, PromptPack, Usage, WindowPressure
-from gus.executor.stub import StubExecutor, ok_result
-from gus.executor.types import ExecConfig
-from gus.metrics import GateOutcome, MetricRecord, MetricsStore
+from flux.executor import ExecResult, PromptPack, Usage, WindowPressure
+from flux.executor.stub import StubExecutor, ok_result
+from flux.executor.types import ExecConfig
+from flux.metrics import GateOutcome, MetricRecord, MetricsStore
 
 
 def make_record(**overrides: object) -> MetricRecord:
     base: dict[str, object] = {
-        "ticket": "gus-1",
+        "ticket": "flux-1",
         "stage": "implement",
         "model": "claude-sonnet-5",
         "effort": "high",
@@ -84,7 +84,7 @@ def test_malformed_lines_are_skipped_not_fatal(tmp_path: Path) -> None:
     store = MetricsStore(tmp_path / "metrics.jsonl")
     store.record(make_record(stage="tests"))
     with store.path.open("a") as handle:
-        handle.write('{"ticket": "gus-1", "stage": "impleme\n')  # truncated
+        handle.write('{"ticket": "flux-1", "stage": "impleme\n')  # truncated
         handle.write("\n")
         handle.write("[1, 2, 3]\n")  # valid JSON, wrong shape
     store.record(make_record(stage="review"))
@@ -133,7 +133,7 @@ def test_from_exec_result_captures_the_session(tmp_path: Path) -> None:
         pack_chars=2048,
     )
     record = MetricRecord.from_exec_result(
-        ticket="gus-1",
+        ticket="flux-1",
         stage="implement",
         result=result,
         gates=[GateOutcome(name="ruff", passed=True)],

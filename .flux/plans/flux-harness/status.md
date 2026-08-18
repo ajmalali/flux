@@ -1,4 +1,4 @@
-# gus-harness — status & next task
+# flux-harness — status & next task
 
 Updated: 2026-08-18 (T2 done: package skeleton, executor seam, metrics store)
 
@@ -10,10 +10,10 @@ Updated: 2026-08-18 (T2 done: package skeleton, executor seam, metrics store)
   adopt beads molecules as the pipeline container (at M4/D2), steal Archon's per-node
   event-log shape for A2 metrics. beads (bd) 1.2.1 installed via Homebrew, pin `1.x`.
 - **T2 done.** Package scaffolded (`uv`, Python ≥3.12, ruff + pyright *strict* + pytest, all
-  green). `src/gus/executor/` holds the ADR 0007 seam (`Executor` protocol, `ExecConfig`,
+  green). `src/flux/executor/` holds the ADR 0007 seam (`Executor` protocol, `ExecConfig`,
   `ExecResult`, `PromptPack`, `ClaudeAgentSDKExecutor`, `StubExecutor`) and the ADR 0010
-  billing preflight; `src/gus/metrics/` holds the JSONL store + `gus metrics` report.
-  `gus` CLI has stubs for init/index/research/plan/tickets/run/status, plus working
+  billing preflight; `src/flux/metrics/` holds the JSONL store + `flux metrics` report.
+  `flux` CLI has stubs for init/index/research/plan/tickets/run/status, plus working
   `metrics` and a new `doctor`. 126 tests; live round-trip verified on subscription auth.
 - **Executor is usable now.** `ClaudeAgentSDKExecutor().run(pack, cfg)` works end to end and
   writes correct metrics lines. T3 can stub it via `StubExecutor` without touching the SDK.
@@ -25,13 +25,13 @@ Updated: 2026-08-18 (T2 done: package skeleton, executor seam, metrics store)
   two-stage flow with a gate between them in Archon and in Gas City, score each on the 4-point
   scorecard in plan.md §5 Pre-M0, assess beads-1.0 molecules; or (b) if the user opts to skip
   spiking, adopt the default hypothesis (custom Python wins). **Either way**, write the decision
-  memo to `.gus/plans/gus-harness/substrate-memo.md` (decision, scorecard or "not spiked —
+  memo to `.flux/plans/flux-harness/substrate-memo.md` (decision, scorecard or "not spiked —
   default hypothesis adopted", molecules note, revisit-at-phase-gates rule) and check this box.
 - [x] **T2 — M0 step 1: package skeleton + Executor + metrics.**
-  Scaffold: `uv init` (package `gus`, Python ≥3.12), ruff/pyright/pytest configured, `gus` CLI
-  entry point (`cli.py`) with stub subcommands. Implement `src/gus/executor/` (the `Executor`
+  Scaffold: `uv init` (package `flux`, Python ≥3.12), ruff/pyright/pytest configured, `flux` CLI
+  entry point (`cli.py`) with stub subcommands. Implement `src/flux/executor/` (the `Executor`
   protocol, `ExecConfig`, `ExecResult`, `PromptPack`, `ClaudeAgentSDKExecutor`) and
-  `src/gus/metrics/` (JSONL writer + `gus metrics` report) per design.md §1/§3.
+  `src/flux/metrics/` (JSONL writer + `flux metrics` report) per design.md §1/§3.
   **Billing (ADR 0010):** executor preflight asserts subscription auth and strips
   `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` from the child env; no API-fallback code paths yet
   beyond detect-and-park.
@@ -40,19 +40,19 @@ Updated: 2026-08-18 (T2 done: package skeleton, executor seam, metrics store)
   proves API keys are stripped from the child env; unit tests cover config validation and
   metrics aggregation with the executor stubbed; gates green.
 - [ ] **T3 — M0 step 2: runner spine, no LLM.**
-  `src/gus/runner/`: checkpoint store (atomic tmp+rename under `.gus/state/<ticket>/`),
+  `src/flux/runner/`: checkpoint store (atomic tmp+rename under `.flux/state/<ticket>/`),
   transition function, `run_ticket()` loop with artifact validation + one-retry-then-park, per
   design.md §1. Executor stubbed throughout.
   **Done when:** pytest proves — completed stages skip on rerun; kill-mid-stage resumes
   cleanly; review↔fix loop parks after `max_review_iters`; a missing required artifact parks
   after exactly one retry.
 - [ ] **T4 — M0 step 3: gates + first end-to-end ticket.**
-  `src/gus/gates/` subprocess wrappers (Python target first: ruff/pyright/pytest + coverage),
-  `gus init` scaffolding `.gus/` + `.gitignore` in a target repo, minimal implement-stage using
+  `src/flux/gates/` subprocess wrappers (Python target first: ruff/pyright/pytest + coverage),
+  `flux init` scaffolding `.flux/` + `.gitignore` in a target repo, minimal implement-stage using
   the real executor, repo-map tool chosen and wired (`repowiki map` vs RepoMapper — pick
   whichever ranks the test repo better, note choice here).
   **Done when:** M0 exit benchmark (plan.md §5): a trivial hand-written ticket flows through one
-  implement stage + gates end-to-end in a scratch target repo; `gus metrics` prints per-stage
+  implement stage + gates end-to-end in a scratch target repo; `flux metrics` prints per-stage
   cost/time.
 - [ ] **T5 — M1: full five-stage pipeline + hardening + A/B baseline** (expand into subtasks
   when reached; specs in plan.md §5 M1 and the design.md stage I/O table).
@@ -66,21 +66,27 @@ Updated: 2026-08-18 (T2 done: package skeleton, executor seam, metrics store)
 
 ## Log
 
+- 2026-08-18 — **Renamed gus → flux** (Fast Loop Unified eXecution). Package `src/flux/`, CLI
+  `flux`, artifact namespace `.flux/`, env var `FLUX_LIVE_TESTS`, `FluxError`; docs and ADRs
+  rewritten in place. The GitHub repo `ajmalali/flux` — which held an unrelated earlier
+  Claude Code plugin of the same name — was replaced with this history; its prior state is
+  preserved on the remote branch `archive/plugin-flux`. Gates green after the rename.
+
 - 2026-08-18 — **T2 done.** Skeleton + executor seam + metrics store landed; gates green;
   one live round-trip on subscription auth (Haiku, effort=low) wrote a correct metrics line
-  and `gus metrics` printed per-stage tokens/time. Findings that shape later work:
+  and `flux metrics` printed per-stage tokens/time. Findings that shape later work:
   - **Preflight primitive found:** `claude auth status --json` returns
     `{loggedIn, authMethod, apiProvider, apiKeySource, subscriptionType, email}`. `apiKeySource`
     appears **only** when an API key is overriding the subscription login (and blanks out
     `email`/`subscriptionType`) — that field is the ADR 0010 check.
   - **Credential strip must happen in the parent.** The SDK spawns the CLI with
     `{**os.environ, **options.env}` (`_internal/transport/subprocess_cli.py`), so `options.env`
-    can *set* but never *unset* an inherited var. gus therefore deletes
+    can *set* but never *unset* an inherited var. flux therefore deletes
     `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` from `os.environ` before spawning; a test asserts
     on the reproduced merge, and a second test pins the SDK behaviour that forces this.
   - **Deviation from design.md §1 (`max_tokens`):** the SDK's `task_budget` → `--task-budget` is
     model-gated. Haiku 4.5 rejects it with `400 This model does not support user-configurable
-    task budgets`. So `ExecConfig.max_tokens` is now a **gus-side** budget (recorded, enforced by
+    task budgets`. So `ExecConfig.max_tokens` is now a **flux-side** budget (recorded, enforced by
     the runner) and sending it to the API is opt-in via `advertise_token_budget=False`.
     `max_turns` is the cap that always applies. Not ADR-level, but design.md should say so.
   - **The SDK raises on terminal CLI errors** (turn cap, budget cap, API error) — a bare
@@ -99,7 +105,7 @@ Updated: 2026-08-18 (T2 done: package skeleton, executor seam, metrics store)
     A context pack that merely *names* files provoked 6 Read calls and blew `max_turns=3`.
     Reinforces design.md §2: the hydrator must resolve slices into the pack rather than pointing
     at paths, and stage `max_turns` needs headroom.
-  - Added `gus doctor` (not in plan.md §4's command list) — it runs the preflight and reports
+  - Added `flux doctor` (not in plan.md §4's command list) — it runs the preflight and reports
     auth, provider, what was stripped, and any billing redirects.
   - Tooling note: pyright runs in **strict** mode; `ruff format` is used but is not one of the
     three gates.

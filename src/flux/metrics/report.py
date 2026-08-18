@@ -1,4 +1,4 @@
-"""``gus metrics`` — aggregation and rendering over the JSONL store (ADR 0008).
+"""``flux metrics`` — aggregation and rendering over the JSONL store (ADR 0008).
 
 Two audiences, one report. Per-stage rows answer "where does the time and token
 budget go"; the harness-vs-vanilla block answers the standing kill-criterion: did
@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 
-from gus.metrics.record import MetricRecord
+from flux.metrics.record import MetricRecord
 
 Keyer = Callable[[MetricRecord], str]
 
@@ -168,7 +168,7 @@ def latest_window(records: Sequence[MetricRecord]) -> WindowSnapshot | None:
 
 @dataclass(frozen=True, slots=True)
 class Report:
-    """Everything ``gus metrics`` prints, assembled but not yet formatted."""
+    """Everything ``flux metrics`` prints, assembled but not yet formatted."""
 
     total: Aggregate
     by_stage: Sequence[Aggregate] = ()

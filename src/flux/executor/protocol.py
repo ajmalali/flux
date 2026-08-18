@@ -1,4 +1,4 @@
-"""The one seam between gus and any model (ADR 0007).
+"""The one seam between flux and any model (ADR 0007).
 
 Stage and runner code depends on this protocol and nothing else. Swapping the
 backing agent — native workflows, another CLI, a different vendor — touches one
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from gus.executor.types import ExecConfig, ExecResult, PromptPack
+from flux.executor.types import ExecConfig, ExecResult, PromptPack
 
 
 @runtime_checkable

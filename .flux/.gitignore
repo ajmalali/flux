@@ -1,0 +1,5 @@
+# ADR 0006: flux artifacts live under .flux/; runtime state is not committed.
+transcripts/
+usage/
+cache/
+state/

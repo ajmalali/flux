@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from gus.executor import PromptPack
+from flux.executor import PromptPack
 
 
 def make_pack() -> PromptPack:

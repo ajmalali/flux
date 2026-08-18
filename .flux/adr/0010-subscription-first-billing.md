@@ -3,7 +3,7 @@
 Status: accepted
 
 ## Context
-The user runs gus on their normal Claude subscription (Claude Code CLI already logged in). The
+The user runs flux on their normal Claude subscription (Claude Code CLI already logged in). The
 Agent SDK spawns the Claude Code CLI, so it can ride the logged-in subscription auth. API-key
 billing is metered per token and must not be engaged silently. Known policy risk: `--bare` mode
 for `claude -p` requires an explicit API key and has been slated to become the `-p` default —
@@ -19,7 +19,7 @@ programmatic-use policy for subscriptions can shift under us.
      requiring an API key) — detected by preflight, never assumed;
   c. the subscription usage limit is reached mid-run.
 - **In every case the switch requires explicit user approval.** Default behavior on any trigger:
-  stop, park in-flight tickets with a note, and surface the condition. `gus.toml` may carry
+  stop, park in-flight tickets with a note, and surface the condition. `flux.toml` may carry
   `billing.allow_api_fallback = true` as durable pre-authorization (default `false`); condition
   (c) additionally always prompts unless that flag is set.
 - On usage-limit hit (c) without approval: park tickets and schedule resume at the usage-window

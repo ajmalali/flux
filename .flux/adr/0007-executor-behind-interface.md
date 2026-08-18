@@ -16,4 +16,4 @@ protocol only.
 ## Consequences
 - Swapping the executor (native workflows, Gas City, another CLI agent) touches one module.
 - Per-call model/effort/permission/tool config is normalized in `ExecConfig`, so routing policy
-  lives in gus config, not scattered across stages.
+  lives in flux config, not scattered across stages.

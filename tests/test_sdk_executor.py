@@ -1,7 +1,7 @@
 """SDK translation and message folding — no CLI is spawned.
 
 These cover the parts of ``sdk.py`` that are pure: config → SDK options, and the
-message stream → :class:`~gus.executor.types.ExecResult` fold.
+message stream → :class:`~flux.executor.types.ExecResult` fold.
 """
 
 from __future__ import annotations
@@ -23,8 +23,8 @@ from claude_agent_sdk import (
     ToolUseBlock,
 )
 
-from gus.executor import ExecConfig, ExecResult, PromptPack, build_options
-from gus.executor.sdk import (
+from flux.executor import ExecConfig, ExecResult, PromptPack, build_options
+from flux.executor.sdk import (
     ClaudeAgentSDKExecutor,
     Collector,
     extract_provider,
@@ -287,7 +287,7 @@ def test_run_converts_a_stream_error_into_a_failed_result(
         raise RuntimeError("Claude Code returned an error result: max turns")
         yield  # pragma: no cover - makes this an async generator
 
-    monkeypatch.setattr("gus.executor.sdk.query", exploding_query)
+    monkeypatch.setattr("flux.executor.sdk.query", exploding_query)
     executor = ClaudeAgentSDKExecutor(verify_billing=False)
     result = executor.run(PACK, ExecConfig(model="m", effort="high"))
     assert result.ok is False
@@ -301,7 +301,7 @@ def test_run_lets_environment_faults_surface(monkeypatch: pytest.MonkeyPatch) ->
         raise CLINotFoundError("claude not installed")
         yield  # pragma: no cover - makes this an async generator
 
-    monkeypatch.setattr("gus.executor.sdk.query", exploding_query)
+    monkeypatch.setattr("flux.executor.sdk.query", exploding_query)
     executor = ClaudeAgentSDKExecutor(verify_billing=False)
     with pytest.raises(CLINotFoundError):
         executor.run(PACK, ExecConfig(model="m", effort="high"))
@@ -324,7 +324,7 @@ def test_preflight_is_cached_after_the_first_call(monkeypatch: pytest.MonkeyPatc
         calls["n"] += 1
         return object()
 
-    monkeypatch.setattr("gus.executor.sdk.preflight", fake_preflight)
+    monkeypatch.setattr("flux.executor.sdk.preflight", fake_preflight)
     executor = ClaudeAgentSDKExecutor()
     executor.ensure_preflight()
     executor.ensure_preflight()

@@ -1,4 +1,4 @@
-# gus — Implementation Design: state machine, executor, and artifact handoff
+# flux — Implementation Design: state machine, executor, and artifact handoff
 
 Companion to `plan.md`. This answers the two mechanism questions concretely:
 **(1) what is the state machine and where does state live**, and
@@ -15,8 +15,8 @@ There is no framework and no long-lived process. The "state machine" is three th
    | Store | Holds | Why there |
    |---|---|---|
    | beads (`bd`) | ticket status, deps, human-visible comments, park notes | inter-ticket scheduling + human triage surface |
-   | `.gus/context/<ticket>/` | handoff artifacts: context pack, `tests.json`, `review.json`, notes | the *interface between stages*; git-diffable |
-   | `.gus/state/<ticket>/` | stage checkpoints: `<stage>.done.json`, retry counters | idempotency/resume; machine-only |
+   | `.flux/context/<ticket>/` | handoff artifacts: context pack, `tests.json`, `review.json`, notes | the *interface between stages*; git-diffable |
+   | `.flux/state/<ticket>/` | stage checkpoints: `<stage>.done.json`, retry counters | idempotency/resume; machine-only |
 
 3. **A stateless runner** — can be killed at any point and re-invoked; it reconstructs
    everything from disk. Resume *is* rerun.
@@ -33,7 +33,7 @@ class ClaudeAgentSDKExecutor:                   # sole module importing claude_a
 # Cap semantics (established in T2): `max_turns` is the only cap the CLI always enforces.
 # The SDK's task budget (`--task-budget`) is model-gated — models without support reject the
 # request with `400 This model does not support user-configurable task budgets` — so
-# `max_tokens` is a gus-side budget (recorded in metrics, enforced by the runner) and sending
+# `max_tokens` is a flux-side budget (recorded in metrics, enforced by the runner) and sending
 # it to the API is opt-in per stage via `advertise_token_budget`.
 #
 # Terminal CLI errors (turn cap hit, API error) arrive as a raised exception from the SDK
@@ -74,7 +74,7 @@ class Stage(Protocol):
 STAGES = [TestsStage(), ImplementStage(), ReviewStage(), FixStage(), PrStage()]
 
 def run_ticket(ticket_id: str) -> None:
-    t = TicketContext.load(ticket_id)                  # bd show + .gus/context/<ticket>/
+    t = TicketContext.load(ticket_id)                  # bd show + .flux/context/<ticket>/
     while (stage := next_stage(t)) is not None:
         pack = stage.hydrate(t)                        # deterministic, from artifacts only
         result = executor.run(pack, stage.config(t))   # ALWAYS a fresh session
@@ -116,9 +116,9 @@ Properties this buys:
   are confined to the worktree, which git can reset to the last stage-commit tag).
 - **Bounded**: the review↔fix loop can only oscillate `max_review_iters` times, then parks the
   ticket in bd with a failure note for human triage.
-- **Inspectable**: `gus status` is just a read of bd + checkpoint files.
+- **Inspectable**: `flux status` is just a read of bd + checkpoint files.
 
-Each stage `commit()` also makes a git commit in the worktree tagged `gus/<ticket>/<stage>`,
+Each stage `commit()` also makes a git commit in the worktree tagged `flux/<ticket>/<stage>`,
 so "reset to last good stage" is a `git reset --hard`, not bookkeeping.
 
 ## 2. The artifact handoff contract (offload + fresh-context pickup)
@@ -172,22 +172,22 @@ not grow monotonically across stages.
 | fix | **unresolved findings slices** + referenced diff hunks | Sonnet/high · acceptEdits · same blocks as implement | updated `review.json` resolutions | full gate suite reruns; reviewer re-invoked only if gates pass |
 | pr | impl-notes · resolved review · commit log | Haiku/low (or local, later) | PR body + pushed branch | `git push` succeeded; CI triggered ("land the plane") |
 
-The opaque test runner is a gus subprocess wrapper: it runs the suite (including held-out tests
+The opaque test runner is a flux subprocess wrapper: it runs the suite (including held-out tests
 stored outside the worktree) and returns `{passed, failed: [test names], first_assertion_line}`
 — never test source. The implement session's `allowed_tools`/hooks prevent it from reading test
 bodies directly.
 
 ## 3. Metrics store and A/B baseline (P0, per change doc A1/A2)
 
-- `metrics.record()` appends one JSON line per (ticket, stage) to `.gus/usage/metrics.jsonl`:
+- `metrics.record()` appends one JSON line per (ticket, stage) to `.flux/usage/metrics.jsonl`:
   tokens in/out, cache read/write, wall time, gate results, retry count, exploratory-call count
   (Read/Grep outside the context pack, from transcript), model, effort, billing mode
   (subscription | api-fallback), and `total_cost_usd` as a secondary estimate. On subscription
-  (ADR 0010) the primary economics are **tokens + usage-window consumption**; `gus metrics`
+  (ADR 0010) the primary economics are **tokens + usage-window consumption**; `flux metrics`
   reports remaining-window pressure alongside the KPI table.
-- `gus run --vanilla <ticket>`: runs the same ticket through plain `claude -p` with just the
+- `flux run --vanilla <ticket>`: runs the same ticket through plain `claude -p` with just the
   ticket text, records identical metrics. 1-in-10 cadence. Standing kill-criterion (written into
-  `gus.toml`): if vanilla wins on cost AND quality for 3 consecutive samples, freeze harness
+  `flux.toml`): if vanilla wins on cost AND quality for 3 consecutive samples, freeze harness
   feature work and investigate.
 
 ## 4. What gets built vs. bought

@@ -2,7 +2,7 @@
 
 The SDK spawns the Claude Code CLI with ``{**os.environ, **options.env}``. That merge
 is why these tests exist twice over: once to prove ``options.env`` *cannot* remove an
-inherited credential, and once to prove gus's actual mechanism — deleting it from
+inherited credential, and once to prove flux's actual mechanism — deleting it from
 ``os.environ`` before the spawn — does.
 """
 
@@ -12,7 +12,7 @@ import os
 
 import pytest
 
-from gus.executor import (
+from flux.executor import (
     API_CREDENTIAL_VARS,
     ExecConfig,
     PromptPack,
@@ -21,7 +21,7 @@ from gus.executor import (
     detect_billing_redirects,
     sanitize_process_env,
 )
-from gus.executor.billing import BILLING_REDIRECT_VARS
+from flux.executor.billing import BILLING_REDIRECT_VARS
 
 CFG = ExecConfig(model="claude-sonnet-5", effort="high")
 PACK = PromptPack(system_prompt="sys", stage_tail="do the thing")
@@ -30,7 +30,7 @@ PACK = PromptPack(system_prompt="sys", stage_tail="do the thing")
 def test_options_env_cannot_unset_an_inherited_credential() -> None:
     """Documents the constraint that forces the os.environ strip.
 
-    If this ever fails, the SDK changed its merge and gus could stop mutating the
+    If this ever fails, the SDK changed its merge and flux could stop mutating the
     parent environment.
     """
     inherited = {"ANTHROPIC_API_KEY": "sk-real"}
@@ -70,7 +70,7 @@ def test_child_env_has_no_credentials_after_sanitize(monkeypatch: pytest.MonkeyP
 
 
 def test_build_options_does_not_inject_credentials() -> None:
-    """gus never *adds* an API credential either, whatever the ambient env holds."""
+    """flux never *adds* an API credential either, whatever the ambient env holds."""
     options = build_options(PACK, CFG)
     assert not set(options.env) & set(API_CREDENTIAL_VARS)
 

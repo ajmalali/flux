@@ -1,6 +1,6 @@
 # flux-harness — status & next task
 
-Updated: 2026-08-18 (T4c done — gitnexus measured and **refused**; ADR 0009 C2 upheld. Next: T5/M1)
+Updated: 2026-08-18 (T4c done — gitnexus **refused**, ADR 0009 C2 upheld. Next: T5/M1, then T5b re-tests the knowledge layer on a large repo)
 
 ## Current state
 
@@ -49,6 +49,12 @@ Updated: 2026-08-18 (T4c done — gitnexus measured and **refused**; ADR 0009 C2
   exceeded any between-variant difference at n=1/cell, so nothing is proven either way. Whether
   the `[repo_map]` pack section earns its place at all is the first concrete question for T5's
   A/B harness.
+- **Known limit of that result, accepted: flux is too small a repo to judge a symbol graph on.**
+  The no-map control spent only 4–9 exploratory calls, so there was a floor effect — a large
+  saving cannot be demonstrated against a baseline of 4. T4c stands as "refuse the swap on
+  current evidence", not as "symbol maps do not help". **T5b** re-runs it on a 3–7x larger repo
+  with repeats and a fourth arm (CodeGraph). Do not treat T4c as having closed the knowledge-
+  source question — it closed only the gitnexus-supersedes-repowiki question.
 - **Settled for T5 by T4c:** the review stage hydrates from the `git diff` of the stage commits
   (design.md's stage I/O table is unchanged). `detect-changes` may only *append* a flow overlay
   alongside the diff — its symbol attribution slips on short symbols and it has no JSON output.
@@ -111,6 +117,56 @@ Updated: 2026-08-18 (T4c done — gitnexus measured and **refused**; ADR 0009 C2
   and the review stage must use a **different model** from implement (`flux.toml` already routes
   it to Opus with `permission_mode = "plan"`).
 
+- [ ] **T5b — knowledge-layer A/B on a *large* repo, four arms. Do this after T5, not before.**
+  **Why it exists:** T4c's refusal of gitnexus was measured on flux itself (88 files), and the
+  user's challenge that this is too small to judge a symbol graph is **correct and accepted**.
+  The no-map control spent only 4–9 exploratory calls, so there was a **floor effect** — you
+  cannot show a large saving against a baseline of 4. T4c's result is therefore sound as
+  "refuse the swap on current evidence" and weak as "symbol maps do not help".
+  Two further confounds, both cutting the same way: the three tickets were written immediately
+  after reading the repo and named their targets almost precisely enough to grep, and flux has
+  clean descriptive module naming (`knowledge/repomap.py`, `runner/loop.py`) which makes grep
+  unusually effective. The adversarial case — vague ticket, large repo, historical naming — was
+  never tested.
+  **Blocked on T5** because the A/B harness is a T5 deliverable; do not hand-roll a second one.
+  **Setup when it runs:**
+  - Target: a clone of a real, larger repo. Two are already to hand and already indexed —
+    `~/Dev/zaps/kiosk` (662 files, 2,555 symbols) and `~/Dev/zaps/api` (296 files, 2,945
+    symbols), i.e. 3–7x flux. Clone, never run stages against the working copies.
+  - Four arms: `none` / `repowiki` / `gitnexus` / **`codegraph`**. Keep the `none` control —
+    it was the most informative arm in T4c and the one T4b never ran.
+  - Tickets written by someone who has *not* just read the repo, and deliberately vaguer than
+    T4c's, so the pack has something to do. Replace the degenerate `gate-timing`-style ticket
+    (it asked for `GateOutcome.duration_ms`, which already existed).
+  - Repeats: n>=3 per cell. T4c ran n=1 and the between-ticket variance swamped the
+    between-variant difference — that is the main thing to fix.
+  - KPI stays `exploratory_calls`; also record turns, wall, output tokens, and pack_chars.
+  - Method reference: `gitnexus-memo.md` §1 describes T4c's setup precisely enough to rebuild.
+  **Fourth arm — CodeGraph (`colbymchenry/codegraph`), researched 2026-08-18, not yet spiked.**
+  On docs only (via ctx7, *not* verified hands-on), it fixes every operational objection T4c
+  raised against gitnexus:
+  | T4c objection to gitnexus | CodeGraph per docs |
+  |---|---|
+  | `analyze` not incremental (7.4s for a one-line change) | `codegraph sync` — changed files only |
+  | `detect-changes` has no `--json` | `query` and `impact` take `--json`, with filePath/startLine |
+  | machine-global registry, `-r <alias>`, identity collisions | `-p, --path <path>` per invocation |
+  | MCP build drifts from index format, fails silently | CLI-first; MCP is an explicit `serve --mcp` |
+  Also local-first, no API keys (clears ADR 0010), Rust kernel, 20+ languages, and
+  `install --print-config` prints rather than writing files — versus gitnexus rewriting
+  `CLAUDE.md` by default.
+  **Treat its headline claim as the hypothesis under test, not as evidence.** CodeGraph
+  advertises "94% fewer tool calls, 77% faster exploration" — a vendor number about *exactly*
+  the metric T4c measured as null. This is the third tool in a row proposed on a claim rather
+  than a measurement (T4b adopted `repowiki map` on a research claim about Aider's symbol-level
+  maps and shipped the ranking half; T4c raised gitnexus on a hands-on impression that did not
+  survive measurement). The harness exists precisely so this one gets tested instead.
+  Note the name is ambiguous — at least five projects call themselves CodeGraph; the one meant
+  is `colbymchenry/codegraph`, the Claude-Code-targeted one with darwin-arm64 bundles.
+  **Done when:** the four arms are measured with repeats on a large repo and the memo is amended
+  with the outcome — including, explicitly, whether `[repo_map]` earns its place at all. A
+  result that kills the repo-map section entirely is a legitimate and welcome outcome.
+
+
 ## Session-close checklist (execute before ending any working session)
 
 1. Gates green (`uv run ruff check . && uv run pyright && uv run pytest`) — once T2 exists.
@@ -119,6 +175,29 @@ Updated: 2026-08-18 (T4c done — gitnexus measured and **refused**; ADR 0009 C2
    surprises, deviations from design.md, or decisions made (new ADR if load-bearing).
 
 ## Log
+
+- 2026-08-18 — **T4c's result challenged on repo size; challenge accepted, T5b queued.** The
+  question raised was whether the null result is an artifact of flux being small, and whether
+  gitnexus would do better on a bigger repo. It is a fair hit and the answer is yes, partly:
+  the `none` control spent 4–9 exploratory calls, which is a **floor effect** — there is almost
+  nothing to save. Two further confounds were conceded: the T4c tickets were written straight
+  after reading the repo and named their targets nearly precisely enough to grep, and flux's
+  module naming makes grep unusually effective. The adversarial case (vague ticket, large repo,
+  historical naming) was never tested. **T4c's scope is therefore narrowed in the record:** it
+  refuses the gitnexus-for-repowiki swap on current evidence; it does not establish that symbol
+  maps are useless. `gitnexus-memo.md` §1 amended to say so up front rather than in a footnote.
+- **CodeGraph raised as a better candidate; researched, not spiked.** On docs (ctx7, no hands-on
+  verification) `colbymchenry/codegraph` fixes all four operational objections T4c raised —
+  real incremental `sync`, `--json` on `query`/`impact`, `-p, --path` instead of a machine-global
+  registry, CLI-first with MCP as an explicit opt-in — plus local-first with no API keys. It is a
+  genuinely better engineering fit. **But it does not touch T4c's actual finding**, which was
+  about whether a symbol-context section reduces exploration at all, not about ergonomics.
+  Its "94% fewer tool calls" headline is a vendor number about exactly the metric measured as
+  null, and this would be the **third** tool in a row adopted on a claim rather than a
+  measurement. Queued as the fourth arm of T5b instead of adopted.
+- **Standing rule this makes explicit:** knowledge-source candidates get measured through the
+  A/B harness before adoption, never adopted on a README. T4b's mistake (adopting on a claim
+  about Aider's symbol maps, shipping the ranking half) is the reference case.
 
 - 2026-08-18 — **T4c done: gitnexus measured against `repowiki map` and refused.** The T4c
   raise was a good challenge answered honestly, and the answer went against it. Nine live

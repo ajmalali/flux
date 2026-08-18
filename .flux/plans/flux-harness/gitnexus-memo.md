@@ -71,7 +71,29 @@ replacing a working component."**
 
 **Therefore: do not repoint `flux/knowledge/` at gitnexus.** ADR 0009 C2 stands.
 
-**Two honest caveats against this memo's own numbers:**
+### The limit of this result (read before citing it)
+
+**flux is probably too small a repo to judge a symbol graph on, and this memo should not be
+cited as if it settled that.** The `none` control spent only 4-9 exploratory calls, which is a
+**floor effect**: a large saving cannot be demonstrated against a baseline of 4. On a repo where
+cold exploration genuinely costs 30-50 calls, the headroom for a symbol graph is an order of
+magnitude greater and a null result there would mean something. Here it mostly means the
+question was too easy.
+
+Two further confounds, both cutting the same way:
+- **The tickets were too well specified.** They were written immediately after reading the repo
+  and named their targets almost precisely enough to grep ("the cached repo map",
+  "`flux status <ticket>`"). Real tickets are vaguer, and vagueness is exactly the condition
+  under which a symbol graph should pay.
+- **flux has clean, descriptive module naming** (`knowledge/repomap.py`, `runner/loop.py`,
+  `gates/spec.py`), which makes grep unusually effective. The adversarial case - large repo,
+  historical naming - was never tested.
+
+So this memo refuses **the gitnexus-supersedes-repowiki swap on current evidence**. It does not
+establish that symbol maps are useless, and it does not close the knowledge-source question.
+**T5b** (see `status.md`) re-runs this on a 3-7x larger repo, with repeats and a fourth arm.
+
+**Remaining caveats:**
 - n=1 per cell, 3 tickets, one repo, one model. This is enough to refuse a swap; it is not
   enough to conclude a repo map is worthless.
 - `gate-timing` turned out to be a partly degenerate ticket: `GateOutcome.duration_ms` already
@@ -174,7 +196,36 @@ would make packs unreproducible and `flux run --dry-run` a lie.
   against `repowiki map`'s single `uvx` call. No API key is needed (embeddings are off by
   default), so ADR 0010 is not implicated either way.
 
-## 6. What survives
+## 6. Candidate for the re-test: CodeGraph
+
+Raised after this memo's first draft, researched via ctx7 docs, **not spiked**. Recorded here so
+T5b starts from it rather than rediscovering it.
+
+`colbymchenry/codegraph` (the Claude-Code-targeted one; at least five projects share the name)
+fixes every operational objection in §5:
+
+| objection to gitnexus | CodeGraph per docs |
+|---|---|
+| `analyze` not incremental (7.4s for a one-line change) | `codegraph sync` — changed files only |
+| `detect-changes` has no `--json`, emits prose | `query` / `impact` take `--json` with filePath, startLine |
+| machine-global registry, `-r <alias>`, identity collisions | `-p, --path <path>` per invocation |
+| MCP build drifts from the index format, fails silently | CLI-first; MCP is an explicit `serve --mcp` |
+
+Also local-first with no API keys (clears ADR 0010), a Rust kernel, 20+ languages, and
+`install --print-config` prints rather than writing files — against gitnexus rewriting
+`CLAUDE.md` by default.
+
+**None of that addresses §1's finding**, which is about whether a symbol-context section reduces
+exploration at all, not about ergonomics. CodeGraph's headline — "94% fewer tool calls, 77%
+faster exploration" — is a vendor number about precisely the metric measured as null here.
+Adopting on it would make this the third tool in a row taken on a claim: T4b adopted
+`repowiki map` on a research claim about Aider's *symbol-level* maps and shipped the ranking
+half; T4c raised gitnexus on a hands-on impression that did not survive measurement.
+
+**Standing rule from this memo: a knowledge-source candidate is measured through the A/B harness
+before adoption, never adopted on a README.**
+
+## 7. What survives
 
 `src/flux/knowledge/` was built tool-agnostic — cache, git-HEAD staleness, slicing — and none of
 that is touched by this decision. The seam did its job in the way that is easy to miss: it made

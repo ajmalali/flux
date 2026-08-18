@@ -62,10 +62,20 @@ class Stage(Protocol):
     name: str
     def hydrate(self, t: TicketContext) -> PromptPack: ...      # disk → prompt (pure code)
     def config(self, t: TicketContext) -> ExecConfig: ...
-    def required_artifact(self) -> ArtifactSpec: ...            # schema the stage MUST produce
-    def gates(self, t: TicketContext) -> list[Gate]: ...        # deterministic post-checks
-    def commit(self, t, exec_result, gate_results) -> Outcome:  # verify + write checkpoint
+    def required_artifact(self) -> ArtifactSpec | None: ...     # schema the stage MUST produce
+    def gates(self, t: TicketContext) -> Sequence[Gate]: ...    # deterministic post-checks
+    def commit(self, t, exec_result, gate_results) -> Outcome:  # verify; runner checkpoints
         ...
+
+class Gate(Protocol):                           # T4 fills these in as subprocess wrappers
+    name: str
+    def run(self, worktree: Path) -> GateOutcome: ...
+
+@dataclass(frozen=True)
+class Outcome:                                  # what commit() concluded
+    ok: bool; parked: bool; note: str; reason: str
+    open_findings: bool | None                  # review-loop signal, derived from review.json
+    detail: Mapping[str, Any]                   # stage facts persisted in the checkpoint
 ```
 
 ### The runner loop
@@ -93,22 +103,59 @@ def run_ticket(ticket_id: str) -> None:
             return park(t, stage, outcome.note)
 ```
 
+As built (T3):
+
+- **One metrics line per executor call**, failed attempts included — retries are exactly
+  what the store exists to surface, so dropping the failed attempt would understate the
+  ticket's cost. The line for the final attempt carries the gate results.
+- **A failed session (`ok=False`) is treated like a missing artifact**: one retry with an
+  appended nudge, then park (`reason="session-failed"` vs `"artifact-invalid"`).
+- **Two conditions skip the retry and park immediately**, because a second attempt cannot
+  help and would cost more: a usage-window rejection (ADR 0010 — park, resume at reset) and
+  a session that blew `ExecConfig.max_tokens`. This is where the flux-side token budget from
+  T2 is enforced.
+- **A crash is not a park.** An unexpected exception propagates: no checkpoint is written, so
+  the stage reruns on the next invocation. `stage_runs` is persisted *before* the stage runs,
+  so a crash loop still burns budget and terminates.
+- Atomic writes are `.flux/fsio.write_atomic` (tmp file → fsync → `os.replace` → fsync dir).
+
 ### The transition function
 
 Pure function of checkpoints — no hidden memory:
 
 ```python
-def next_stage(t: TicketContext) -> Stage | None:
-    if not done(t, "tests"):     return TestsStage()
-    if not done(t, "implement"): return ImplementStage()
-    if not done(t, "review") or open_findings(t):
-        n = retry_count(t, "review")                   # stored in review.done.json
-        if n >= t.config.max_review_iters:             # default 3
-            return None if human_accepted(t) else Parked("review loop exhausted")
-        return ReviewStage() if not done(t, "review") else FixStage()
-    if not done(t, "pr"):        return PrStage()
-    return None                                        # terminal: bd close
+def next_stage(pipeline, *, completed, state, config) -> Decision:
+    if state.parked: return Decision.park(...)          # a parked ticket stays parked
+    for stage in pipeline.stages:
+        if stage.name == "fix": continue                # fix is only reachable via the loop
+        if stage.name not in completed: return Decision.run(stage)
+        if stage.name == "review" and state.open_findings:
+            if state.human_accepted: continue           # human owns the rest; carry on to pr
+            if state.review_iterations >= config.max_review_iters:
+                return Decision.park("review loop exhausted", reason="review-loop-exhausted")
+            return Decision.run(pipeline.by_name("fix"))
+    return Decision.finished()                          # terminal: bd close
 ```
+
+As built (T3), with the mechanics the sketch left implicit:
+
+- **Pure.** `completed` and `state` are read from disk by the *caller*; the function
+  itself does no IO, so the whole state machine is exercised in plain pytest.
+- **`done(stage)` means "the checkpoint exists **and** `ok=True`."** A stage that ran but
+  did not stand (gate failure, self-park) leaves its checkpoint for triage and reruns once
+  the ticket is unparked — being skipped would be the wrong reading of a failed stage.
+- **Where the loop counter lives.** Not in `review.done.json` (the runner deletes that file
+  to force re-review) but in `.flux/state/<ticket>/run.json`, alongside `open_findings`,
+  `human_accepted` and `stage_runs`. `review_iterations` increments when a review pass
+  *completes*, so `max_review_iters=3` means three review passes and two fixes, then park.
+- **Turning the loop is the runner's job, not a stage's.** After the fix stage commits, the
+  runner clears the `review` and `fix` checkpoints so the reviewer re-verifies the fix.
+  `open_findings` is set from the review stage's `Outcome`, which derives it from
+  `review.json` — the artifact stays the source of truth, the runner stays generic.
+- **`human_accepted`** lets a signed-off ticket continue to `pr` rather than terminating.
+- **A stage-run backstop** (`max_stage_runs`, default 40, persisted before each stage runs)
+  catches a stage that completes without ever writing a checkpoint. The transition
+  function is already bounded; this catches the bug that would make it not be.
 
 Properties this buys:
 - **Idempotent**: a completed stage is skipped on rerun (checkpoint exists).
@@ -203,10 +250,10 @@ bodies directly.
 
 ## 5. Build sequence for the runner itself (first ~3 sessions of work)
 
-1. `Executor` protocol + `ClaudeAgentSDKExecutor` + `ExecConfig` + usage capture → prove one
-   `run()` round-trip with explicit model/effort and a metrics line written.
-2. Checkpoint store + transition function + `run_ticket()` loop with a single fake stage
-   (executor stubbed) → prove idempotency and crash-resume with plain pytest, no LLM.
+1. ✅ (T2) `Executor` protocol + `ClaudeAgentSDKExecutor` + `ExecConfig` + usage capture → prove
+   one `run()` round-trip with explicit model/effort and a metrics line written.
+2. ✅ (T3) Checkpoint store + transition function + `run_ticket()` loop with fake stages
+   (executor stubbed) → idempotency and crash-resume proven with plain pytest, no LLM.
 3. Gates as subprocess wrappers + the tests/implement stages with their hooks → first real
    ticket end-to-end (plan.md M0/M1 exit benchmarks).
 

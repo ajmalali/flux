@@ -7,12 +7,22 @@ from pathlib import Path
 
 import pytest
 
-from flux.cli import EXIT_NOT_IMPLEMENTED, EXIT_OK, EXIT_PARKED, build_parser, main
+from flux.cli import (
+    EXIT_ERROR,
+    EXIT_NOT_IMPLEMENTED,
+    EXIT_OK,
+    EXIT_PARKED,
+    build_parser,
+    main,
+)
 from flux.errors import BillingPolicyError
 from flux.executor import AuthStatus
 from flux.metrics import MetricRecord, MetricsStore
+from flux.runner.checkpoint import Checkpoint, CheckpointStore, ParkRecord, RunState
+from flux.runner.context import TicketContext
 
-PLANNED = ["init", "index", "research", "plan", "tickets", "run", "status"]
+PLANNED = ["init", "index", "research", "plan", "tickets", "run"]
+IMPLEMENTED = ["metrics", "doctor", "status"]
 
 
 def test_no_command_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
@@ -20,11 +30,12 @@ def test_no_command_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert "usage: flux" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("command", [*PLANNED, "metrics", "doctor"])
+@pytest.mark.parametrize("command", [*PLANNED, *IMPLEMENTED])
 def test_every_planned_subcommand_is_registered(command: str) -> None:
     """The surface is fixed now so milestones fill commands in, not reshape the CLI."""
     parser = build_parser()
-    args = parser.parse_args([command])
+    argv = [command, "flux-1"] if command == "status" else [command]
+    args = parser.parse_args(argv)
     assert args.command == command
 
 
@@ -144,6 +155,47 @@ def test_a_park_signal_exits_with_the_park_code(
     assert main(["doctor"]) == EXIT_PARKED
     err = capsys.readouterr().err
     assert "parked (not-logged-in)" in err
+
+
+def test_status_on_a_ticket_that_has_not_started(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert main(["status", "flux-1", "--root", str(tmp_path)]) == EXIT_OK
+    out = capsys.readouterr().out
+    assert "(none run yet)" in out
+    assert "active" in out
+
+
+def test_status_lists_checkpoints_and_the_park_note(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ticket = TicketContext(ticket_id="flux-1", root=tmp_path)
+    store = CheckpointStore(ticket.state_dir)
+    store.write(Checkpoint(stage="implement", note="landed"))
+    store.write(Checkpoint(stage="review", ok=False, attempts=2))
+    store.save_state(
+        RunState(
+            ticket="flux-1",
+            review_iterations=3,
+            open_findings=True,
+            parked=ParkRecord(stage="review", reason="review-loop-exhausted", note="3 passes"),
+        )
+    )
+
+    assert main(["status", "flux-1", "--root", str(tmp_path)]) == EXIT_OK
+    out = capsys.readouterr().out
+    assert "implement" in out and "done" in out
+    assert "review" in out and "failed" in out
+    assert "3 pass(es), findings open" in out
+    assert "PARKED at review (review-loop-exhausted)" in out
+
+
+def test_status_rejects_a_ticket_id_that_is_not_a_safe_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The id becomes a directory name, so ``flux status ../../etc`` must not read it."""
+    assert main(["status", "../escape", "--root", str(tmp_path)]) == EXIT_ERROR
+    assert "safe path component" in capsys.readouterr().err
 
 
 def test_metrics_output_is_derived_from_the_stored_json(tmp_path: Path) -> None:

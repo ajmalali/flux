@@ -1,6 +1,6 @@
 # flux-harness — status & next task
 
-Updated: 2026-08-18 (T2 done: package skeleton, executor seam, metrics store)
+Updated: 2026-08-18 (T3 done: runner spine — checkpoints, transition fn, run_ticket)
 
 ## Current state
 
@@ -15,8 +15,17 @@ Updated: 2026-08-18 (T2 done: package skeleton, executor seam, metrics store)
   billing preflight; `src/flux/metrics/` holds the JSONL store + `flux metrics` report.
   `flux` CLI has stubs for init/index/research/plan/tickets/run/status, plus working
   `metrics` and a new `doctor`. 126 tests; live round-trip verified on subscription auth.
+- **T3 done.** `src/flux/runner/` holds the whole spine: `context.py` (`TicketContext`,
+  `RunnerConfig`), `artifact.py` (`ArtifactSpec` + runner-side validation + retry nudge),
+  `stage.py` (`Stage`/`Gate` protocols, `Outcome`), `checkpoint.py` (atomic checkpoint +
+  `run.json` store), `transition.py` (`Pipeline`, pure `next_stage`), `loop.py` (`run_ticket`).
+  Crash-safe writes live in `src/flux/fsio.py`. 203 tests, all four T3 proofs covered.
 - **Executor is usable now.** `ClaudeAgentSDKExecutor().run(pack, cfg)` works end to end and
-  writes correct metrics lines. T3 can stub it via `StubExecutor` without touching the SDK.
+  writes correct metrics lines. The runner drives any `Executor`; tests use fakes in
+  `tests/fakes.py` (`FakeStage`/`FakeGate`/`FakeExecutor`) and never touch the SDK.
+- **What T4 plugs into.** Implement `Stage` (five of them) and `Gate` (subprocess wrappers),
+  hand `run_ticket(ticket, Pipeline(stages=...), executor)` the result. Nothing in the loop
+  needs to change to add a stage.
 - Open decisions: repo-map tool choice (repowiki map vs RepoMapper, part of T4/M0).
 
 ## Task queue — do the first unchecked item
@@ -39,7 +48,7 @@ Updated: 2026-08-18 (T2 done: package skeleton, executor seam, metrics store)
   model/effort completes and writes a correct metrics line (billing mode recorded); a test
   proves API keys are stripped from the child env; unit tests cover config validation and
   metrics aggregation with the executor stubbed; gates green.
-- [ ] **T3 — M0 step 2: runner spine, no LLM.**
+- [x] **T3 — M0 step 2: runner spine, no LLM.**
   `src/flux/runner/`: checkpoint store (atomic tmp+rename under `.flux/state/<ticket>/`),
   transition function, `run_ticket()` loop with artifact validation + one-retry-then-park, per
   design.md §1. Executor stubbed throughout.
@@ -65,6 +74,42 @@ Updated: 2026-08-18 (T2 done: package skeleton, executor seam, metrics store)
    surprises, deviations from design.md, or decisions made (new ADR if load-bearing).
 
 ## Log
+
+- 2026-08-18 — **T3 done.** Runner spine landed; gates green; 203 tests (was 126). All four
+  acceptance proofs are in `tests/test_run_ticket.py`. Decisions and refinements worth
+  carrying (design.md §1 amended in place, no ADR needed):
+  - **`done(stage)` = checkpoint exists *and* `ok=True`.** design.md said "checkpoint
+    exists". A stage that ran but did not stand (gate failure, self-park) would then be
+    skipped on resume, which is the wrong reading — so a not-ok checkpoint is kept for
+    triage and the stage reruns once unparked.
+  - **The review-loop counter moved out of `review.done.json`** into
+    `.flux/state/<ticket>/run.json`, because turning the loop means *deleting* the review
+    checkpoint. `run.json` also holds `open_findings`, `human_accepted`, `stage_runs`, and
+    the park record. `review_iterations` increments when a review pass completes, so
+    `max_review_iters=3` = three reviews and two fixes, then park.
+  - **`human_accepted` continues to `pr`** rather than terminating the ticket (design.md's
+    sketch returned `None`). Signing off on findings should not skip the PR stage.
+  - **Two hard stops bypass the retry and park immediately:** a usage-window rejection
+    (ADR 0010) and a session that blew `ExecConfig.max_tokens` — this is where T2's
+    flux-side token budget is actually enforced. Retrying either costs more and fixes
+    nothing.
+  - **A failed session (`ok=False`) takes the same path as a missing artifact:** one retry
+    with a nudge, then park; the park reason distinguishes them (`session-failed` vs
+    `artifact-invalid`).
+  - **One metrics line per executor call, failed attempts included.** Dropping the failed
+    attempt would understate what a ticket cost, which is the one thing the store exists for.
+  - **A crash is not a park.** Unexpected exceptions propagate; no checkpoint is written so
+    the stage reruns. `stage_runs` is persisted *before* the stage runs, so a crash loop
+    still terminates. `max_stage_runs` (default 40) is the backstop for a stage that
+    completes without ever checkpointing.
+  - `flux status <ticket>` now works — a pure read of the checkpoint files, as design.md
+    said it would be. It does not print the *next* stage: that needs the concrete pipeline,
+    which arrives with T4. `flux run` stays stubbed until there are real stages to run.
+  - New shared module `src/flux/fsio.py` (tmp → fsync → `os.replace` → fsync dir). T4's
+    stages should write their artifacts through it too.
+  - Tests import `tests/fakes.py` as a top-level module (pytest's rootdir insertion);
+    `[tool.pyright] extraPaths` was **not** needed — pyright resolves it from the file's
+    own directory.
 
 - 2026-08-18 — **Renamed gus → flux** (Fast Loop Unified eXecution). Package `src/flux/`, CLI
   `flux`, artifact namespace `.flux/`, env var `FLUX_LIVE_TESTS`, `FluxError`; docs and ADRs

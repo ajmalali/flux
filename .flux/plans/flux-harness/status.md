@@ -1,6 +1,6 @@
 # flux-harness — status & next task
 
-Updated: 2026-08-18 (T4 + T4b done — **M0 complete**: gates, `flux init`, implement stage, repo map)
+Updated: 2026-08-18 (T4 + T4b done — **M0 complete**. T4c queued: gitnexus may supersede the repo map)
 
 ## Current state
 
@@ -39,7 +39,11 @@ Updated: 2026-08-18 (T4 + T4b done — **M0 complete**: gates, `flux init`, impl
   `.flux/cache/repo-map.json`, records the git HEAD it was generated at, and slices it into the
   implement pack; `flux index` regenerates it in **0.2s** with no LLM call, and
   `--install-hook` writes an opt-in `post-merge` hook. 397 tests.
-- No open decisions. Next milestone is M1 (T5).
+- **One open decision: T4c.** A hands-on look at **gitnexus** (already installed here as an MCP
+  server) says it is a materially better knowledge source than `repowiki map` and probably
+  supersedes ADR 0009's C2. Findings are in the log below so T4c does not have to re-spike it.
+  Next milestone is M1 (T5); T4c should be settled first only because it changes what the
+  implement and review stages hydrate.
 
 ## Task queue — do the first unchecked item
 
@@ -75,6 +79,31 @@ Updated: 2026-08-18 (T4 + T4b done — **M0 complete**: gates, `flux init`, impl
   in a scratch target repo; `flux metrics` printed per-stage cost/time.
 - [x] **T4b — M0 step 3b: repo map.** `repowiki map` adopted; `flux index` regenerates in 0.2s,
   the slice reaches the implement pack, staleness is labelled. **M0 exit benchmark fully met.**
+- [ ] **T4c — reconsider the knowledge source: gitnexus vs `repowiki map`.**
+  T4b's bake-off compared the two tools ADR 0009 happened to name, both of which emit a ranked
+  *file list*. The actual requirement is "reduce cold exploration", and gitnexus answers it far
+  better (evidence in the 2026-08-18 T4c log entry — it is already indexed on this repo, so
+  start by reading that entry, not by re-spiking).
+  Decide, in this order:
+  1. **Does the symbol map beat the file list in the pack?** Measure, do not argue: run the same
+     ticket with each pack variant and compare `exploratory_calls` in `metrics.jsonl`. That KPI
+     already exists and is what M4's exit benchmark is written against.
+  2. **Adopt `gitnexus check --cycles --json` as a gate?** Near-free — it is deterministic and
+     exit-status-shaped, so it is a `[[gates]]` entry and no new flux code.
+  3. **Does the review stage hydrate from `detect-changes` instead of a raw `git diff`?** This is
+     the one that must be settled *before* T5 designs the review stage.
+  4. **CLI at hydration time, or MCP attached to the stage session?** Recommendation: CLI. An MCP
+     query tool is still exploration — better aimed, but non-deterministic and invisible to
+     `pack_chars`, which breaks design.md §2 Rule 3 (a fresh session receives exactly the pack,
+     which is what makes the handoff testable without a model). Keep the MCP surface as a
+     separate A/B, not the default.
+  **Scope guard:** this is *swapping one bought repo map for another* plus a gate — not opening
+  M2's knowledge layer. If it starts turning into wiki work, stop; that is M2 (ADR 0009 C1).
+  **Done when:** a written memo (amending or superseding ADR 0009's C2) records the measurement
+  from step 1, and either the `flux/knowledge/` adapter is repointed at gitnexus or the memo says
+  why not. Never a silent binary swap — `[repo_map] command` assumes "ranked file list" and would
+  need a second seam method for "symbol context for these files".
+
 - [ ] **T5 — M1: full five-stage pipeline + hardening + A/B baseline** (expand into subtasks
   when reached; specs in plan.md §5 M1 and the design.md stage I/O table). Before opening it,
   answer the standing phase-gate question in writing (plan.md §5): *did the harness beat vanilla
@@ -92,6 +121,41 @@ Updated: 2026-08-18 (T4 + T4b done — **M0 complete**: gates, `flux init`, impl
    surprises, deviations from design.md, or decisions made (new ADR if load-bearing).
 
 ## Log
+
+- 2026-08-18 — **T4c raised: gitnexus looks like the right knowledge source, and T4b asked the
+  wrong question.** Prompted by "does `repowiki map` actually save the agent tokens, or is it
+  just running documentation?" — a fair challenge. The honest answer for the map as shipped is
+  *neither*: it is a centrality ranking. It costs 58 tokens in the tinylib pack, and **no
+  measurement exists that it saves any**; the successful live run's 3 exploratory calls predate
+  it. On a 3-file repo it ranked `pyproject.toml` and `__init__.py` into the pack — noise. The
+  research claim it was adopted on (`per-ticket-pipeline.md`, "a repo map beats letting the agent
+  explore") is about Aider's **symbol-level** map; T4b carried it over to a tool that ships only
+  the ranking half.
+  **What was checked hands-on** (gitnexus 1.6.9, indexed on this repo — do not re-spike):
+  - `analyze .` → **6.4s**, 1,689 nodes / 3,323 edges / 63 clusters / 119 flows, 46MB index.
+    It adds `.gitnexus/` to `.git/info/exclude` itself, so it never dirties the tree.
+  - **Python is exact**, not heuristic: `context run_ticket -r flux` returns
+    `"epistemic": "exact"` with the true edges — `cmd_run` in, `_run_stage`/`next_stage`/
+    `_apply_outcome`/`_park` out, all with file:line. This is the symbol map repowiki lacks.
+  - **No API key** — `doctor` reports embeddings backend `local` (ONNX), and embeddings are off
+    unless `--embeddings` is passed. Clears ADR 0010. Not strictly "zero LLM" if embeddings are
+    enabled, but zero *billed* calls either way.
+  - `check --cycles --json` → `{"status":"clean","cycleCount":0}`. A gate, as-is.
+  - `detect-changes --scope compare --base-ref HEAD~1` on the T4b commit → 128 changed symbols,
+    46 affected execution flows, risk level, and *which flow breaks at which step*
+    ("Hydrate → Elapsed (6 steps) — changed: `_repo_map_section`, `hydrate`, `head_sha`").
+    Strictly more informative than the raw `git diff` design.md currently hands the reviewer.
+  - `impact <symbol> --direction upstream` → blast radius with risk + depth buckets. A real input
+    to M4 ticket sizing (plan.md §6: "a ticket routinely needs >3 review iterations → tickets are
+    too big").
+  **Footguns found:** `analyze` **rewrites `CLAUDE.md`/`AGENTS.md` by default** — flux must always
+  pass `--skip-agents-md`, since CLAUDE.md is the session bootstrap and load-bearing. FTS
+  extension was unavailable in this environment ("continuing without FTS features"), so keyword
+  search is degraded locally. Dependency surface is heavier than repowiki's `uvx` call: Node,
+  a native `lbugjs.node`, ONNX runtime.
+  **What survives regardless:** `src/flux/knowledge/` was built tool-agnostic — cache, git-HEAD
+  staleness, slicing — and none of that changes if the ranker is replaced. That was the point of
+  the seam, and this is the first evidence it was worth having.
 
 - 2026-08-18 — **T4b done. M0 complete.** Repo-map bake-off run for real against flux (85 files)
   and the scratch target; memo at `repo-map-memo.md`, ADR 0009 annotated with the outcome.

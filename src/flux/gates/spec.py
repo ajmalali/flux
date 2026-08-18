@@ -120,6 +120,11 @@ def build_gates(specs: Sequence[GateSpec]) -> tuple[Gate, ...]:
     return tuple(spec.build() for spec in specs)
 
 
+def bash_permission(command: Sequence[str]) -> str:
+    """The ``allowed_tools`` entry that pre-approves exactly ``command``."""
+    return f"Bash({shlex.join(command)}:*)"
+
+
 def bash_permissions(specs: Sequence[GateSpec]) -> tuple[str, ...]:
     """Tool permissions that let a session run its own gates and nothing else.
 
@@ -129,7 +134,7 @@ def bash_permissions(specs: Sequence[GateSpec]) -> tuple[str, ...]:
     exactly the configured commands adds no authority the harness was not going to
     exercise anyway: flux runs these same commands itself moments later.
     """
-    return tuple(f"Bash({shlex.join(spec.command)}:*)" for spec in specs)
+    return tuple(bash_permission(spec.command) for spec in specs)
 
 
 def _argv(name: str, value: object) -> tuple[str, ...]:

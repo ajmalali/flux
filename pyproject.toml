@@ -60,6 +60,14 @@ reportMissingTypeStubs = false
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --strict-markers"
+# This suite is all functions. Turning class collection off keeps flux's own
+# `Test*`-named production types (TestReport, TestsStage, TestsConfig) from being
+# mistaken for test classes wherever a test module imports one.
+python_classes = []
+# Only `test_`-prefixed functions, not the default `test*`: flux has production
+# helpers named `tests_command`, `tests_stage_guard` and the like, and a test module
+# that imports one should not thereby collect it.
+python_functions = ["test_*"]
 markers = [
     "live: hits the real Claude subscription; skipped unless FLUX_LIVE_TESTS=1",
 ]

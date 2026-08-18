@@ -1,6 +1,6 @@
 # flux-harness — status & next task
 
-Updated: 2026-08-18 (T5 opened and expanded; **T5.1 done** — the A/B baseline exists and its first live sample went *against* the harness. Next: T5.2, the tests stage)
+Updated: 2026-08-18 (**T5.2 done** — the tests stage, the red step, the opaque runner, the PreToolUse guards and held-out tests all live and verified on a real run. Next: T5.3, review + fix stages)
 
 ## Current state
 
@@ -30,8 +30,10 @@ Updated: 2026-08-18 (T5 opened and expanded; **T5.1 done** — the A/B baseline 
 - **Executor is usable now.** `ClaudeAgentSDKExecutor().run(pack, cfg)` works end to end and
   writes correct metrics lines. The runner drives any `Executor`; tests use fakes in
   `tests/fakes.py` (`FakeStage`/`FakeGate`/`FakeExecutor`) and never touch the SDK.
-- **What T5 plugs into.** Four more `Stage` implementations against the same protocol, added to
-  `flux.stages.build_pipeline`. Nothing in the runner or the gate layer needs to change.
+- **What the rest of T5 plugs into.** Three more `Stage` implementations against the same
+  protocol, added to `flux.stages.build_pipeline`. Two stages are in (`tests`, `implement`) and
+  nothing in the runner or the gate layer had to change to accept the second one, which is the
+  spine doing its job.
 - **T5.1 done — the harness can now be compared against not having it.** `src/flux/ab.py`
   (`flux run <ticket> --vanilla`: the ticket text, no pack, no repo map, no artifact contract,
   then the same gates) and `src/flux/metrics/ab.py` (paired per-ticket table, the `vanilla_every`
@@ -41,6 +43,31 @@ Updated: 2026-08-18 (T5 opened and expanded; **T5.1 done** — the A/B baseline 
   (13.8k vs 9.8k billable) — cheaper on turns (9 vs 14) and wall time (32s vs 38s), dearer on
   tokens. n=1 on a toy ticket proves nothing except that the measurement works, which was the
   deliverable. Two more samples in that direction and the criterion fires.
+- **T5.2 done — the pipeline is two stages, and the hardening is structural rather than asked
+  for.** `src/flux/testrun.py` (the opaque runner, now also the `pytest` gate summariser, so the
+  two cannot drift), `src/flux/executor/guard.py` + `src/flux/stages/guards.py` (the `PreToolUse`
+  path policy as flux data, compiled to SDK hooks by `sdk.py` alone), `src/flux/stages/tests.py`
+  (`TestsStage`, `tests.json`, the runner-verified red step), a `[tests]` block in `flux.toml`,
+  and held-out tests as a per-ticket gate at implement time. 501 tests.
+  **Live run verified** on a scratch repo: brief → tests stage (2 tests, verified red,
+  `first assertion: ModuleNotFoundError`, clean collection) → implement stage → `test` and
+  `held-out` gates both green → two tagged commits, 21.9k uncached-in / 4.3k out over 57s.
+- **The three things a future session should not re-derive about T5.2.**
+  1. *A red step is not "the suite is red".* It is: no collection errors, nothing passing, at
+     least one failure. The awkward case is the normal one — the module under test does not
+     exist, so a top-level import is a collection error rather than a failing test. The prompt
+     therefore teaches the technique (import inside the test function), and the live session
+     used it. Hardening a model cannot comply with is a park with extra steps.
+  2. *The guard is the cheap block; the digest is the teeth.* A `PreToolUse` guard reads path
+     arguments, so it cannot see a shell redirect or filter a repo-wide `Grep`. `tests.json`
+     stores a SHA-256 per test file and the implement stage re-hashes before it may stand
+     (`reason="tests-modified"`), which catches every route rather than the predicted ones.
+  3. *The tests stage must not run the test gate.* It is judged on red; a gate demanding green
+     would fail every tests stage that worked. Lint and typecheck still run on the new files.
+- **A latent bug the tests stage surfaced, now fixed:** the gate summariser only recognised
+  pytest's totals line in its `=== decorated ===` form, but `-q` — which is in flux's own default
+  gate command — prints it bare. Every `pytest -q` gate detail flux has ever recorded is missing
+  its counts. The parser now reads the line from the bottom up and strips decoration.
 - **A real bug fell out of the first live run:** with `--worktree` pointing somewhere other than
   `--root`, the implement session was told to write `impl-notes.md` to a path outside its reach,
   so it wrote the same relative path *inside the worktree* and the ticket parked after two paid
@@ -155,12 +182,16 @@ Updated: 2026-08-18 (T5 opened and expanded; **T5.1 done** — the A/B baseline 
     **Done:** all four. One live vanilla sample and one live harness sample on the same ticket,
     sharing one metrics store via `--worktree`; the paired table, cadence and criterion print;
     35 new unit tests, none of which touch a model.
-  - [ ] **T5.2 — tests stage + the hardening that only it can carry.** `TestsStage` per the
-    stage I/O table (`tests.json`: paths + cases↔acceptance-criteria map), the **runner-verified
-    red step** (Rule 2 — flux runs the new tests itself and requires red-for-the-right-reason,
-    not a green suite and not a collection error), the **opaque test runner** (counts, failing
-    ids, first assertion line — never test source), the `PreToolUse` **test-edit block** on the
-    implement/fix stages, and held-out tests run at implement time.
+  - [x] **T5.2 — tests stage + the hardening that only it can carry. Done 2026-08-18.**
+    `TestsStage` per the stage I/O table (`tests.json`: paths + cases↔acceptance-criteria map),
+    the **runner-verified red step** (Rule 2 — flux runs the new tests itself and requires
+    red-for-the-right-reason, not a green suite and not a collection error), the **opaque test
+    runner** (counts, failing ids, first assertion line — never test source), the `PreToolUse`
+    **test-edit block** on the implement stage, and held-out tests run at implement time.
+    **Done:** all five, plus the digest backstop that makes the block hold against routes a hook
+    cannot see. Details in design.md §2 "as built (T5.2)"; the mechanics worth remembering are in
+    Current state above. **Carried to T5.3:** the fix stage reuses `source_stage_guard` unchanged
+    — it is built to be shared, and re-deriving a second policy there would be the bug.
   - [ ] **T5.3 — review + fix stages: close the loop with real stages.** `ReviewStage`
     (different model, `plan` mode, hydrates from the `git diff` of the stage commits per T4c,
     produces `review.json`) and `FixStage` (unresolved-finding slices + the diff hunks they
@@ -267,6 +298,43 @@ Updated: 2026-08-18 (T5 opened and expanded; **T5.1 done** — the A/B baseline 
    surprises, deviations from design.md, or decisions made (new ADR if load-bearing).
 
 ## Log
+
+- 2026-08-18 — **T5.2 done: the tests stage, and the first hardening that is structural rather
+  than requested.** Five deliverables, all live-verified on a scratch repo in one run.
+  What is worth carrying forward, beyond the code:
+  - **The red-step rule had to be made satisfiable before it could be enforced.** "Fail for the
+    right reason" excludes collection errors, but the ordinary TDD case — the module does not
+    exist yet — *is* a collection error if the test imports at module scope. So the tests stage's
+    system prompt names the technique (import inside the test function). The live session
+    followed it and produced a clean collection with two assertion-time failures. The general
+    lesson is the T5.1 lesson in another costume: a rule the session cannot comply with does not
+    produce compliance, it produces a park.
+  - **A `PreToolUse` guard cannot be the whole of a test-edit block, and pretending otherwise
+    would have been the defect.** It reads path arguments, so `sed -i` and repo-wide `Grep` go
+    straight past it. `tests.json` therefore carries a SHA-256 per test file and the implement
+    stage re-hashes them before it is allowed to stand. Guard for the cheap early block with a
+    reason the model can act on; digest for the guarantee. Evidence beats prediction — the same
+    argument that put the gates in ADR 0005 in the first place.
+  - **The guard model is flux data, not SDK types.** `PathGuard` + a pure `decide()` in
+    `flux/executor/guard.py`; `sdk.py` is the only thing that knows what a `HookMatcher` is. That
+    keeps ADR 0007's seam intact and makes the whole of the hardening testable without a session
+    — which is why `tests/test_guards.py` can assert the policy directly.
+  - **`ArtifactSpec` grew a `check` callable.** "The key is present" is a weak reading of "valid"
+    for an artifact that is a map: `cases: []` satisfies `required_keys` and tells the next stage
+    nothing. Checking structure at validation time makes it cost one nudged retry instead of a
+    park. `review.json` at T5.3 should use the same field rather than validating inside
+    `commit()`.
+  - **A latent parser bug, found by using the parser for a second purpose.** The pytest
+    summariser only matched the `=== decorated ===` totals line; `-q`, which is in flux's own
+    default gate command, prints it bare. Every `pytest -q` gate detail recorded to date is
+    missing its counts. Fixed by reading bottom-up and stripping decoration — and the gate
+    summariser and the red step now share one parser, so the next divergence is impossible
+    rather than merely unlikely.
+  - **Two housekeeping decisions.** `test_m0_end_to_end.py` now pins its own implement-only
+    `Pipeline` instead of calling `build_pipeline`: it is the record of the M0 benchmark, and M0's
+    pipeline was one stage. And pytest's `python_classes`/`python_functions` are narrowed in
+    `pyproject.toml`, because flux now has production types called `TestReport`/`TestsStage` and
+    helpers called `tests_*` that a test module importing them would otherwise collect.
 
 - 2026-08-18 — **T5 opened and expanded into T5.1–T5.6; T5.1 done.** The phase-gate question was
   answered first, in the queue entry above, and the answer was **no data**: `variant` has been a

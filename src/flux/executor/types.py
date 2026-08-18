@@ -13,6 +13,7 @@ from types import MappingProxyType
 from typing import Any, Literal, get_args
 
 from flux.errors import ConfigError
+from flux.executor.guard import PathGuard
 
 EffortLevel = Literal["low", "medium", "high", "xhigh", "max"]
 PermissionMode = Literal["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk"]
@@ -135,13 +136,17 @@ class ExecConfig:
     path inside the worktree, where the runner does not look. Observed live, 2026-08-18.
     """
 
-    hooks: Mapping[str, Sequence[Any]] = NO_HOOKS
-    """Opaque SDK hook config, forwarded verbatim by ``sdk.py``.
+    guards: tuple[PathGuard, ...] = ()
+    """``PreToolUse`` path policy for this session (ADR 0005).
 
-    Left untyped on purpose: the typed hook model (PreToolUse test-edit blocks and
-    friends) lands with the stages that need it, and typing it here would drag SDK
-    types across the seam that ADR 0007 exists to keep clean.
+    Declared as flux data and translated into SDK hooks by ``sdk.py``, so a stage can
+    say "the tests are out of reach" without importing anything from the SDK — which
+    is what ADR 0007's seam is for. See :mod:`flux.executor.guard`.
     """
+
+    hooks: Mapping[str, Sequence[Any]] = NO_HOOKS
+    """Escape hatch for hook config flux has no typed model for. Forwarded verbatim by
+    ``sdk.py`` and merged with whatever :attr:`guards` compiles to."""
 
     def __post_init__(self) -> None:
         if not self.model.strip():
@@ -181,6 +186,10 @@ class ExecConfig:
         for extra in self.add_dirs:
             if not extra.is_absolute():
                 raise ConfigError(f"ExecConfig.add_dirs entries must be absolute, got {extra}")
+        names = [guard.name for guard in self.guards]
+        repeated = sorted({n for n in names if names.count(n) > 1})
+        if repeated:
+            raise ConfigError(f"ExecConfig.guards names must be unique; repeated: {repeated}")
 
 
 @dataclass(frozen=True, slots=True)

@@ -236,14 +236,16 @@ def test_run_on_a_ticket_with_no_brief_explains_rather_than_crashing(
 def test_status_names_the_next_stage(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Status and run read the same transition function, so they cannot disagree."""
     assert main(["status", "flux-1", "--root", str(tmp_path)]) == EXIT_OK
-    assert "next:    implement" in capsys.readouterr().out
+    assert "next:    tests" in capsys.readouterr().out
 
 
 def test_status_says_so_once_the_pipeline_is_complete(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     ticket = TicketContext(ticket_id="flux-1", root=tmp_path)
-    CheckpointStore(ticket.state_dir).write(Checkpoint(stage="implement"))
+    store = CheckpointStore(ticket.state_dir)
+    store.write(Checkpoint(stage="tests"))
+    store.write(Checkpoint(stage="implement"))
 
     assert main(["status", "flux-1", "--root", str(tmp_path)]) == EXIT_OK
     assert "pipeline is complete" in capsys.readouterr().out
@@ -254,6 +256,7 @@ def test_unpark_clears_the_park_so_the_ticket_runs_again(
 ) -> None:
     ticket = TicketContext(ticket_id="flux-1", root=tmp_path)
     store = CheckpointStore(ticket.state_dir)
+    store.write(Checkpoint(stage="tests", ok=True))
     store.write(Checkpoint(stage="implement", ok=False, note="gates failed"))
     store.save_state(
         RunState(

@@ -17,11 +17,12 @@ import shlex
 import tomllib
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Any, cast
 
 from flux.errors import ConfigError
+from flux.executor.guard import PathGuard
 from flux.executor.types import (
     EFFORT_LEVELS,
     NO_HOOKS,
@@ -33,6 +34,7 @@ from flux.executor.types import (
 from flux.gates.spec import GateSpec, build_gates
 from flux.jsonio import JsonMapping, as_json_list, as_json_mapping
 from flux.knowledge.repomap import RepoMapConfig
+from flux.proc import DEFAULT_TIMEOUT_S
 from flux.runner.context import FLUX_DIRNAME, RunnerConfig
 from flux.runner.stage import Gate
 
@@ -83,6 +85,7 @@ class StageProfile:
         allowed_tools: Sequence[str] = (),
         disallowed_tools: Sequence[str] = (),
         add_dirs: Sequence[Path] = (),
+        guards: Sequence[PathGuard] = (),
         hooks: Mapping[str, Sequence[Any]] | None = None,
     ) -> ExecConfig:
         """Turn the profile into the executor's per-call config."""
@@ -96,6 +99,7 @@ class StageProfile:
             max_tokens=self.max_tokens,
             cwd=cwd,
             add_dirs=tuple(add_dirs),
+            guards=tuple(guards),
             hooks=MappingProxyType(dict(hooks)) if hooks else NO_HOOKS,
         )
 
@@ -152,6 +156,58 @@ class AbConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class TestsConfig:
+    """Where tests live, how flux runs them, and which tests the implementer never sees.
+
+    The tests stage cannot be judged without a way to run what it wrote, so this is the
+    one configuration block whose absence is not survivable: :attr:`command` falls back
+    to the repo's own test gate, and if there is no test gate either, the stage says so
+    rather than declaring an unverified red step green.
+    """
+
+    dir: str = "tests"
+    """Where new tests go, relative to the worktree. The tests stage may write here and
+    nowhere else; the implement and fix stages may not write here at all."""
+
+    command: tuple[str, ...] = ()
+    """Argv for the suite. Empty means "use the test gate's command", which is the
+    right default: the red step and the gate must be the same measurement, or a stage
+    can be red for the runner and green for the gate."""
+
+    gate: str = ""
+    """Name of the ``[[gates]]`` entry that runs the suite. Empty means "the pytest-kind
+    gate, or one named 'test'". The tests stage skips it — new tests are red by
+    construction, so running the whole suite there would fail the stage for succeeding."""
+
+    held_out_dir: str = ".flux/held-out"
+    """Held-out tests, keyed by ticket underneath, relative to the *root*. Outside the
+    worktree whenever ``--worktree`` is used, and out of reach of the implement guard
+    either way: a test the implementer cannot see is a test it cannot write code around
+    (ADR 0005)."""
+
+    timeout_s: int = DEFAULT_TIMEOUT_S
+
+    def __post_init__(self) -> None:
+        for name, value in (("dir", self.dir), ("held_out_dir", self.held_out_dir)):
+            pure = PurePosixPath(value)
+            if not value or pure.is_absolute() or ".." in pure.parts:
+                raise ConfigError(f"[tests] {name} must be a relative path, got {value!r}")
+        if self.timeout_s <= 0:
+            raise ConfigError(f"[tests] timeout_s must be positive, got {self.timeout_s}")
+
+    def to_toml(self) -> str:
+        return "\n".join(
+            [
+                "[tests]",
+                f'dir = "{self.dir}"',
+                f"command = {list(self.command)!r}".replace("'", '"'),
+                f'gate = "{self.gate}"',
+                f'held_out_dir = "{self.held_out_dir}"',
+            ]
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class FluxConfig:
     """The whole of a target repo's flux configuration."""
 
@@ -166,6 +222,7 @@ class FluxConfig:
 
     ab: AbConfig = field(default_factory=AbConfig)
     repo_map: RepoMapConfig = field(default_factory=RepoMapConfig)
+    tests: TestsConfig = field(default_factory=TestsConfig)
     schema_version: int = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -199,8 +256,31 @@ class FluxConfig:
                 "explicit model and effort"
             ) from None
 
-    def build_gates(self) -> tuple[Gate, ...]:
-        return build_gates(self.gates)
+    def build_gates(self, *, exclude: Sequence[str] = ()) -> tuple[Gate, ...]:
+        """Instantiate the configured suite, optionally dropping gates by name."""
+        return build_gates([spec for spec in self.gates if spec.name not in exclude])
+
+    def test_gate(self) -> GateSpec | None:
+        """The gate that runs the suite, if the repo has one.
+
+        Named explicitly by ``[tests] gate`` when the repo says so; otherwise the
+        ``pytest``-kind gate, otherwise one called ``test``. Resolution is a lookup
+        rather than a guess at the command, so the tests stage and the implement
+        stage's test gate can never end up running different suites.
+        """
+        if self.tests.gate:
+            return next((spec for spec in self.gates if spec.name == self.tests.gate), None)
+        by_kind = next((spec for spec in self.gates if spec.kind == "pytest"), None)
+        if by_kind is not None:
+            return by_kind
+        return next((spec for spec in self.gates if spec.name == "test"), None)
+
+    def tests_command(self) -> tuple[str, ...]:
+        """Argv the red step and the held-out run use. Empty when the repo has neither."""
+        if self.tests.command:
+            return self.tests.command
+        gate = self.test_gate()
+        return gate.command if gate is not None else ()
 
     @classmethod
     def load(cls, root: Path) -> FluxConfig:
@@ -244,6 +324,7 @@ class FluxConfig:
             stage_commits=_bool(runner_table, "stage_commits", True),
             ab=_ab(_table(payload, "ab")),
             repo_map=_repo_map(_table(payload, "repo_map")),
+            tests=_tests(_table(payload, "tests")),
             schema_version=version,
         )
 
@@ -309,6 +390,11 @@ class FluxConfig:
                 f"command = {list(self.repo_map.command)!r}".replace("'", '"'),
                 f"top = {self.repo_map.top}",
                 f"pack_entries = {self.repo_map.pack_entries}",
+                "",
+                "# The tests stage writes here and nowhere else; the implement stage may",
+                "# not write here at all (ADR 0005). An empty 'command' means 'whatever the",
+                "# test gate runs', so the red step and the gate cannot measure differently.",
+                self.tests.to_toml(),
             ]
         )
         return "\n".join(blocks).rstrip() + "\n"
@@ -387,20 +473,37 @@ def _stage_profiles(table: JsonMapping) -> Mapping[str, StageProfile]:
     return MappingProxyType(profiles)
 
 
+def _argv_option(table: JsonMapping, key: str, label: str) -> tuple[str, ...]:
+    """A command spelled either as a shell-quoted string or an argv list. Never shelled out."""
+    raw = table.get(key)
+    if raw is None:
+        return ()
+    if isinstance(raw, str):
+        return tuple(shlex.split(raw))
+    items = as_json_list(raw)
+    if items is None:
+        raise ConfigError(f"{label} must be a string or a list of strings")
+    return tuple(str(part) for part in items)
+
+
 def _repo_map(table: JsonMapping) -> RepoMapConfig:
     default = RepoMapConfig()
-    raw = table.get("command")
-    command = default.command
-    if isinstance(raw, str):
-        command = tuple(shlex.split(raw))
-    elif (items := as_json_list(raw)) is not None:
-        command = tuple(str(part) for part in items)
-    elif raw is not None:
-        raise ConfigError("[repo_map] command must be a string or a list of strings")
+    command = _argv_option(table, "command", "[repo_map] command") or default.command
     return RepoMapConfig(
         command=command,
         top=_int(table, "top", default.top),
         pack_entries=_int(table, "pack_entries", default.pack_entries),
+        timeout_s=_int(table, "timeout_s", default.timeout_s),
+    )
+
+
+def _tests(table: JsonMapping) -> TestsConfig:
+    default = TestsConfig()
+    return TestsConfig(
+        dir=_str(table, "dir", default.dir),
+        command=_argv_option(table, "command", "[tests] command"),
+        gate=_str(table, "gate", default.gate),
+        held_out_dir=_str(table, "held_out_dir", default.held_out_dir),
         timeout_s=_int(table, "timeout_s", default.timeout_s),
     )
 

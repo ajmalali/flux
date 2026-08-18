@@ -15,17 +15,20 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
 
 from flux import knowledge
 from flux.config import FluxConfig
 from flux.executor.types import ExecConfig, ExecResult, PromptPack
+from flux.gates.command import CommandGate
 from flux.gates.spec import bash_permissions
+from flux.gates.summaries import pytest_summary
 from flux.git import head_sha, stage_commit
 from flux.metrics.record import GateOutcome
 from flux.runner.artifact import ArtifactSpec
 from flux.runner.context import TicketContext
 from flux.runner.stage import Gate, Outcome
+from flux.stages import tests as tests_stage
+from flux.stages.guards import has_held_out, held_out_dir, source_stage_guard
 from flux.stages.hydration import artifact_slice, bullets, join, read_text, section
 
 STAGE_NAME = "implement"
@@ -33,7 +36,10 @@ STAGE_NAME = "implement"
 NOTES_FILENAME = "impl-notes.md"
 CONTEXT_PACK_FILENAME = "context-pack.md"
 PLAN_SUMMARY_FILENAME = "plan-summary.md"
-TESTS_ARTIFACT_FILENAME = "tests.json"
+TESTS_ARTIFACT_FILENAME = tests_stage.ARTIFACT_FILENAME
+
+HELD_OUT_GATE = "held-out"
+"""Name of the gate that runs the tests the implement session never sees (ADR 0005)."""
 
 NOTES_SPEC = ArtifactSpec(
     path=NOTES_FILENAME,
@@ -64,9 +70,11 @@ be written down.
 3. The handoff note is checked by the harness after you finish. If it is missing or is \
 missing a required heading, the stage is retried once and then parked for a human.
 
-Work only inside the repository you were given. Do not weaken, skip, or delete tests to \
-make a gate pass — a gate that passes for that reason is a defect, and it is the one \
-thing this pipeline exists to catch.\
+Work only inside the repository you were given. You cannot read or change the tests: \
+those calls are blocked, and every test file is re-hashed after your session, so a \
+test that changed by any route at all fails this stage. That is not an obstacle to \
+work around — a gate that passes because the test moved is the exact defect this \
+pipeline exists to catch. Change the implementation instead.\
 """
 
 
@@ -98,7 +106,7 @@ class ImplementStage:
                 self._repo_map_section(ticket),
             ),
             stage_tail=join(
-                self._tests_section(context),
+                self._tests_section(ticket),
                 self._gates_section(),
                 self._output_section(ticket),
             ),
@@ -130,19 +138,27 @@ class ImplementStage:
             f"```\n{body}\n```{caveat}",
         )
 
-    def _tests_section(self, context: Path) -> str:
+    def _tests_section(self, ticket: TicketContext) -> str:
         """Test *paths* and the red run, never test bodies (design.md stage I/O table)."""
         sliced = artifact_slice(
-            context / TESTS_ARTIFACT_FILENAME, ("test_files", "red_output", "cases")
+            ticket.context_dir / TESTS_ARTIFACT_FILENAME,
+            (tests_stage.TEST_FILES_KEY, tests_stage.RED_OUTPUT_KEY, tests_stage.CASES_KEY),
         )
         if not sliced:
             return ""
+        held_out = (
+            "\n\nThis ticket also has held-out tests, written for the same criteria and "
+            "kept outside this checkout. They run when your session ends. Code that "
+            "satisfies only the tests listed here will not pass them."
+            if has_held_out(ticket, self.settings)
+            else ""
+        )
         return section(
             "Tests already written for this ticket",
             "These tests exist and currently fail. Make them pass by changing the "
-            "implementation. Do not edit them.\n\n```json\n"
+            "implementation. You cannot read or edit them.\n\n```json\n"
             + json.dumps(dict(sliced), indent=2)
-            + "\n```",
+            + f"\n```{held_out}",
         )
 
     def _gates_section(self) -> str:
@@ -189,13 +205,23 @@ class ImplementStage:
             cwd=ticket.worktree,
             allowed_tools=bash_permissions(self.settings.gates),
             add_dirs=(ticket.context_dir,),
+            guards=(source_stage_guard(ticket, self.settings),),
         )
 
     def required_artifact(self) -> ArtifactSpec | None:
         return NOTES_SPEC
 
     def gates(self, ticket: TicketContext) -> Sequence[Gate]:
-        return self.settings.build_gates()
+        """The repo's suite, plus this ticket's held-out tests when it has any.
+
+        Appended rather than configured because held-out tests are per ticket, and
+        absent for most: a ticket with none simply gets the ordinary suite. When they
+        exist they run here and nowhere else — held-out tests answer "did this
+        implementation generalise", which is only a question once code exists.
+        """
+        suite = self.settings.build_gates()
+        gate = held_out_gate(ticket, self.settings)
+        return suite if gate is None else (*suite, gate)
 
     # -- verification ---------------------------------------------------------
 
@@ -211,6 +237,20 @@ class ImplementStage:
         to, and re-running the same prompt against the same failure is the definition
         of burning budget for nothing. M1 replaces the park with the review↔fix loop.
         """
+        edited = tests_stage.modified_tests(ticket)
+        if edited:
+            return Outcome(
+                ok=False,
+                parked=True,
+                reason="tests-modified",
+                note=(
+                    "test files changed during the implement stage: "
+                    f"{', '.join(edited)}. The tests are this ticket's specification, so a "
+                    "change to them invalidates every gate that ran afterwards."
+                ),
+                detail={"modified_tests": list(edited)},
+            )
+
         failed = [g for g in gate_results if not g.passed]
         if failed:
             names = ", ".join(g.name for g in failed)
@@ -253,3 +293,26 @@ class ImplementStage:
         if not outcome.ok:
             recorded["problem"] = outcome.detail
         return recorded
+
+
+def held_out_gate(ticket: TicketContext, settings: FluxConfig) -> Gate | None:
+    """The held-out suite as an ordinary gate, or ``None`` when this ticket has none.
+
+    ``PYTHONPATH`` is set to the worktree deliberately. The gate environment is
+    otherwise cleaned so a gate measures the target repo rather than flux, but these
+    tests live outside the worktree, so without it the interpreter would not find the
+    code they are testing — pytest inserts the *test file's* directory, not the
+    project's. Naming the worktree is restoring what the tests would have had if they
+    had been allowed to sit inside it, which is the only difference held-out is
+    supposed to make.
+    """
+    command = settings.tests_command()
+    if not command or not has_held_out(ticket, settings):
+        return None
+    return CommandGate(
+        name=HELD_OUT_GATE,
+        argv=(*command, str(held_out_dir(ticket, settings))),
+        timeout_s=settings.tests.timeout_s,
+        summarize=pytest_summary,
+        env={"PYTHONPATH": str(ticket.worktree)},
+    )

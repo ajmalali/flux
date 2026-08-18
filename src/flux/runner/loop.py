@@ -25,6 +25,7 @@ from flux.metrics.record import GateOutcome, MetricRecord, MetricsStore
 from flux.runner.artifact import (
     FAILED_SESSION_NUDGE,
     ArtifactCheck,
+    digest_of,
     missing_artifact_nudge,
     validate_artifact,
 )
@@ -154,6 +155,9 @@ def _run_stage(
     _record(metrics, ticket, stage, result, attempt, wall_ms, variant, gates=gate_results)
 
     outcome = stage.commit(ticket, result, gate_results)
+    # Re-hashed after commit, not before: a stage whose commit() records evidence into
+    # its own artifact (the tests stage writes the red run it observed) would otherwise
+    # leave a checkpoint describing a file that no longer exists in that form.
     store.write(
         Checkpoint(
             stage=stage.name,
@@ -161,7 +165,7 @@ def _run_stage(
             attempts=attempt + 1,
             note=outcome.note,
             artifact_path=spec.path if spec else "",
-            artifact_digest=check.digest,
+            artifact_digest=digest_of(spec.resolve(ticket)) if spec else check.digest,
             detail=outcome.detail,
         )
     )

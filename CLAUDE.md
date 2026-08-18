@@ -3,8 +3,8 @@
 **F**ast **L**oop **U**nified e**X**ecution — a deterministic orchestration harness around
 Claude Code (Python CLI, run inside target repos).
 
-Status: M0 in progress — executor seam, metrics store, and runner spine implemented; gates and
-stages are not.
+Status: M0 complete; M1 in progress — executor seam, metrics store, runner spine, gates, repo
+map, the A/B baseline, and the `tests` + `implement` stages are in. Review, fix and pr are not.
 
 ## Session bootstrap (do this first, in order)
 

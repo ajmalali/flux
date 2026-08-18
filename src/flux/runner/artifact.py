@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal
@@ -39,6 +40,16 @@ class ArtifactSpec:
     min_chars: int = 1
     description: str = ""
     """One line naming the artifact's job. Quoted back to the model in the retry nudge."""
+
+    check: Callable[[JsonMapping], str] | None = None
+    """Structural check beyond :attr:`required_keys`; returns ``""`` or the problem.
+
+    Present because "the key exists" is a weak reading of "valid" for the artifacts
+    that are *maps*: a ``tests.json`` whose ``cases`` is an empty list satisfies
+    ``required_keys`` and tells the next stage nothing. Running the check here rather
+    than in ``commit()`` is what makes that failure cost one nudged retry instead of a
+    park — the runner already owns exactly this loop (design.md §2, Rule 1).
+    """
 
     def __post_init__(self) -> None:
         pure = PurePosixPath(self.path)
@@ -151,7 +162,31 @@ def _check_json(path: Path, spec: ArtifactSpec, text: str, digest: str) -> Artif
             payload=payload,
             text=text,
         )
+    problem = spec.check(payload) if spec.check is not None else ""
+    if problem:
+        return ArtifactCheck(
+            ok=False,
+            path=path,
+            spec=spec,
+            problem=problem,
+            digest=digest,
+            payload=payload,
+            text=text,
+        )
     return ArtifactCheck(ok=True, path=path, spec=spec, digest=digest, payload=payload, text=text)
+
+
+def digest_of(path: Path) -> str:
+    """SHA-256 of a file's bytes, or ``""`` if it cannot be read.
+
+    Used to re-stamp the checkpoint after a stage's ``commit()`` has written its own
+    evidence into the artifact (the tests stage stores the red run it observed), so
+    the recorded digest describes the file a later stage will actually read.
+    """
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
 
 
 def _check_text(path: Path, spec: ArtifactSpec, text: str, digest: str) -> ArtifactCheck:

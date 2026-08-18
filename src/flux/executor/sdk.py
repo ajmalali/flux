@@ -17,6 +17,7 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKError,
+    HookMatcher,
     Message,
     RateLimitEvent,
     ResultMessage,
@@ -26,6 +27,7 @@ from claude_agent_sdk import (
 )
 
 from flux.executor.billing import AuthStatus, preflight
+from flux.executor.guard import PathGuard
 from flux.executor.types import (
     ExecConfig,
     ExecResult,
@@ -107,9 +109,7 @@ def build_options(pack: PromptPack, cfg: ExecConfig) -> ClaudeAgentOptions:
     inherited ``ANTHROPIC_API_KEY``; the removal happens in
     :func:`flux.executor.billing.sanitize_process_env` before the process spawns.
     """
-    # SDK hook types are re-exported as implicit aliases; keeping this Any avoids
-    # dragging them across the ADR 0007 seam just to satisfy a cast.
-    hooks: Any = dict(cfg.hooks) or None
+    hooks: Any = build_hooks(cfg)
     task_budget: Any = {"total": cfg.max_tokens} if cfg.advertise_token_budget else None
     return ClaudeAgentOptions(
         model=cfg.model,
@@ -130,6 +130,48 @@ def build_options(pack: PromptPack, cfg: ExecConfig) -> ClaudeAgentOptions:
         hooks=hooks,
         env={"CLAUDE_AGENT_SDK_CLIENT_APP": _CLIENT_APP},
     )
+
+
+def build_hooks(cfg: ExecConfig) -> Any:
+    """Compile ``cfg.guards`` into ``PreToolUse`` hooks, merged with any raw hook config.
+
+    This is the whole of the SDK's involvement in ADR 0005's structural hardening: the
+    policy is flux data (:class:`~flux.executor.guard.PathGuard`), the decision is a
+    pure function, and the only thing that lives on this side of the seam is the
+    translation into the SDK's callback shape.
+    """
+    # SDK hook types are re-exported as implicit aliases; keeping these Any avoids
+    # dragging them across the ADR 0007 seam just to satisfy a cast.
+    hooks: dict[str, list[Any]] = {event: list(entries) for event, entries in cfg.hooks.items()}
+    if cfg.guards:
+        matchers = [
+            HookMatcher(matcher=guard.matcher, hooks=[guard_hook(guard)]) for guard in cfg.guards
+        ]
+        hooks.setdefault("PreToolUse", []).extend(matchers)
+    return hooks or None
+
+
+def guard_hook(guard: PathGuard) -> Any:
+    """A ``PreToolUse`` callback that denies the calls ``guard`` forbids.
+
+    Denial rather than the shell hook's ``exit 2`` because the SDK's in-process hooks
+    are the same mechanism by another name — and the reason travels back to the model,
+    which the exit status alone does not.
+    """
+
+    async def hook(payload: Any, _tool_use_id: str | None, _context: Any) -> dict[str, Any]:
+        problem = guard.decide(str(payload.get("tool_name", "")), payload.get("tool_input") or {})
+        if not problem:
+            return {}
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": problem,
+            }
+        }
+
+    return hook
 
 
 class Collector:

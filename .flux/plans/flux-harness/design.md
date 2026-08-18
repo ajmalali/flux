@@ -62,7 +62,8 @@ class ExecConfig:
     max_turns: int; max_tokens: int             # caps in turns+tokens (subscription mode);
                                                 # max_budget_usd applies only in API fallback
     advertise_token_budget: bool                # send max_tokens to the API as a task budget
-    hooks: dict                                 # e.g. PreToolUse test-edit block
+    guards: tuple[PathGuard, ...]               # PreToolUse path policy, as flux data (T5.2)
+    hooks: dict                                 # raw hook config flux has no typed model for
 
 class Stage(Protocol):
     name: str
@@ -295,6 +296,51 @@ The opaque test runner is a flux subprocess wrapper: it runs the suite (includin
 stored outside the worktree) and returns `{passed, failed: [test names], first_assertion_line}`
 — never test source. The implement session's `allowed_tools`/hooks prevent it from reading test
 bodies directly.
+
+### The tests stage and its hardening, as built (T5.2)
+
+`flux.testrun` is the opaque runner, and the `pytest` gate summariser is now the *same* parser —
+what a session may learn from a gate verdict and what the red step records cannot drift apart.
+`[tests]` in `flux.toml` holds where tests go, the argv, and the held-out directory; the argv
+defaults to the repo's own test gate rather than being spelled twice, because a red step measured
+with a different command from the gate is not evidence about the gate.
+
+- **Red for the right reason is three conditions, and the prompt teaches the technique that makes
+  them satisfiable.** No collection errors, nothing passing, at least one failure. The hard case
+  is the ordinary one — the module under test does not exist yet, so a top-level import is a
+  *collection error*, not a failing test. The tests stage's system prompt says to import inside
+  the test function. Confirmed live: the session did exactly that and produced
+  `2 failed`, `first assertion: ModuleNotFoundError`, with the suite collecting cleanly.
+  A rule the session cannot satisfy is not hardening, it is a park with extra steps.
+- **The tests stage does not run the test gate.** It is judged on the suite being *red*; a gate
+  demanding green would fail every tests stage that worked. Lint and typecheck still run — a test
+  file is code. Gate selection is by name (`[tests] gate`, else the `pytest`-kind gate, else one
+  called `test`), never by re-deriving a command.
+- **Two guards, one mechanism** (`flux.executor.guard.PathGuard` → `PreToolUse`). The tests stage
+  is allow-only (tests dir + its context dir); implement and fix are deny (tests dir, held-out
+  dir, and test-shaped basenames anywhere). Reading is blocked as well as writing on the deny
+  side: a session that can read the assertion can write to *that assertion* rather than to the
+  requirement, which hands back through `Read` exactly what the opaque gate withholds. The policy
+  is flux data and a pure function; `sdk.py` compiles it, so ADR 0007's seam holds and the whole
+  of ADR 0005's structural hardening is provable in plain pytest.
+- **The guard is the cheap block; the digest is the teeth.** A guard reads the path arguments of
+  path-taking tools, so it cannot see a shell redirect and cannot filter a repo-wide `Grep`. So
+  `tests.json` stores a SHA-256 per test file and the implement stage re-hashes them before it is
+  allowed to stand: a test changed *by any route at all* fails the stage with
+  `reason="tests-modified"`. Evidence beats prediction — the same reason gates exist.
+- **Held-out tests are an ordinary gate, appended per ticket.** `.flux/held-out/<ticket>/`, run
+  only at implement time, and only when the ticket has any. `PYTHONPATH` is set to the worktree:
+  the gate environment is otherwise cleaned so a gate measures the target rather than flux, but
+  pytest inserts the *test file's* directory, so without it the held-out tests could not import
+  the code they test. That restores what they would have had inside the worktree, which is the
+  only difference held-out is meant to make.
+- **`ArtifactSpec.check`.** "The key exists" is a weak reading of "valid" for an artifact that is
+  a *map*: a `tests.json` whose `cases` is `[]` passes `required_keys` and tells the next stage
+  nothing. A structural check at validation time makes that cost one nudged retry instead of a
+  park, which is the loop the runner already owns. `review.json` will want the same at T5.3.
+- **The checkpoint digest is taken after `commit()`, not before.** The tests stage writes the red
+  run it observed back into its own artifact, so the pre-commit hash described a file that no
+  longer exists in that form.
 
 ## 3. Metrics store and A/B baseline (P0, per change doc A1/A2)
 

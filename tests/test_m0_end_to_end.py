@@ -22,8 +22,9 @@ from flux.metrics.record import MetricsStore
 from flux.proc import run_command
 from flux.runner.checkpoint import CheckpointStore
 from flux.runner.loop import run_ticket
+from flux.runner.transition import Pipeline
 from flux.scaffold import init_repo
-from flux.stages import build_pipeline
+from flux.stages import ImplementStage
 from flux.tickets import load_ticket, ticket_path
 
 PY = sys.executable
@@ -115,6 +116,13 @@ def scratch_repo(tmp_path: Path, *, gate_passes: bool = True) -> Path:
 
 
 def drive(root: Path, **kwargs: object):
+    """Run the ticket through M0's pipeline — the implement stage on its own.
+
+    Pinned rather than taken from ``build_pipeline``: this file is the record of the
+    M0 exit benchmark, and M0's pipeline was one stage. What the shipping pipeline is
+    *today* is asserted in ``test_tests_stage.py``, which is where a change to it
+    belongs.
+    """
     settings = FluxConfig.load(root)
     ticket = load_ticket("flux-1", root=root, config=settings)
     executor = ScriptedExecutor(
@@ -122,7 +130,8 @@ def drive(root: Path, **kwargs: object):
         context_dir=ticket.context_dir,
         **kwargs,  # pyright: ignore[reportArgumentType]
     )
-    return run_ticket(ticket, build_pipeline(settings), executor), ticket, executor
+    pipeline = Pipeline(stages=(ImplementStage(settings=settings),))
+    return run_ticket(ticket, pipeline, executor), ticket, executor
 
 
 def test_a_hand_written_ticket_flows_through_implement_and_gates(tmp_path: Path) -> None:
@@ -287,7 +296,8 @@ def test_dry_run_shows_the_pack_without_spending_anything(
     assert main(["run", "flux-1", "--root", str(root), "--dry-run"]) == EXIT_OK
 
     printed = capsys.readouterr().out
-    assert "next:    implement" in printed
+    # The CLI drives the shipping pipeline, whose first stage is `tests`.
+    assert "next:    tests" in printed
     assert BRIEF in printed
     assert not (root / ".flux" / "usage" / "metrics.jsonl").exists()
     assert not (root / "greet.py").exists()

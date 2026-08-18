@@ -143,7 +143,8 @@ def test_the_system_prompt_states_the_rules_the_harness_enforces(tmp_path: Path)
     system = stage.hydrate(ticket).system_prompt
     assert "gates" in system.lower()
     assert "carried forward" in system
-    assert "delete tests" in system
+    assert "cannot read or change the tests" in system
+    assert "re-hashed" in system
 
 
 # -- policy ----------------------------------------------------------------------

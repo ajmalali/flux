@@ -100,7 +100,17 @@ def init_repo(root: Path, *, force: bool = False) -> InitReport:
 
     gitignore = flux_dir / GITIGNORE_FILENAME
     entries = "\n".join(f"{name}/" for name in IGNORED_DIRS)
-    _write(gitignore, FLUX_GITIGNORE.format(entries=entries), resolved, created, skipped)
+    default = FLUX_GITIGNORE.format(entries=entries)
+    # An existing .gitignore is never rewritten, not even under --force (which is
+    # scoped to flux.toml). What a repo chooses to track is that repo's decision, and
+    # silently restoring the default would revert it on the next init with no trace —
+    # the same reason `flux index --install-hook` refuses to clobber a live hook.
+    if gitignore.exists():
+        skipped.append(_rel(gitignore, resolved))
+        warnings.extend(_gitignore_warnings(gitignore, default))
+    else:
+        write_atomic(gitignore, default)
+        created.append(_rel(gitignore, resolved))
 
     target = detect_target(resolved)
     config = FluxConfig(root=resolved, target=target, gates=default_gates(resolved))
@@ -151,6 +161,35 @@ def _read(path: Path) -> str:
         return ""
 
 
+def _gitignore_warnings(path: Path, default: str) -> Sequence[str]:
+    """Name the directories this repo tracks that the default would ignore.
+
+    Not an error: tracking checkpoints or metrics is a legitimate choice (flux's own
+    repo tracks `state/` so a run's checkpoints are part of the project record). It is
+    said out loud because the consequence — `git add -A` in a stage commit sweeping
+    those files up — is not visible from the .gitignore alone.
+    """
+    try:
+        current = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ()
+    if current == default:
+        return ()
+    # Patterns only: a comment explaining why `state/` is tracked mentions `state/`,
+    # so a substring test over the whole file would read the explanation as the rule.
+    patterns = {
+        line.strip() for line in current.splitlines() if line.strip() and not line.startswith("#")
+    }
+    tracked = [name for name in IGNORED_DIRS if f"{name}/" not in patterns]
+    if not tracked:
+        return ()
+    listed = ", ".join(f"{name}/" for name in tracked)
+    return (
+        f"{path.name} has been edited: this repo tracks {listed}, which flux would "
+        "otherwise ignore. Left as it is.",
+    )
+
+
 def _config_warnings(config: FluxConfig) -> Sequence[str]:
     if config.gates:
         return ()
@@ -159,20 +198,6 @@ def _config_warnings(config: FluxConfig) -> Sequence[str]:
         f"change from a bad one until you add at least a test gate to {config.path}",
     )
 
-
-def _write(path: Path, content: str, root: Path, created: list[str], skipped: list[str]) -> None:
-    """Write ``content``, recording whether the file was new. Existing content that
-    already matches is left untouched so init does not churn mtimes."""
-    relative = _rel(path, root)
-    if path.exists():
-        try:
-            if path.read_text(encoding="utf-8") == content:
-                skipped.append(relative)
-                return
-        except (OSError, UnicodeDecodeError):
-            pass
-    write_atomic(path, content)
-    created.append(relative)
 
 
 def _rel(path: Path, root: Path) -> str:

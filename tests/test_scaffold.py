@@ -180,3 +180,37 @@ def test_force_replaces_an_existing_hook(tmp_path: Path) -> None:
 def test_a_non_git_repo_says_so(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="not a git repository"):
         install_post_merge_hook(tmp_path)
+
+
+def test_an_edited_gitignore_survives_init(tmp_path: Path) -> None:
+    """What a repo tracks is that repo's decision, so init never restores the default.
+
+    Not even under ``--force``, which is scoped to ``flux.toml``. Silently re-ignoring a
+    directory the repo chose to track would revert the decision with no trace — the same
+    reason ``flux index --install-hook`` refuses to clobber a live hook.
+    """
+    root = python_repo(tmp_path)
+    init_repo(root)
+    edited = "# ours\ntranscripts/\nusage/\ncache/\n"
+    (tmp_path / ".flux" / ".gitignore").write_text(edited, encoding="utf-8")
+
+    report = init_repo(root, force=True)
+
+    assert (tmp_path / ".flux" / ".gitignore").read_text(encoding="utf-8") == edited
+    assert any("state/" in warning for warning in report.warnings)
+
+
+def test_a_comment_naming_a_directory_is_not_read_as_a_rule(tmp_path: Path) -> None:
+    """The explanation for tracking `state/` contains the string `state/`."""
+    root = python_repo(tmp_path)
+    init_repo(root)
+    (tmp_path / ".flux" / ".gitignore").write_text(
+        "# state/ is deliberately tracked here\ntranscripts/\nusage/\ncache/\n", encoding="utf-8"
+    )
+    assert any("state/" in warning for warning in init_repo(root).warnings)
+
+
+def test_an_unedited_gitignore_says_nothing(tmp_path: Path) -> None:
+    root = python_repo(tmp_path)
+    init_repo(root)
+    assert init_repo(root).warnings == ()

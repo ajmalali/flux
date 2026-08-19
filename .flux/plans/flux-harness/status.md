@@ -1,9 +1,33 @@
 # flux-harness — status & next task
 
-Updated: 2026-08-19 (**T5.4 done** — the pipeline is five stages and a live ticket ran unattended to a pushed, verified branch. Next: T5.5, the review bake-off)
+Updated: 2026-08-19 (**direction review → ADR 0011**: T5.5 cut, M2/M3 frozen, the A/B quality axis found flawed. Next: T5.5a, acceptance-judged quality on both arms)
 
 ## Current state
 
+- **2026-08-19 direction review (ADR 0011) — read this first.** The repo was scored against
+  the six goals flux exists for: (1) automate the deterministic layers; (2) offload/rehydrate
+  context, state on disk; (3) smart-zone chunking with fresh-context continuation; (4)
+  per-ticket model/effort routing; (5) token efficiency and speed with quality held; (6)
+  benchmark vs vanilla. Verdict: the substrate (goals 1–2) is right; the sequencing was wrong —
+  goals 3–4 were scheduled last and goal 6 had machinery but no data. Three findings a future
+  session must not re-derive:
+  1. *The A/B quality axis cannot detect an unimplemented feature.* Quality in `metrics/ab.py`
+     is an ordinal over the repo's gate suite, so a vanilla arm that changes nothing keeps the
+     suite green, scores quality 2 at near-zero cost, and wins the pairing — the kill-criterion
+     can fire against a harness that delivered. Fix first (T5.5a): both arms judged by the same
+     held-out acceptance tests, written before either arm runs. No verdict computed before that
+     lands is trusted.
+  2. *Cross-stage prompt-cache hits mostly do not exist.* `PromptPack.stable_prefix` claims
+     them, but the system prompt varies per stage and precedes user content, and stages run on
+     different models. Within-session caching is real; design.md §2 is amended, `types.py`'s
+     docstring catches up at T5.5a. No design decision may cite cross-stage cache hits until
+     measured.
+  3. *Goal 5 is structurally at risk, not incidentally.* Five fresh sessions plus three
+     gate-suite reruns per ticket regardless of size; the only live pairing cost 1.41x
+     vanilla's tokens. The answer is routing (T5.7: per-ticket stage list) and continuation
+     (T5.8: budget hit → re-hydrate and continue, not park) — not more stages.
+  Consequences: T5.5 (review bake-off) cut; M2/M3 frozen; queue is T5.5a → T5.6 (expanded
+  benchmark) → T5.7 → T5.8. Docs amended: plan.md §5, design.md §2/§3, CLAUDE.md, ADR 0011.
 - Planning complete: `plan.md` (v2.1), `design.md` (mechanism contracts), ADRs 0001–0010.
 - **T1 done.** Substrate spikes run hands-on (Archon 0.9.0 live end-to-end, Gas City 1.4.1
   to the orchestration layer); decision memo at `substrate-memo.md`: **keep custom Python**,
@@ -226,8 +250,9 @@ Updated: 2026-08-19 (**T5.4 done** — the pipeline is five stages and a live ti
   4. CLI vs MCP — **pinned CLI**; the session's own MCP server is version-broken against the
      index format and returns empty results with exit 0.
 
-- [ ] **T5 — M1: full five-stage pipeline + hardening + A/B baseline.** Expanded into T5.1–T5.6
-  below (specs in plan.md §5 M1 and the design.md stage I/O table). Do the subtasks in order.
+- [ ] **T5 — M1: full five-stage pipeline + hardening + A/B baseline.** Expanded into T5.1–T5.8
+  below (T5.5 cut, T5.5a/T5.7/T5.8 added 2026-08-19 per ADR 0011; specs in plan.md §5 M1 and
+  the design.md stage I/O table). Do the subtasks in order.
   Carried into T5 from T4: the `PreToolUse` test-edit block (it needs a tests stage to protect,
   so it lands in T5.2), and the review stage must use a **different model** from implement
   (`flux.toml` already routes it to Opus with `permission_mode = "plan"`).
@@ -280,14 +305,43 @@ Updated: 2026-08-19 (**T5.4 done** — the pipeline is five stages and a live ti
     the tree it is about to push, pushes `HEAD` by refspec, and re-reads the ref out of the
     remote to confirm the sha. **"CI triggered" is deliberately not claimed** — see design.md
     §2 "as built (T5.4)". Also carries the T5.3 junk-commit decision: `git.JUNK_GLOBS`.
-  - [ ] **T5.5 — review bake-off (B3).** Stage 3 as a native-workflow multi-lens panel
-    (correctness / security / design-fit, adversarial-verify) vs the single different-model
-    reviewer from T5.3, scored on **planted defects**. Keep the cheaper config that catches at
-    least as many. Same standing rule as the knowledge layer: measured, not adopted on a claim.
-  - [ ] **T5.6 — M1 exit benchmark.** (a) one real ticket runs to a mergeable PR unattended;
-    (b) a deliberately gameable ticket (one a session could pass by weakening a test) is caught;
-    (c) ≥3 vanilla baseline samples in the comparison table. Then re-answer the phase-gate
-    question with actual data before opening M2 — including whether `[repo_map]` survives.
+  - [x] **T5.5 — review bake-off (B3). CUT 2026-08-19 (ADR 0011), not done.** A bake-off
+    between two review configurations is premature while nothing shows the review stage earns
+    its place at all — T5.6's table is what answers that. Revisit only if the review loop
+    survives the benchmark and its cost is the complaint.
+  - [ ] **T5.5a — fix the A/B quality axis (ADR 0011). Do this before T5.6; every benchmark
+    number routes through it.** Quality must be judged by the same per-ticket **held-out
+    acceptance tests on both arms**, written before either arm runs and stored outside both
+    worktrees. The held-out machinery from T5.2 is the mechanism; what is new is running it
+    against the vanilla arm's tree in `flux/ab.py` and folding an "acceptance green" level into
+    `metrics/ab.py`'s ordinal, above "gates green". Also amend the `Arm.quality` and
+    `PromptPack` docstrings (design.md §2/§3 already carry the corrections). Done when: a
+    do-nothing vanilla run loses its pairing in a unit test, and one live pairing records
+    acceptance verdicts for both arms.
+  - [ ] **T5.6 — M1 exit benchmark (expanded, ADR 0011).** (a) one real ticket runs to a
+    mergeable PR unattended; (b) a deliberately gameable ticket (one a session could pass by
+    weakening a test) is caught; (c) **5–10 paired real tickets** vs vanilla on a real repo
+    (candidates: clones of `~/Dev/zaps/kiosk` or `~/Dev/zaps/api`, already named in T5b), on
+    the model actually used for real work, quality judged per T5.5a. Then re-answer the
+    phase-gate question from the table — including whether `[repo_map]`, the tests stage, and
+    the review loop each survive, and which pipeline shapes T5.7 should offer as defaults.
+  - [ ] **T5.7 — per-ticket pipeline configuration (ADR 0011).** The stage list becomes ticket
+    data with the current five as the default: `stages = ["implement", "pr"]` for a small
+    change, the full five where the ticket is risky or gameable. `Pipeline` already takes a
+    stage list; what is new is a per-ticket override (ticket front-matter or a `[tickets]`
+    table in flux.toml), validation of the list (review requires tests to have run, fix
+    requires review, pr last), and the transition function honouring the shorter list. Done
+    when: a trivial ticket lands on a two-stage pipeline at a measured cost below its
+    five-stage run.
+  - [ ] **T5.8 — smart-zone continuation (ADR 0011; goal 3 in minimal form).** A stage that
+    hits `max_tokens` checkpoints progress into its artifact and continues in a **fresh
+    session hydrated from disk**, rather than parking. Mechanism sketch: the budget hard-stop
+    in `runner/loop.py` (`_hard_stop`) becomes "record the partial attempt, re-hydrate with
+    the artifact so far, continue once; park only on a second breach". The artifact/hydration/
+    checkpoint machinery already exists — this is the runner using it mid-stage instead of
+    only between stages. Done when: a ticket that previously parked on `token-budget-exceeded`
+    completes via one continuation, and the metrics lines show both sessions attributed to the
+    same stage.
 
 - [ ] **T5b — knowledge-layer A/B on a *large* repo, four arms. Do this after T5, not before.**
   **Why it exists:** T4c's refusal of gitnexus was measured on flux itself (88 files), and the
@@ -378,6 +432,29 @@ Updated: 2026-08-19 (**T5.4 done** — the pipeline is five stages and a live ti
    surprises, deviations from design.md, or decisions made (new ADR if load-bearing).
 
 ## Log
+
+- 2026-08-19 — **Direction review: benchmark before machinery (ADR 0011).** A full review of
+  the repo and code against the six goals flux exists for, requested by the user with "I'm
+  ready to rip everything apart and start over if it's not going to benefit me". Verdict: keep
+  the substrate (~3k lines serving goals 1–2 precisely), re-sequence everything else; nothing
+  ripped apart. What changed and why:
+  - **T5.5 cut.** A bake-off between two review configurations optimizes a stage whose
+    existence has no supporting data. The benchmark decides whether the review loop lives.
+  - **The A/B quality axis is the most important bug in the repo, and it blocks everything.**
+    "Gates green" over the repo suite cannot distinguish "implemented the feature" from
+    "changed nothing", so the kill-criterion can fire falsely in either direction. T5.5a fixes
+    it (acceptance tests judge both arms) before any benchmark number is trusted.
+  - **The cross-stage cache claim is amended, not yet measured.** The per-stage system prompt
+    precedes user content and breaks the cache; stages run on different models. design.md §2
+    carries the correction; the `types.py` docstring catches up at T5.5a.
+  - **M2/M3 frozen.** Claude Code's native plan mode and subagents cover much of M3; M2 opens
+    only if benchmark data names cold exploration as the constraint. plan.md §5 re-sequenced:
+    M1 (amended) → M1b (new: pipeline routing + continuation) → M4 → M5.
+  - **New tasks T5.7 and T5.8** move goals 3–4 (routing, smart-zone chunking) ahead of the
+    knowledge layer. The likely end-state the benchmark points at: gates + checkpoints +
+    metrics + a configurable 1–5 stage pipeline with per-ticket routing.
+  - Docs-only session: ADR 0011 added; plan.md, design.md, status.md, CLAUDE.md amended. No
+    code changed — T5.5a is where the code catches up with the docs.
 
 - 2026-08-19 — **T5.4 done: the pr stage, and the first ticket flux landed.** The pipeline is
   five stages; a live ticket ran unattended from an empty module to a branch on a remote, and

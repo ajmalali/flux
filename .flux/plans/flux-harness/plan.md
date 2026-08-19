@@ -153,6 +153,11 @@ repo map**. No custom knowledge-layer code exists before M2. Standing rule at **
 gate, answered in writing: *"did the harness beat vanilla Claude Code on the last A/B samples,
 and which planned feature does the data say to cut?"*
 
+**Re-sequenced 2026-08-19 (ADR 0011):** the order of work is now **M1 (amended exit) → M1b →
+M4 → M5**, with **M2 and M3 frozen** pending benchmark evidence. Goals 3–4 (smart-zone
+chunking, per-ticket routing) move ahead of the knowledge and research/planning layers, and no
+new machinery opens before the M1 benchmark table exists.
+
 ### Pre-M0 — Substrate spikes (hard timebox: half-day each)
 - **B1:** implement Stage 1 + Stage 2 with a gate between them in Archon and in Gas City.
   Scorecard: (1) per-ticket config from beads, (2) conditional stage skip, (3) bounded fix loop,
@@ -178,13 +183,32 @@ and which planned feature does the data say to cut?"*
 - Hardening: opaque test runner, PreToolUse test-edit block, held-out tests, red-step verified
   by the runner, bounded review loop (max 3) → park with note.
 - **A/B baseline (A1):** `flux run --vanilla` harness; 1-in-10 cadence; kill-criterion in flux.toml.
-- **Review bake-off (B3):** Stage 3 as a Claude Code native workflow (adversarial-verify,
-  multi-lens reviewers: correctness / security / design-fit) vs single different-model reviewer;
-  keep the cheaper config that catches ≥ as many planted defects.
-- **Exit:** (a) one real ticket → mergeable PR unattended; (b) a deliberately gameable ticket is
-  caught; (c) ≥3 vanilla baseline runs in the comparison table.
+- ~~**Review bake-off (B3)**~~ — **cut 2026-08-19 (ADR 0011):** a bake-off between two review
+  configurations is premature while no data justifies the review stage's existence. Revisit only
+  if the M1 benchmark shows the review loop earning its cost.
+- **A/B quality-axis fix (ADR 0011), before the benchmark:** both arms judged by the same
+  per-ticket held-out acceptance tests, written before either arm runs. "Repo gates green" alone
+  cannot distinguish "implemented the feature" from "changed nothing".
+- **Exit (amended, ADR 0011):** (a) one real ticket → mergeable PR unattended; (b) a deliberately
+  gameable ticket is caught; (c) **5–10 paired real tickets** vs vanilla on a real repo, quality
+  judged by acceptance tests on both arms — then the phase-gate question answered from that
+  table, deciding which stages and features survive.
 
-### M2 — Knowledge layer, bought
+### M1b — Goal-alignment features (new, ADR 0011; shaped by the M1 benchmark)
+- **Per-ticket pipeline configuration:** the stage list is ticket data, not a constant —
+  `stages = ["implement", "pr"]` for a small change, the full five for risky ones. Extends
+  stage routing (model/effort) into pipeline routing; the benchmark table says which default
+  fits which ticket shape.
+- **Smart-zone continuation:** a stage approaching its token budget checkpoints progress into
+  its artifact and continues in a fresh session hydrated from disk, instead of parking
+  (`token-budget-exceeded` becomes continue-once-then-park). The artifact/hydration/checkpoint
+  machinery already exists; this is the runner using it mid-stage.
+- **Exit:** a ticket that previously parked on budget completes via continuation; a trivial
+  ticket completes on a two-stage pipeline at a measured token cost below its five-stage run.
+
+### M2 — Knowledge layer, bought (FROZEN — ADR 0011)
+*Frozen 2026-08-19: do not open until the M1 benchmark data names cold exploration as the
+binding constraint.*
 - **C1 spike (1 day total):** OpenWiki vs deepwiki-by-cc on the target repo. Criteria: Markdown
   in-repo, incremental sync works on real diff patterns, acceptable sync cost, pages sliceable
   into hydration packs.
@@ -194,7 +218,9 @@ and which planned feature does the data say to cut?"*
 - **Exit:** wiki generated; one synthetic merge triggers a correct incremental update; hydration
   assembles packs from wiki pages + ADRs + repo map within token budget.
 
-### M3 — Research + Planning phases
+### M3 — Research + Planning phases (FROZEN — ADR 0011)
+*Frozen 2026-08-19: Claude Code's native plan mode and subagents cover much of this; open only
+if benchmark or usage data shows planning quality is the bottleneck.*
 - Templates mined from GSD (run one feature through its flow first) and OpenSpec's change-spec
   format (start from the published Beads+OpenSpec workflow cheatsheet); dissent sections are
   harness-validated before a phase can close.

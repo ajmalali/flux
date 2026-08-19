@@ -282,6 +282,14 @@ findings from `review.json`* plus *the diff hunks those findings point at* — n
 concatenation of all prior stage outputs. Invariant to assert in tests: measured pack size does
 not grow monotonically across stages.
 
+**Correction (2026-08-19, ADR 0011): the cross-stage cache benefit described above is mostly
+illusory as built.** The system prompt varies per stage and precedes the user prompt, so the
+cache breaks before the "stable" prefix is reached; review and pr also run on different models,
+and caches are per-model. Within-session caching across turns is real and is what the pack
+structure earns. The `PromptPack` split stays — it is the right shape for determinism and for
+measuring pack size — but no design decision may cite cross-stage cache hits until they are
+measured. `types.py`'s docstring is amended at T5.5a.
+
 ### Stage I/O table (the whole pipeline on one screen)
 
 | Stage | hydrate() reads | ExecConfig | required_artifact() | commit() verifies |
@@ -466,6 +474,14 @@ As built (T5.1) — `flux/ab.py` writes the baseline arm, `flux/metrics/ab.py` r
   quality at a lower price is a loss for it, not a draw.
 - **The block prints even when it is empty**, saying "no paired samples yet". Silence would read
   as "nothing to report" at exactly the phase gate that exists to ask.
+
+**Amendment (2026-08-19, ADR 0011): the quality ordinal as built cannot detect an unimplemented
+feature.** "Gates green" is measured over the repo's own suite, which a vanilla arm that changes
+nothing keeps green — so it can win a pairing against a harness run that actually delivered the
+feature, and the kill-criterion can fire falsely. Before any benchmark number is trusted
+(T5.5a), both arms must be judged by the same per-ticket held-out acceptance tests, written
+before either arm runs and stored outside both worktrees; the ordinal gains a level for
+"acceptance green" above "gates green".
 
 ## 4. What gets built vs. bought
 

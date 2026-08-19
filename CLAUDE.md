@@ -5,8 +5,10 @@ Claude Code (Python CLI, run inside target repos).
 
 Status: M0 complete; M1 in progress — executor seam, metrics store, runner spine, gates, repo
 map, the A/B baseline, and all five stages (`tests`, `implement`, `review`, `fix`, `pr`) are in,
-so a ticket runs end to end and lands on a pushed, verified branch. Remaining for M1: the review
-bake-off (T5.5) and the exit benchmark (T5.6).
+so a ticket runs end to end and lands on a pushed, verified branch. Remaining for M1 (re-sequenced
+2026-08-19, ADR 0011): the A/B quality-axis fix (T5.5a), then the expanded exit benchmark
+(T5.6). The review bake-off (T5.5) was cut; M2/M3 are frozen; T5.7 (per-ticket pipeline
+config) and T5.8 (smart-zone continuation) follow the benchmark.
 
 ## Session bootstrap (do this first, in order)
 

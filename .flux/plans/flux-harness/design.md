@@ -288,7 +288,7 @@ not grow monotonically across stages.
 |---|---|---|---|---|
 | tests | ticket brief · context pack · plan summary | Sonnet/high · acceptEdits · PreToolUse blocks `src/` edits · tests-dir only | `tests.json`: test file paths, cases↔acceptance-criteria map | runner reruns tests: all red, failing for the right reason (no collection errors); red output stored |
 | implement | brief · pack · **test paths + red output** (not test bodies) | Sonnet/high · acceptEdits · PreToolUse blocks test-file edits + dangerous cmds | `impl-notes.md`: what changed, deviations from plan, discovered work (→ bd `discovered-from`) | gates: lint, typecheck, **opaque test run** (pass/fail + minimal diagnostics), coverage delta; held-out tests run here too |
-| review | brief · diff (`git diff` of stage commits) · rubric · plan/ADR summary | **different model**/high · plan mode (read-only) | `review.json`: findings (severity, file:line, rationale, rubric axis) | schema-valid; findings deduped; blocker findings force fix stage |
+| review | brief · acceptance criteria · diff (`git diff` of stage commits, tests excluded) · rubric · plan/ADR summary | **different model**/high · writes confined to the context dir · PreToolUse blocks reading tests · no Bash | `review.json`: findings (severity, file:line, rationale, rubric axis) | schema-valid; findings deduped; blocking-severity findings force fix stage |
 | fix | **unresolved findings slices** + referenced diff hunks | Sonnet/high · acceptEdits · same blocks as implement | updated `review.json` resolutions | full gate suite reruns; reviewer re-invoked only if gates pass |
 | pr | impl-notes · resolved review · commit log | Haiku/low (or local, later) | PR body + pushed branch | `git push` succeeded; CI triggered ("land the plane") |
 
@@ -341,6 +341,52 @@ with a different command from the gate is not evidence about the gate.
 - **The checkpoint digest is taken after `commit()`, not before.** The tests stage writes the red
   run it observed back into its own artifact, so the pre-commit hash described a file that no
   longer exists in that form.
+
+### The review and fix stages, as built (T5.3)
+
+`flux.diff` parses a unified diff into files and hunks, `git.ticket_diff` produces one bounded by
+the ticket's own stage tags, and the two stages sit either side of it: the reviewer reads the
+whole diff, the fixer reads only the hunks its findings point at.
+
+- **The reviewer is read-only by *guard*, not by `plan` mode — a correction to this document.**
+  The table above used to say `plan` mode, and the SDK documents that mode as "Planning mode, no
+  execution of tools": it would also stop the reviewer writing `review.json`, the one artifact the
+  stage is judged on, so every review pass would park on a missing artifact. `review_stage_guard`
+  confines every write to the ticket's context directory instead. That forbids strictly more of
+  the *repo* than plan mode does, and unlike a permission mode it is flux data, so what a reviewer
+  may write is a pytest assertion rather than a property of the CLI.
+- **The reviewer is blindfolded to the tests, and this is about the fix stage, not the reviewer.**
+  `review.json` is read by the stage that edits code, so a reviewer able to quote an assertion
+  would hand back through a finding exactly what the opaque test gate withholds. Two mechanisms,
+  same policy: `source_stage_guard` (unchanged from implement) stops it *reaching* for a test, and
+  `diff_exclusions` stops one *arriving* inside the diff — the tests stage commits its work, so
+  the ticket's own diff contains the test source until it is excluded. What the reviewer gets
+  instead is the `cases` map from `tests.json`: acceptance criteria, which are a statement of
+  requirements with no test source in them.
+- **The diff excludes the ticket's context directory too, and that was found by using it.** The
+  first review pack quoted `impl-notes.md` — flux's handoff artifacts are committed beside the
+  code, so `git diff` hands the reviewer its own plumbing as if it were work under review,
+  including the artifacts the stage I/O table deliberately withholds. Excluding the ticket's
+  context directory, not all of `.flux/`, keeps a ticket that genuinely edits an ADR reviewable.
+- **Severity is the machine's business, so it is closed and configurable.** `[review]
+  fix_severities` (default `["blocker"]`) is the only part of a review flux acts on: those
+  findings set `open_findings`, turn the loop, and park the ticket when the passes run out.
+  Everything else is recorded and read by a human. Findings are deduped, numbered and sorted by
+  the *runner* rather than requested from the model — a duplicated blocker is one extra paid fix
+  session and one more chance to park.
+- **The fix stage is the implement stage's twin, on purpose.** Same guard object, same gate
+  suite (held-out included), same digest backstop, same granted directory — asserted equal in
+  pytest, because anywhere they differ is somewhere a session that could not game the first could
+  game the second.
+- **The reviewer re-reads the code, never the resolutions.** A fixer that marks a finding resolved
+  without changing anything gains nothing: the next pass hydrates from the diff, so the finding
+  comes back, and the loop bound turns a standoff into a park. That is also why the fix stage may
+  dispute a finding in writing — a dispute the next review does not repeat is settled, and one it
+  repeats is a disagreement for a human.
+- **Two stages now raise `ParkSignal` from `hydrate()`.** Review with an empty diff, fix with no
+  unresolved findings. `_run_stage` calls `hydrate` inside the runner's `ParkSignal` handler, so
+  this parks correctly having spent nothing — which is the point, since both conditions mean the
+  session could only discover, expensively, that there was no work.
 
 ## 3. Metrics store and A/B baseline (P0, per change doc A1/A2)
 

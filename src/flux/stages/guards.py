@@ -85,6 +85,58 @@ def source_stage_guard(ticket: TicketContext, settings: FluxConfig) -> PathGuard
     )
 
 
+def review_stage_guard(ticket: TicketContext) -> PathGuard:
+    """Allow-only: the reviewer writes its findings file and touches nothing else.
+
+    This is what makes the reviewer read-only, in place of the SDK's ``plan`` mode.
+    Plan mode is documented as "no execution of tools", which would also stop the
+    reviewer writing ``review.json`` — the one artifact the stage is judged on — so a
+    plan-mode reviewer parks every time. Confining writes to the context directory
+    forbids strictly more of the *repo* than plan mode does, and unlike a permission
+    mode it is flux's own data, so what the reviewer may write is a pytest assertion
+    rather than a property of the CLI.
+    """
+    return PathGuard(
+        name="review-read-only",
+        tools=EDIT_TOOLS,
+        root=ticket.worktree,
+        only_dirs=guarded_dirs(ticket.context_dir),
+        reason=(
+            "the review stage may not change the code it is reviewing. Write your "
+            "findings to the handoff artifact; the fix stage makes the changes."
+        ),
+    )
+
+
+def diff_exclusions(ticket: TicketContext, settings: FluxConfig) -> tuple[str, ...]:
+    """Git pathspecs for what the review diff must not contain.
+
+    Two kinds of thing, for two different reasons.
+
+    The **tests** are excluded because :func:`source_stage_guard` excludes them: a guard
+    stops a session reaching for a test file, and this stops one arriving unasked inside
+    a diff — the tests stage commits its work, so a ticket's diff contains the test
+    source unless it is taken out here. Both are derived from the same two facts (the
+    tests directory and the test-name globs), so widening one widens the other.
+
+    The **ticket's own context directory** is excluded because it is flux's plumbing,
+    not the change: ``tests.json`` and ``impl-notes.md`` are committed alongside the
+    code, and without this the reviewer would be shown its own inputs as if they were
+    work under review — including the handoff artifacts the stage I/O table deliberately
+    does not give it. Found by a review pack that quoted the very notes it was not
+    supposed to receive.
+    """
+    specs = [
+        f":(exclude,glob){settings.tests.dir}/**",
+        *(f":(exclude,glob)**/{pattern}" for pattern in TEST_NAME_GLOBS),
+    ]
+    try:
+        relative = ticket.context_dir.relative_to(ticket.worktree)
+    except ValueError:
+        return tuple(specs)  # a worktree elsewhere never contains the context dir
+    return (*specs, f":(exclude,glob){relative.as_posix()}/**")
+
+
 def has_held_out(ticket: TicketContext, settings: FluxConfig) -> bool:
     """Does this ticket have held-out tests? Most tickets do not."""
     directory = held_out_dir(ticket, settings)

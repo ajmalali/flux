@@ -4,7 +4,8 @@
 Claude Code (Python CLI, run inside target repos).
 
 Status: M0 complete; M1 in progress — executor seam, metrics store, runner spine, gates, repo
-map, the A/B baseline, and the `tests` + `implement` stages are in. Review, fix and pr are not.
+map, the A/B baseline, and the `tests` + `implement` + `review` + `fix` stages are in, so the
+review loop turns and parks on real stages. The `pr` stage is not.
 
 ## Session bootstrap (do this first, in order)
 

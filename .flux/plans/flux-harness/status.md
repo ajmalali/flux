@@ -1,6 +1,6 @@
 # flux-harness — status & next task
 
-Updated: 2026-08-18 (**T5.2 done** — the tests stage, the red step, the opaque runner, the PreToolUse guards and held-out tests all live and verified on a real run. Next: T5.3, review + fix stages)
+Updated: 2026-08-18 (**T5.3 done** — the review and fix stages are in, the loop turns and parks on real stages, and a planted defect was caught and fixed on a live run. Next: T5.4, the pr stage)
 
 ## Current state
 
@@ -30,9 +30,10 @@ Updated: 2026-08-18 (**T5.2 done** — the tests stage, the red step, the opaque
 - **Executor is usable now.** `ClaudeAgentSDKExecutor().run(pack, cfg)` works end to end and
   writes correct metrics lines. The runner drives any `Executor`; tests use fakes in
   `tests/fakes.py` (`FakeStage`/`FakeGate`/`FakeExecutor`) and never touch the SDK.
-- **What the rest of T5 plugs into.** Three more `Stage` implementations against the same
-  protocol, added to `flux.stages.build_pipeline`. Two stages are in (`tests`, `implement`) and
-  nothing in the runner or the gate layer had to change to accept the second one, which is the
+- **What the rest of T5 plugs into.** One more `Stage` implementation against the same protocol,
+  added to `flux.stages.build_pipeline`. Four stages are in (`tests`, `implement`, `review`,
+  `fix`) and the runner has not changed to accept any of them — including the two that turn the
+  review loop, which the transition function has been driving since T3 with fakes. That is the
   spine doing its job.
 - **T5.1 done — the harness can now be compared against not having it.** `src/flux/ab.py`
   (`flux run <ticket> --vanilla`: the ticket text, no pack, no repo map, no artifact contract,
@@ -64,6 +65,42 @@ Updated: 2026-08-18 (**T5.2 done** — the tests stage, the red step, the opaque
      (`reason="tests-modified"`), which catches every route rather than the predicted ones.
   3. *The tests stage must not run the test gate.* It is judged on red; a gate demanding green
      would fail every tests stage that worked. Lint and typecheck still run on the new files.
+- **T5.3 done — the pipeline is four stages and the loop closes.** `src/flux/diff.py` (a unified
+  diff parsed into files and hunks, addressable by `file:line`), `git.ticket_diff` (the ticket's
+  own change, bounded by its stage tags, ending at the *working tree* so uncommitted work is not
+  silently omitted), `src/flux/stages/review.py` (`ReviewStage`, `review.json`, findings deduped
+  and numbered by the runner) and `src/flux/stages/fix.py` (`FixStage`, whose pack is unresolved
+  findings plus only the hunks they point at). A `[review]` block in `flux.toml` holds
+  `fix_severities` — the only part of a review the machine acts on. 578 tests.
+  **Live run verified** on a scratch repo: tests → implement → review → completed; then a planted
+  defect (`if not sort:` where the ticket said any unrecognised value must raise) was caught by
+  the reviewer as a `correctness` blocker at the exact line, resolved by the fix stage, and the
+  loop turned three times before parking at `review-loop-exhausted`. 12 sessions, 210k uncached
+  in / 85k out over 21.5 minutes.
+- **The three things a future session should not re-derive about T5.3.**
+  1. *The reviewer is read-only by guard, not by `plan` mode — design.md is amended.* The SDK
+     documents `plan` as "Planning mode, no execution of tools", which also stops the reviewer
+     writing `review.json`, so every review pass would have parked on a missing artifact.
+     `review_stage_guard` confines writes to the ticket's context directory instead: strictly
+     more of the repo forbidden than plan mode, and provable in pytest rather than being a
+     property of the CLI. `[stages.review] permission_mode` is now `acceptEdits` by default.
+  2. *Blindfolding the reviewer is about the fix stage, not the reviewer.* `review.json` is read
+     by the stage that edits code, so a reviewer that could quote an assertion would hand back
+     through a finding exactly what the opaque gate withholds. Hence both `source_stage_guard`
+     (unchanged, shared with implement) *and* `diff_exclusions`, since the tests stage commits its
+     work and the ticket's own diff carries the test source until it is excluded. What the
+     reviewer gets instead is the `cases` map from `tests.json` — acceptance criteria, which state
+     the requirement without any test source in them.
+  3. *Widening `fix_severities` past `blocker` does not converge, and this was measured.* With
+     `["blocker", "major", "minor"]` set on the live repo, the loop ran three full fix↔review
+     passes and parked: the reviewer kept raising housekeeping findings the fixer could not close.
+     The default stays `["blocker"]`, and the docstring's warning is now an observation.
+- **A real flux behaviour the live review surfaced, recorded not fixed:** `stage_commit` does
+  `git add -A`, so in a target repo with no `.gitignore` it commits `__pycache__/*.pyc`. Those
+  files then sit in the ticket's diff forever, the reviewer correctly reports them, and *no fix
+  can remove them from the diff* — which is how the widened-severity loop above failed to
+  converge. Out of T5.3's scope; worth deciding at T5.4 (the pr stage is the natural place to
+  care what the branch contains).
 - **A latent bug the tests stage surfaced, now fixed:** the gate summariser only recognised
   pytest's totals line in its `=== decorated ===` form, but `-q` — which is in flux's own default
   gate command — prints it bare. Every `pytest -q` gate detail flux has ever recorded is missing
@@ -192,7 +229,8 @@ Updated: 2026-08-18 (**T5.2 done** — the tests stage, the red step, the opaque
     cannot see. Details in design.md §2 "as built (T5.2)"; the mechanics worth remembering are in
     Current state above. **Carried to T5.3:** the fix stage reuses `source_stage_guard` unchanged
     — it is built to be shared, and re-deriving a second policy there would be the bug.
-  - [ ] **T5.3 — review + fix stages: close the loop with real stages.** `ReviewStage`
+  - [x] **T5.3 — review + fix stages: close the loop with real stages. Done 2026-08-18.**
+    `ReviewStage`
     (different model, `plan` mode, hydrates from the `git diff` of the stage commits per T4c,
     produces `review.json`) and `FixStage` (unresolved-finding slices + the diff hunks they
     point at, never the whole of anything). T3's transition function already turns the loop and
@@ -298,6 +336,60 @@ Updated: 2026-08-18 (**T5.2 done** — the tests stage, the red step, the opaque
    surprises, deviations from design.md, or decisions made (new ADR if load-bearing).
 
 ## Log
+
+- 2026-08-18 — **T5.3 done: the review and fix stages, and the first loop that turns on real
+  stages.** Four deliverables — a diff layer, a reviewer, a fixer, and the `[review]` policy that
+  connects them — plus a live run that ended in exactly the park it should have. What is worth
+  carrying forward, beyond the code:
+  - **The design's `plan` mode for the reviewer could not have worked, and finding that cost
+    nothing because the SDK says so in one line.** `permission_mode="plan"` is documented as
+    "Planning mode, no execution of tools" — which includes writing `review.json`, the artifact
+    the stage is judged on. A plan-mode reviewer parks every single time. The replacement is
+    better rather than merely workable: `review_stage_guard` is allow-only on the ticket's
+    context directory, so the reviewer may write its findings and *nothing else in the repo* —
+    strictly more forbidden than plan mode, and a pytest assertion instead of a property of the
+    CLI. design.md's stage I/O table is amended rather than quietly contradicted.
+  - **The reviewer is blindfolded to the tests for the fix stage's sake, not its own.** This was
+    the substantive design call. `review.json` is read by a stage that edits code, so a reviewer
+    free to quote an assertion hands back through a finding precisely what the opaque test gate
+    withholds — the whole T5.2 mechanism, defeated by a well-meaning code excerpt. So both the
+    guard (it cannot reach a test) and `diff_exclusions` (a test cannot reach it): the tests stage
+    *commits* its work, so the ticket's own `git diff` carries the test source until it is taken
+    out. In exchange the reviewer gets the `cases` map from `tests.json` — the acceptance criteria,
+    which are a statement of requirements with no test source in them.
+  - **Using the pack found a leak the design did not predict.** The first review pack quoted
+    `impl-notes.md`. flux's handoff artifacts live under `.flux/context/<ticket>/` and are
+    committed beside the code, so `git diff` hands the reviewer flux's own plumbing as if it were
+    work under review — including the artifacts the stage I/O table deliberately withholds from
+    it. The exclusion is the *ticket's* context directory rather than all of `.flux/`, so a ticket
+    that genuinely edits an ADR is still reviewable. Assertions about what a pack does not contain
+    are worth writing: two of them caught this.
+  - **`fix_severities` widened past `blocker` does not converge — measured, not predicted.** With
+    `["blocker", "major", "minor"]` on the live scratch repo, the loop ran three full fix↔review
+    passes and parked at `review-loop-exhausted`. The reviewer was not wrong on any pass; it kept
+    finding housekeeping the fixer could not close. The default stays `["blocker"]` and the
+    docstring's warning is now an observation, which is the version worth having.
+  - **The live run's headline: a planted defect caught at the exact line, and fixed.** The ticket
+    said any unrecognised `sort=` value must raise; the code was quietly changed to `if not sort:`,
+    which silently accepts `""` and `0`. The tests did not cover it and the gates were green. The
+    reviewer raised it as `correctness` at `report.py:11`, described the failing input, and the
+    fix stage restored `if sort is None:`. That is the case ADR 0005 puts the reviewer there for —
+    the defect a machine cannot see — and it is the first time flux has caught one.
+  - **The loop's bound is only meaningful because both halves are bounded.** Two stages now raise
+    `ParkSignal` from `hydrate()` — review on an empty diff, fix with no unresolved findings —
+    which parks having spent nothing, because `_run_stage` calls `hydrate` inside the runner's
+    park handler. Both conditions mean a session could only have discovered, expensively, that
+    there was no work.
+  - **The fix stage is the implement stage's twin, asserted rather than described.** Same guard
+    object, same gate suite, same digest backstop, same granted directory, compared field by field
+    in `test_fix_stage.py`. Anywhere those two diverge is somewhere a session that could not game
+    the first stage could game the second — and this is the second place a session is told "make
+    the gate go green".
+  - **One flux behaviour recorded and deliberately not fixed:** `stage_commit` runs `git add -A`,
+    so a target repo without a `.gitignore` gets its `__pycache__/*.pyc` committed, after which
+    those files are in the ticket's diff permanently and no fix stage can remove them. That is how
+    the widened-severity loop above failed to converge. It belongs to T5.4, where the pr stage has
+    to decide what a flux branch may contain.
 
 - 2026-08-18 — **T5.2 done: the tests stage, and the first hardening that is structural rather
   than requested.** Five deliverables, all live-verified on a scratch repo in one run.

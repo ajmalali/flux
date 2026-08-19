@@ -331,7 +331,7 @@ def test_red_step_problem_names_each_way_a_run_falls_short() -> None:
 
 def test_the_shipping_pipeline_writes_tests_before_it_writes_code(tmp_path: Path) -> None:
     stage, _ = make(tmp_path)
-    assert build_pipeline(stage.settings).names == ("tests", "implement")
+    assert build_pipeline(stage.settings).names == ("tests", "implement", "review", "fix")
 
 
 # -- end to end: tests, then implement, in a real repo ----------------------------
@@ -339,7 +339,7 @@ def test_the_shipping_pipeline_writes_tests_before_it_writes_code(tmp_path: Path
 
 @dataclass
 class ScriptedExecutor:
-    """Plays both stages: writes the tests, then the code and the handoff note."""
+    """Plays the pipeline: the tests, then the code and the note, then a clean review."""
 
     ticket: TicketContext
     implementation: str = IMPLEMENTATION
@@ -354,6 +354,10 @@ class ScriptedExecutor:
         self.calls.append((pack, cfg))
         if "tests stage" in pack.system_prompt:
             write(self.ticket, tests={"tests/test_greet.py": RED_TEST})
+        elif "review stage" in pack.system_prompt:
+            (self.ticket.context_dir / "review.json").write_text(
+                json.dumps({"summary": "sound", "findings": []}), encoding="utf-8"
+            )
         else:
             (self.ticket.worktree / "greet.py").write_text(self.implementation, encoding="utf-8")
             if self.edit_tests_at_implement:
@@ -416,9 +420,9 @@ def test_a_ticket_flows_red_tests_then_green_implementation(tmp_path: Path) -> N
     result, _, executor = drive(root)
 
     assert result.completed
-    assert result.stages_run == ("tests", "implement")
+    assert result.stages_run == ("tests", "implement", "review")
     assert (root / "greet.py").exists()
-    assert len(executor.calls) == 2
+    assert len(executor.calls) == 3
 
 
 def test_the_implement_session_is_handed_paths_and_failures_never_bodies(tmp_path: Path) -> None:

@@ -94,7 +94,7 @@ def test_a_config_round_trips_through_toml(tmp_path: Path) -> None:
     assert loaded.stage_commits is False
     assert loaded.ab == original.ab
     assert loaded.stages["implement"] == original.stages["implement"]
-    assert loaded.stages["review"].permission_mode == "plan"
+    assert loaded.review == original.review
 
 
 def test_the_rendered_config_is_valid_toml(tmp_path: Path) -> None:

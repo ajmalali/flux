@@ -16,11 +16,13 @@ from flux.cli import (
     build_parser,
     main,
 )
+from flux.config import FluxConfig
 from flux.errors import BillingPolicyError
 from flux.executor import AuthStatus
 from flux.metrics import MetricRecord, MetricsStore
 from flux.runner.checkpoint import Checkpoint, CheckpointStore, ParkRecord, RunState
 from flux.runner.context import TicketContext
+from flux.stages import build_pipeline
 
 PLANNED = ["research", "plan", "tickets"]
 IMPLEMENTED = ["metrics", "doctor", "status", "init", "run", "unpark", "index"]
@@ -244,8 +246,8 @@ def test_status_says_so_once_the_pipeline_is_complete(
 ) -> None:
     ticket = TicketContext(ticket_id="flux-1", root=tmp_path)
     store = CheckpointStore(ticket.state_dir)
-    store.write(Checkpoint(stage="tests"))
-    store.write(Checkpoint(stage="implement"))
+    for stage in build_pipeline(FluxConfig.load(tmp_path)).names:
+        store.write(Checkpoint(stage=stage))
 
     assert main(["status", "flux-1", "--root", str(tmp_path)]) == EXIT_OK
     assert "pipeline is complete" in capsys.readouterr().out

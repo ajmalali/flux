@@ -116,13 +116,19 @@ class StageProfile:
         )
 
 
-# plan.md §3 routing table. Review deliberately runs a *different* model from the
-# stage that wrote the code, and reads only — a reviewer that can edit is not a reviewer.
+# plan.md §3 routing table. Review deliberately runs a *different* model from the stage
+# that wrote the code, and may not touch it — a reviewer that can edit is not a reviewer.
+#
+# Its read-only-ness is a flux guard, not the SDK's `plan` mode. design.md originally
+# specified plan mode; the SDK documents it as "Planning mode, no execution of tools",
+# which also stops the reviewer writing `review.json` — the artifact the stage is judged
+# on. `review_stage_guard` confines every write to the ticket's context directory
+# instead, which forbids more of the repo than plan mode and is provable in pytest.
 DEFAULT_STAGE_PROFILES: Mapping[str, StageProfile] = MappingProxyType(
     {
         "tests": StageProfile(model=SONNET, effort="high"),
         "implement": StageProfile(model=SONNET, effort="high"),
-        "review": StageProfile(model=OPUS, effort="high", permission_mode="plan", max_turns=30),
+        "review": StageProfile(model=OPUS, effort="high", max_turns=30),
         "fix": StageProfile(model=SONNET, effort="high"),
         "pr": StageProfile(model=HAIKU, effort="low", max_turns=15),
     }
@@ -153,6 +159,67 @@ class AbConfig:
             raise ConfigError(f"[ab] vanilla_every must not be negative, got {self.vanilla_every}")
         if self.kill_streak <= 0:
             raise ConfigError(f"[ab] kill_streak must be positive, got {self.kill_streak}")
+
+
+SEVERITIES: tuple[str, ...] = ("blocker", "major", "minor", "nit")
+"""Review severities, most serious first. A closed set because the fix loop keys off
+it: a severity nobody defined is a finding nobody can route."""
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewConfig:
+    """What the reviewer is asked for, and which of its findings turn the fix loop."""
+
+    fix_severities: tuple[str, ...] = ("blocker",)
+    """Severities that must be resolved before the ticket may move on (design.md's
+    stage I/O table: *blocker findings force fix stage*).
+
+    Deliberately narrow. Every severity in here is one the review↔fix loop will spend
+    a paid session on and, at ``max_review_iters``, park a ticket over — so widening it
+    converts advisory findings into blocking ones. Lower severities are still recorded
+    in ``review.json`` and still read by a human; they simply do not turn the loop.
+    """
+
+    max_diff_chars: int = 60_000
+    """Cap on the diff the reviewer is shown. Truncation drops whole files and says so
+    (a half-shown hunk reads as a complete one)."""
+
+    max_hunks: int = 12
+    """Diff hunks the fix stage carries. The pack is findings plus the hunks they point
+    at; past a dozen the ticket is too big, which is a decomposition problem rather than
+    a context-window one."""
+
+    def __post_init__(self) -> None:
+        unknown = [s for s in self.fix_severities if s not in SEVERITIES]
+        if unknown:
+            raise ConfigError(
+                f"[review] fix_severities has unknown severities: {unknown} — "
+                f"expected some of {list(SEVERITIES)}"
+            )
+        if not self.fix_severities:
+            raise ConfigError(
+                "[review] fix_severities must name at least one severity; with none, no "
+                "finding could ever route to the fix stage and the reviewer is decoration"
+            )
+        if self.max_diff_chars <= 0:
+            raise ConfigError(
+                f"[review] max_diff_chars must be positive, got {self.max_diff_chars}"
+            )
+        if self.max_hunks <= 0:
+            raise ConfigError(f"[review] max_hunks must be positive, got {self.max_hunks}")
+
+    def blocks(self, severity: str) -> bool:
+        return severity in self.fix_severities
+
+    def to_toml(self) -> str:
+        return "\n".join(
+            [
+                "[review]",
+                f"fix_severities = {list(self.fix_severities)!r}".replace("'", '"'),
+                f"max_diff_chars = {self.max_diff_chars}",
+                f"max_hunks = {self.max_hunks}",
+            ]
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,6 +290,7 @@ class FluxConfig:
     ab: AbConfig = field(default_factory=AbConfig)
     repo_map: RepoMapConfig = field(default_factory=RepoMapConfig)
     tests: TestsConfig = field(default_factory=TestsConfig)
+    review: ReviewConfig = field(default_factory=ReviewConfig)
     schema_version: int = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -325,6 +393,7 @@ class FluxConfig:
             ab=_ab(_table(payload, "ab")),
             repo_map=_repo_map(_table(payload, "repo_map")),
             tests=_tests(_table(payload, "tests")),
+            review=_review(_table(payload, "review")),
             schema_version=version,
         )
 
@@ -395,6 +464,11 @@ class FluxConfig:
                 "# not write here at all (ADR 0005). An empty 'command' means 'whatever the",
                 "# test gate runs', so the red step and the gate cannot measure differently.",
                 self.tests.to_toml(),
+                "",
+                "# The reviewer is advisory and runs on a different model (ADR 0005).",
+                "# 'fix_severities' is the only part of its verdict the machine acts on:",
+                "# those findings turn the review-fix loop and, unresolved, park the ticket.",
+                self.review.to_toml(),
             ]
         )
         return "\n".join(blocks).rstrip() + "\n"
@@ -505,6 +579,23 @@ def _tests(table: JsonMapping) -> TestsConfig:
         gate=_str(table, "gate", default.gate),
         held_out_dir=_str(table, "held_out_dir", default.held_out_dir),
         timeout_s=_int(table, "timeout_s", default.timeout_s),
+    )
+
+
+def _review(table: JsonMapping) -> ReviewConfig:
+    default = ReviewConfig()
+    raw = table.get("fix_severities")
+    if raw is None:
+        severities = default.fix_severities
+    else:
+        items = as_json_list(raw)
+        if items is None:
+            raise ConfigError("[review] fix_severities must be a list of severity names")
+        severities = tuple(str(item) for item in items)
+    return ReviewConfig(
+        fix_severities=severities,
+        max_diff_chars=_int(table, "max_diff_chars", default.max_diff_chars),
+        max_hunks=_int(table, "max_hunks", default.max_hunks),
     )
 
 

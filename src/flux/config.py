@@ -274,6 +274,74 @@ class TestsConfig:
         )
 
 
+PR_CREATE_MODES: tuple[str, ...] = ("auto", "always", "never")
+"""How hard the pr stage tries to open the pull request itself. ``auto`` opens one when
+``gh`` is there and shrugs when it is not; ``always`` treats a failure to open one as a
+park; ``never`` pushes the branch and stops."""
+
+
+@dataclass(frozen=True, slots=True)
+class PrConfig:
+    """Where a finished ticket lands, and what flux refuses to do to get it there.
+
+    This is the one block whose defaults are about *restraint*. Every other stage acts
+    inside a checkout that git can reset; the pr stage is the first that leaves the
+    machine, and a push cannot be undone by ``git reset --hard``.
+    """
+
+    push: bool = True
+    """Push the branch when the stage stands. Turning this off leaves a repo whose pr
+    stage writes the body and stops — legitimate for a repo with nowhere to land, and
+    the only supported way to say so, since a push that *cannot* happen is a failure
+    (ADR 0005: a gate that cannot run has failed)."""
+
+    remote: str = "origin"
+
+    base: str = ""
+    """Branch the pull request targets. Empty means the remote's own default."""
+
+    branch_prefix: str = "flux/"
+    """Prefix for the branch flux opens when the checked-out one may not be pushed."""
+
+    protected_branches: tuple[str, ...] = ("main", "master", "trunk", "develop")
+    """Branches flux will never push to. Work done on one of these is pushed to
+    ``<branch_prefix><ticket>`` instead — HEAD goes somewhere safe rather than the
+    ticket parking after every stage but the last one succeeded."""
+
+    create: str = "auto"
+    draft: bool = True
+    """Open pull requests as drafts. An unattended harness asking for review is asking
+    a human for time; a draft asks for it without also claiming the work is ready."""
+
+    def __post_init__(self) -> None:
+        if self.create not in PR_CREATE_MODES:
+            raise ConfigError(f"[pr] create {self.create!r} not one of {list(PR_CREATE_MODES)}")
+        if self.push and not self.remote.strip():
+            raise ConfigError("[pr] remote must be named when push is on")
+        if not self.branch_prefix.strip():
+            raise ConfigError(
+                "[pr] branch_prefix must not be empty — without it, a ticket on a "
+                "protected branch has nowhere to be pushed"
+            )
+
+    def protects(self, branch: str) -> bool:
+        return branch in self.protected_branches
+
+    def to_toml(self) -> str:
+        return "\n".join(
+            [
+                "[pr]",
+                f"push = {str(self.push).lower()}",
+                f'remote = "{self.remote}"',
+                f'base = "{self.base}"',
+                f'branch_prefix = "{self.branch_prefix}"',
+                f"protected_branches = {list(self.protected_branches)!r}".replace("'", '"'),
+                f'create = "{self.create}"',
+                f"draft = {str(self.draft).lower()}",
+            ]
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class FluxConfig:
     """The whole of a target repo's flux configuration."""
@@ -291,6 +359,7 @@ class FluxConfig:
     repo_map: RepoMapConfig = field(default_factory=RepoMapConfig)
     tests: TestsConfig = field(default_factory=TestsConfig)
     review: ReviewConfig = field(default_factory=ReviewConfig)
+    pr: PrConfig = field(default_factory=PrConfig)
     schema_version: int = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -394,6 +463,7 @@ class FluxConfig:
             repo_map=_repo_map(_table(payload, "repo_map")),
             tests=_tests(_table(payload, "tests")),
             review=_review(_table(payload, "review")),
+            pr=_pr(_table(payload, "pr")),
             schema_version=version,
         )
 
@@ -469,6 +539,11 @@ class FluxConfig:
                 "# 'fix_severities' is the only part of its verdict the machine acts on:",
                 "# those findings turn the review-fix loop and, unresolved, park the ticket.",
                 self.review.to_toml(),
+                "",
+                "# Where a finished ticket lands. flux never pushes to a protected branch",
+                "# and never force-pushes: the push is the one thing a git reset cannot",
+                "# undo, so it is the one place the defaults are about restraint.",
+                self.pr.to_toml(),
             ]
         )
         return "\n".join(blocks).rstrip() + "\n"
@@ -596,6 +671,27 @@ def _review(table: JsonMapping) -> ReviewConfig:
         fix_severities=severities,
         max_diff_chars=_int(table, "max_diff_chars", default.max_diff_chars),
         max_hunks=_int(table, "max_hunks", default.max_hunks),
+    )
+
+
+def _pr(table: JsonMapping) -> PrConfig:
+    default = PrConfig()
+    raw = table.get("protected_branches")
+    if raw is None:
+        protected = default.protected_branches
+    else:
+        items = as_json_list(raw)
+        if items is None:
+            raise ConfigError("[pr] protected_branches must be a list of branch names")
+        protected = tuple(str(item) for item in items)
+    return PrConfig(
+        push=_bool(table, "push", default.push),
+        remote=_str(table, "remote", default.remote),
+        base=_str(table, "base", default.base),
+        branch_prefix=_str(table, "branch_prefix", default.branch_prefix),
+        protected_branches=protected,
+        create=_str(table, "create", default.create),
+        draft=_bool(table, "draft", default.draft),
     )
 
 

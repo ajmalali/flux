@@ -290,7 +290,7 @@ not grow monotonically across stages.
 | implement | brief · pack · **test paths + red output** (not test bodies) | Sonnet/high · acceptEdits · PreToolUse blocks test-file edits + dangerous cmds | `impl-notes.md`: what changed, deviations from plan, discovered work (→ bd `discovered-from`) | gates: lint, typecheck, **opaque test run** (pass/fail + minimal diagnostics), coverage delta; held-out tests run here too |
 | review | brief · acceptance criteria · diff (`git diff` of stage commits, tests excluded) · rubric · plan/ADR summary | **different model**/high · writes confined to the context dir · PreToolUse blocks reading tests · no Bash | `review.json`: findings (severity, file:line, rationale, rubric axis) | schema-valid; findings deduped; blocking-severity findings force fix stage |
 | fix | **unresolved findings slices** + referenced diff hunks | Sonnet/high · acceptEdits · same blocks as implement | updated `review.json` resolutions | full gate suite reruns; reviewer re-invoked only if gates pass |
-| pr | impl-notes · resolved review · commit log | Haiku/low (or local, later) | PR body + pushed branch | `git push` succeeded; CI triggered ("land the plane") |
+| pr | impl-notes · resolved review · commit log | Haiku/low · writes confined to the context dir · no Bash | `pr.md`: title + Summary/Changes/Review/Risk | gates green on the tree being pushed; the branch read back out of the remote at the local sha (see T5.4 below on "CI triggered") |
 
 The opaque test runner is a flux subprocess wrapper: it runs the suite (including held-out tests
 stored outside the worktree) and returns `{passed, failed: [test names], first_assertion_line}`
@@ -387,6 +387,52 @@ whole diff, the fixer reads only the hunks its findings point at.
   unresolved findings. `_run_stage` calls `hydrate` inside the runner's `ParkSignal` handler, so
   this parks correctly having spent nothing — which is the point, since both conditions mean the
   session could only discover, expensively, that there was no work.
+
+### The pr stage, as built (T5.4)
+
+The last stage, and the one whose split between session and runner is drawn furthest towards the
+runner. The session writes prose into `pr.md` — a title and four body sections — and has no Bash,
+no reach outside the ticket's context directory, and no knowledge of git. Everything that is a
+*fact* is the runner's: it runs the gate suite one last time on the exact tree it is about to
+push, pushes `HEAD` by refspec, re-reads the ref out of the remote, and opens the pull request.
+
+- **"`git push` succeeded" is verified against the remote, not against an exit status.** A zero
+  exit from `git push` is the subprocess equivalent of a transcript claim. `git.push_head`
+  re-reads `<remote>/<branch>` with `ls-remote` afterwards and compares it with the local commit,
+  so `PushResult.ok` means the remote genuinely holds that sha.
+- **"CI triggered" is *not* claimed — a correction to the table above.** Whether a push starts a
+  pipeline is a property of the forge's configuration, and flux has no way to observe it that is
+  not polling a provider it does not know about. flux states what it measured (the branch exists
+  at this sha; this suite was green on it) and states nothing else. The provenance footer flux
+  appends to every body carries exactly those two facts, which is why it is written by the runner
+  rather than asked of the session.
+- **HEAD is pushed by refspec, so the local checkout never moves.** `HEAD:refs/heads/<target>`
+  puts the work on the remote with no checkout, no branch creation, and no change to the tree a
+  human may be sitting in. That is also what makes the protected-branch rule cheap: work done on
+  `main` goes to `flux/<ticket>` instead of parking a ticket whose every other stage succeeded.
+- **Three refusals, in `[pr]`.** Never a protected branch (`main`, `master`, `trunk`, `develop`
+  by default); never `--force`, since a remote branch that already exists and does not contain
+  this work is a collision for a human; drafts by default, because an unattended harness asking
+  for review is asking a person for time and a draft asks without also claiming readiness.
+- **A push that cannot happen has failed** — ADR 0005's gate rule, applied to landing. A repo with
+  no matching remote parks (`reason="no-remote"`) rather than reporting a completed ticket that
+  went nowhere; `[pr] push = false` is the supported way for a repo to mean "this lands nowhere",
+  and then the stage writes the body and stands.
+- **Opening the pull request is best-effort by default, and says so.** `gh` is used because it
+  already holds the user's credentials — the same reason flux runs on the logged-in subscription
+  (ADR 0010): flux does not want to be told a token. `[pr] create` is `auto` (open one if `gh` can,
+  record why not otherwise), `always` (a failure to open one parks) or `never`. A branch that
+  landed with no pull request is most of the job done, so `auto` does not park over it.
+- **The gate suite runs a third time, deliberately.** The tree has not changed since implement or
+  fix passed it, so this re-measures something already measured — for the cheapest evidence in the
+  pipeline: a green suite recorded against the exact sha that lands, which is the difference
+  between a pull request that *says* the gates passed and one that shows it.
+- **Build output is excluded from what flux commits and from what it calls a diff.** T5.3 observed
+  that `git add -A` in a repo with no `.gitignore` commits `__pycache__/*.pyc`, that the reviewer
+  correctly reports them, and that *no fix can remove them from the diff* — so the loop cannot
+  converge. `git.JUNK_GLOBS` is excluded at staging time and from `ticket_diff`. It applies to
+  staging only, so a repo that already tracks such a file keeps tracking it: what a repo commits
+  is that repo's decision.
 
 ## 3. Metrics store and A/B baseline (P0, per change doc A1/A2)
 

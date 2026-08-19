@@ -4,8 +4,9 @@
 Claude Code (Python CLI, run inside target repos).
 
 Status: M0 complete; M1 in progress — executor seam, metrics store, runner spine, gates, repo
-map, the A/B baseline, and the `tests` + `implement` + `review` + `fix` stages are in, so the
-review loop turns and parks on real stages. The `pr` stage is not.
+map, the A/B baseline, and all five stages (`tests`, `implement`, `review`, `fix`, `pr`) are in,
+so a ticket runs end to end and lands on a pushed, verified branch. Remaining for M1: the review
+bake-off (T5.5) and the exit benchmark (T5.6).
 
 ## Session bootstrap (do this first, in order)
 

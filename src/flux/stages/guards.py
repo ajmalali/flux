@@ -1,10 +1,13 @@
-"""The two ``PreToolUse`` guards the pipeline runs on (ADR 0005, design.md I/O table).
+"""The ``PreToolUse`` guards the pipeline runs on (ADR 0005, design.md I/O table).
 
-Both exist because of the same failure: pre-written tests plus "make them pass" is the
+Two of them exist because of the same failure: pre-written tests plus "make them pass" is the
 canonical reward-hacking target, and the cheapest way to pass a test is to change it.
 So the stage that writes the tests may write nothing else, and the stages that write
 the code may not reach the tests at all. Neither is a request in a prompt — a prompt is
 a behavioural control and ADR 0005 is explicit that the hardening is structural.
+
+The other two are the mirror image: the stages that *judge* a change may not make one,
+so writing is confined to the handoff artifact they are judged on.
 
 The guards are built here rather than inside a stage so the implement and fix stages
 (and anything later that edits code) are provably guarded by the *same* policy object.
@@ -85,25 +88,53 @@ def source_stage_guard(ticket: TicketContext, settings: FluxConfig) -> PathGuard
     )
 
 
-def review_stage_guard(ticket: TicketContext) -> PathGuard:
-    """Allow-only: the reviewer writes its findings file and touches nothing else.
+def handoff_only_guard(ticket: TicketContext, *, name: str, reason: str) -> PathGuard:
+    """Allow-only: this stage writes its handoff artifact and touches nothing else.
 
-    This is what makes the reviewer read-only, in place of the SDK's ``plan`` mode.
-    Plan mode is documented as "no execution of tools", which would also stop the
-    reviewer writing ``review.json`` — the one artifact the stage is judged on — so a
-    plan-mode reviewer parks every time. Confining writes to the context directory
-    forbids strictly more of the *repo* than plan mode does, and unlike a permission
-    mode it is flux's own data, so what the reviewer may write is a pytest assertion
-    rather than a property of the CLI.
+    The shape the two *judging* stages share. It is what makes the reviewer read-only
+    in place of the SDK's ``plan`` mode: plan mode is documented as "no execution of
+    tools", which would also stop the reviewer writing ``review.json`` — the one
+    artifact the stage is judged on — so a plan-mode reviewer parks every time.
+    Confining writes to the context directory forbids strictly more of the *repo* than
+    plan mode does, and unlike a permission mode it is flux's own data, so what the
+    stage may write is a pytest assertion rather than a property of the CLI.
     """
     return PathGuard(
-        name="review-read-only",
+        name=name,
         tools=EDIT_TOOLS,
         root=ticket.worktree,
         only_dirs=guarded_dirs(ticket.context_dir),
+        reason=reason,
+    )
+
+
+def review_stage_guard(ticket: TicketContext) -> PathGuard:
+    """The reviewer writes its findings file and touches nothing else."""
+    return handoff_only_guard(
+        ticket,
+        name="review-read-only",
         reason=(
             "the review stage may not change the code it is reviewing. Write your "
             "findings to the handoff artifact; the fix stage makes the changes."
+        ),
+    )
+
+
+def pr_stage_guard(ticket: TicketContext) -> PathGuard:
+    """The pr stage describes the change; it is the last stage that may not make one.
+
+    By the time it runs, the gates have passed on a specific tree and the runner is
+    about to push exactly that tree. An edit here would mean the branch that lands is
+    not the branch that was verified — the pr session would be the one participant in
+    the pipeline whose work nothing checks.
+    """
+    return handoff_only_guard(
+        ticket,
+        name="pr-write-body-only",
+        reason=(
+            "the pr stage may not change the code it is describing. The gates have "
+            "already passed on this tree and it is what will be pushed; write the pull "
+            "request body to the handoff artifact and nothing else."
         ),
     )
 

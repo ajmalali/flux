@@ -56,6 +56,14 @@ IMPLEMENTATION = "def greet(name):\n    return f'hello, {name}'\n"
 
 NOTES = "## Changed\n\ngreet.py\n\n## Deviations\n\nNone.\n\n## Discovered work\n\nNone.\n"
 
+PR_BODY = (
+    "## Title\n\nAdd greet(name)\n\n"
+    "## Summary\n\nAdds a greeting helper.\n\n"
+    "## Changes\n\n- greet.py: new greet(name)\n\n"
+    "## Review\n\nNone.\n\n"
+    "## Risk\n\nNone.\n"
+)
+
 
 def artifact(files: list[str]) -> str:
     return json.dumps(
@@ -331,7 +339,13 @@ def test_red_step_problem_names_each_way_a_run_falls_short() -> None:
 
 def test_the_shipping_pipeline_writes_tests_before_it_writes_code(tmp_path: Path) -> None:
     stage, _ = make(tmp_path)
-    assert build_pipeline(stage.settings).names == ("tests", "implement", "review", "fix")
+    assert build_pipeline(stage.settings).names == (
+        "tests",
+        "implement",
+        "review",
+        "fix",
+        "pr",
+    )
 
 
 # -- end to end: tests, then implement, in a real repo ----------------------------
@@ -358,6 +372,8 @@ class ScriptedExecutor:
             (self.ticket.context_dir / "review.json").write_text(
                 json.dumps({"summary": "sound", "findings": []}), encoding="utf-8"
             )
+        elif "pr stage" in pack.system_prompt:
+            (self.ticket.context_dir / "pr.md").write_text(PR_BODY, encoding="utf-8")
         else:
             (self.ticket.worktree / "greet.py").write_text(self.implementation, encoding="utf-8")
             if self.edit_tests_at_implement:
@@ -396,6 +412,9 @@ def scratch_repo(tmp_path: Path) -> Path:
                 'name = "test"',
                 'kind = "pytest"',
                 f'command = ["{PY}", "-m", "pytest", "-q", "-rf"]',
+                "[pr]",
+                # No remote here; `tests/test_pr_stage.py` owns the push.
+                "push = false",
             ]
         )
         + "\n",
@@ -420,9 +439,9 @@ def test_a_ticket_flows_red_tests_then_green_implementation(tmp_path: Path) -> N
     result, _, executor = drive(root)
 
     assert result.completed
-    assert result.stages_run == ("tests", "implement", "review")
+    assert result.stages_run == ("tests", "implement", "review", "pr")
     assert (root / "greet.py").exists()
-    assert len(executor.calls) == 3
+    assert len(executor.calls) == 4
 
 
 def test_the_implement_session_is_handed_paths_and_failures_never_bodies(tmp_path: Path) -> None:

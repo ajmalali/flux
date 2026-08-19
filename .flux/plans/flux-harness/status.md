@@ -1,6 +1,6 @@
 # flux-harness — status & next task
 
-Updated: 2026-08-18 (**T5.3 done** — the review and fix stages are in, the loop turns and parks on real stages, and a planted defect was caught and fixed on a live run. Next: T5.4, the pr stage)
+Updated: 2026-08-19 (**T5.4 done** — the pipeline is five stages and a live ticket ran unattended to a pushed, verified branch. Next: T5.5, the review bake-off)
 
 ## Current state
 
@@ -95,6 +95,45 @@ Updated: 2026-08-18 (**T5.3 done** — the review and fix stages are in, the loo
      `["blocker", "major", "minor"]` set on the live repo, the loop ran three full fix↔review
      passes and parked: the reviewer kept raising housekeeping findings the fixer could not close.
      The default stays `["blocker"]`, and the docstring's warning is now an observation.
+- **T5.4 done — the pipeline is five stages and a ticket lands.** `src/flux/stages/pr.py`
+  (`PrStage`, `pr.md`, `parse_artifact`, the runner-written provenance footer), a `[pr]` config
+  block, `pr_stage_guard` (and `handoff_only_guard`, now shared with the reviewer), and five new
+  `git` helpers — `current_branch`, `remotes`, `default_branch`, `remote_sha`, `push_head`,
+  `ticket_log`. 617 tests.
+  **Live run verified** on a scratch repo with a bare remote: tests → implement → review → pr,
+  four sessions, no retries, 108k uncached in / 20k out over 4.5 minutes (~$1.29 secondary).
+  The local checkout stayed on `main`; the remote holds only `flux/wc-1`, at exactly the local
+  HEAD. Haiku/low wrote a genuinely usable body.
+- **The three things a future session should not re-derive about T5.4.**
+  1. *The session writes prose; the runner does every fact.* No Bash is granted, and that is
+     load-bearing rather than an economy — a session that could run `git push` would make "the
+     runner verified the push" a statement about which process ran a command instead of a
+     property of the design. `push_head` re-reads the ref from the remote and compares it with
+     the local sha, because a zero exit from `git push` is the subprocess equivalent of a
+     transcript claim.
+  2. *"CI triggered" was dropped from the contract, not quietly skipped.* design.md's table
+     asked `commit()` to verify it. Whether a push starts a pipeline is the forge's business and
+     flux cannot observe it without polling a provider it does not know about, so the stage says
+     what it measured — the branch exists at this sha, this suite was green on it — and nothing
+     else. The table is amended.
+  3. *HEAD is pushed by refspec, so a protected branch costs nothing.* `HEAD:refs/heads/<target>`
+     needs no checkout and no branch creation, so work done on `main` goes to `flux/<ticket>`
+     rather than parking a ticket whose every other stage succeeded. A missing *remote*, by
+     contrast, does park (ADR 0005: a check that cannot run has failed) — `[pr] push = false` is
+     how a repo says it lands nowhere.
+- **The T5.3 junk-commit decision, made and implemented:** `git.JUNK_GLOBS` (`__pycache__`,
+  `*.pyc`, `.DS_Store`, `.venv`, `node_modules`, the cache dirs) is excluded from what
+  `stage_commit` stages *and* from what `ticket_diff` calls the change. Excluding at staging
+  rather than cleaning the tree means flux never has to decide how to unstage; applying it to
+  staging only means a repo that already tracks such a file keeps tracking it, which is the same
+  rule `flux init` follows for `.flux/.gitignore` — what a repo commits is that repo's decision.
+- **A new observation from the T5.4 live run, recorded not fixed:** on the *first* ticket in a
+  repo where `.flux/` was untracked, the tests stage's `git add -A` sweeps the whole scaffold
+  into that ticket's diff, and the pr body then lists ".flux project scaffolding" among the
+  changes. Not junk — `flux.toml` genuinely belongs in the repo (ADR 0006) — but it belongs
+  there by the operator's commit, not inside ticket 1. First-run-only, cosmetic, and the obvious
+  fix (excluding `.flux/**` from stage commits) would stop the handoff artifacts being committed,
+  which the design wants. Left alone deliberately; revisit if worktrees (M5) change the shape.
 - **A real flux behaviour the live review surfaced, recorded not fixed:** `stage_commit` does
   `git add -A`, so in a target repo with no `.gitignore` it commits `__pycache__/*.pyc`. Those
   files then sit in the ticket's diff forever, the reviewer correctly reports them, and *no fix
@@ -236,8 +275,11 @@ Updated: 2026-08-18 (**T5.3 done** — the review and fix stages are in, the loo
     point at, never the whole of anything). T3's transition function already turns the loop and
     parks at `max_review_iters`; this is the first time real stages drive it.
     Assert the reference-not-paste invariant here: pack size must not grow monotonically.
-  - [ ] **T5.4 — pr stage.** Haiku/low, PR body from impl-notes + resolved review + commit log,
-    branch pushed, "land the plane" verified by the runner rather than claimed by the session.
+  - [x] **T5.4 — pr stage. Done 2026-08-19.** Haiku/low, `pr.md` (title + Summary/Changes/
+    Review/Risk) from impl-notes + resolved review + commit log; the runner runs the gates on
+    the tree it is about to push, pushes `HEAD` by refspec, and re-reads the ref out of the
+    remote to confirm the sha. **"CI triggered" is deliberately not claimed** — see design.md
+    §2 "as built (T5.4)". Also carries the T5.3 junk-commit decision: `git.JUNK_GLOBS`.
   - [ ] **T5.5 — review bake-off (B3).** Stage 3 as a native-workflow multi-lens panel
     (correctness / security / design-fit, adversarial-verify) vs the single different-model
     reviewer from T5.3, scored on **planted defects**. Keep the cheaper config that catches at
@@ -336,6 +378,37 @@ Updated: 2026-08-18 (**T5.3 done** — the review and fix stages are in, the loo
    surprises, deviations from design.md, or decisions made (new ADR if load-bearing).
 
 ## Log
+
+- 2026-08-19 — **T5.4 done: the pr stage, and the first ticket flux landed.** The pipeline is
+  five stages; a live ticket ran unattended from an empty module to a branch on a remote, and
+  the branch was confirmed by reading the ref back rather than by anything claiming it. What is
+  worth carrying forward:
+  - **The interesting decision was where to draw the session/runner line, and it moved further
+    than the design implied.** design.md gives the pr stage "PR body + pushed branch" as its
+    output, which reads as though the session does both. It does not: the session has no Bash at
+    all. Everything outward-facing — the last gate run, the push, the `gh` invocation — is the
+    runner's, so every claim in the checkpoint is something flux observed. Granting the session a
+    shell would have been the natural implementation and would have quietly converted "verified"
+    back into "reported".
+  - **A contract in design.md turned out to be unverifiable, and was dropped rather than faked.**
+    The table asked `commit()` to verify "CI triggered". flux cannot see that without polling a
+    forge it knows nothing about, and a stage that recorded `ci_triggered: true` because a push
+    succeeded would be manufacturing exactly the kind of evidence the pipeline exists to
+    distrust. The table is amended and the docstring says why.
+  - **Restraint is the pr stage's whole design, because a push is the one thing `git reset`
+    cannot undo.** Never a protected branch, never `--force`, drafts by default, and a missing
+    remote parks rather than reporting a completed ticket that went nowhere. The protected-branch
+    rule is only cheap because HEAD is pushed by refspec (`HEAD:refs/heads/<target>`): the local
+    checkout never moves, so redirecting `main` to `flux/<ticket>` costs nothing and needs no
+    branch to have been created first.
+  - **T5.3's junk-commit problem is closed by exclusion at staging, not by cleaning.** A file
+    flux never stages is a file flux never has to decide how to unstage. It applies to staging
+    only, so a repo already tracking one of those files keeps tracking it — the same principle
+    `flux init` follows for an existing `.flux/.gitignore`.
+  - **The live run cost four sessions, no retries, 4.5 minutes.** Haiku at low effort produced a
+    body a human would actually merge from, including an accurate Risk section about the
+    machine-specific gate path in the scratch config — a finding about the *test setup*, arrived
+    at from the review it was handed.
 
 - 2026-08-18 — **T5.3 done: the review and fix stages, and the first loop that turns on real
   stages.** Four deliverables — a diff layer, a reviewer, a fixer, and the `[review]` policy that

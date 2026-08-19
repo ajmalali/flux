@@ -45,6 +45,14 @@ FIXED = (
 
 NOTES = "## Changed\n\ngreet.py\n\n## Deviations\n\nNone.\n\n## Discovered work\n\nNone.\n"
 
+PR_BODY = (
+    "## Title\n\nAdd greet(name)\n\n"
+    "## Summary\n\nAdds a greeting helper and rejects an empty name.\n\n"
+    "## Changes\n\n- greet.py: new greet(name)\n\n"
+    "## Review\n\nOne blocker about the empty name, resolved.\n\n"
+    "## Risk\n\nNone worth naming.\n"
+)
+
 TESTS_ARTIFACT = json.dumps(
     {
         "test_files": ["tests/test_greet.py"],
@@ -97,7 +105,7 @@ class ScriptedExecutor:
 
     @staticmethod
     def _stage_of(pack: PromptPack) -> str:
-        for stage in ("tests", "implement", "review", "fix"):
+        for stage in ("tests", "implement", "review", "fix", "pr"):
             if f"{stage} stage" in pack.system_prompt:
                 return stage
         raise AssertionError(f"unrecognised system prompt: {pack.system_prompt[:80]}")
@@ -128,6 +136,9 @@ class ScriptedExecutor:
             entry["resolution"] = "raised ValueError on an empty name"
         path.write_text(json.dumps(payload), encoding="utf-8")
 
+    def _pr(self) -> None:
+        (self.ticket.context_dir / "pr.md").write_text(PR_BODY, encoding="utf-8")
+
     def packs_for(self, stage: str) -> list[PromptPack]:
         return [pack for name, pack in self.calls if name == stage]
 
@@ -148,6 +159,10 @@ def scratch_repo(tmp_path: Path, *, max_review_iters: int = 3) -> Path:
                 'target = "python"',
                 "[runner]",
                 f"max_review_iters = {max_review_iters}",
+                "[pr]",
+                # This scratch repo has no remote; the loop is what is under test here,
+                # and `tests/test_pr_stage.py` is where a push is actually made.
+                "push = false",
                 "[[gates]]",
                 'name = "test"',
                 'kind = "pytest"',
@@ -179,7 +194,7 @@ def test_a_blocker_routes_to_the_fix_stage_and_back_to_the_reviewer(tmp_path: Pa
     result, ticket, executor = drive(root)
 
     assert result.completed
-    assert result.stages_run == ("tests", "implement", "review", "fix", "review")
+    assert result.stages_run == ("tests", "implement", "review", "fix", "review", "pr")
     assert (executor.reviews, executor.fixes) == (2, 1)
     assert "raise ValueError" in (root / "greet.py").read_text()
     assert CheckpointStore(ticket.state_dir).load_state().open_findings is False
@@ -191,7 +206,7 @@ def test_a_clean_review_ends_the_ticket_without_a_fix_stage(tmp_path: Path) -> N
     result, _, executor = drive(root, blockers_per_review=(False,))
 
     assert result.completed
-    assert result.stages_run == ("tests", "implement", "review")
+    assert result.stages_run == ("tests", "implement", "review", "pr")
     assert executor.fixes == 0
 
 

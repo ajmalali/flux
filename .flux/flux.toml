@@ -83,6 +83,15 @@ command = ["uvx", "--from", "repowiki", "repowiki", "map"]
 top = 60
 pack_entries = 25
 
+# The tests stage writes here and nowhere else; the implement stage may
+# not write here at all (ADR 0005). An empty 'command' means 'whatever the
+# test gate runs', so the red step and the gate cannot measure differently.
+[tests]
+dir = "tests"
+command = []
+gate = ""
+held_out_dir = ".flux/held-out"
+
 # The reviewer is advisory and runs on a different model (ADR 0005).
 # 'fix_severities' is the only part of its verdict the machine acts on:
 # those findings turn the review-fix loop and, unresolved, park the ticket.
@@ -90,3 +99,15 @@ pack_entries = 25
 fix_severities = ["blocker"]
 max_diff_chars = 60000
 max_hunks = 12
+
+# Where a finished ticket lands. flux never pushes to a protected branch
+# and never force-pushes: the push is the one thing a git reset cannot
+# undo, so it is the one place the defaults are about restraint.
+[pr]
+push = true
+remote = "origin"
+base = ""
+branch_prefix = "flux/"
+protected_branches = ["main", "master", "trunk", "develop"]
+create = "auto"
+draft = true

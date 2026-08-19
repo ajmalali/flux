@@ -19,7 +19,7 @@ from flux.metrics.record import GateOutcome
 from flux.proc import run_command
 from flux.runner.context import TicketContext
 from flux.runner.stage import Outcome
-from flux.stages.implement import NOTES_SPEC, ImplementStage
+from flux.stages.implement import NOTES_SPEC, ImplementStage, held_out_gate
 
 BRIEF = "Add a --json flag to `report` so it can be piped."
 
@@ -353,3 +353,42 @@ def test_the_stage_can_reach_the_directory_it_must_write_to(tmp_path: Path) -> N
     """
     stage, ticket = make(tmp_path)
     assert stage.config(ticket).add_dirs == (ticket.context_dir,)
+
+
+def test_held_out_gate_judges_the_worktree_not_the_root(tmp_path: Path) -> None:
+    """The regression a live A/B pairing found (T5.5a): held-out tests live under the
+    *root*, so pytest's upward conftest scan from them loads the root repo's own
+    ``conftest.py`` and puts the root — whose code the session never touched — ahead
+    of the worktree on ``sys.path``. Without ``--confcutdir``, every acceptance test
+    interrogates the un-worked tree and fails on both arms whenever the worktree
+    differs from the root.
+    """
+    import sys
+
+    root = tmp_path / "target"
+    worktree = tmp_path / "checkout"
+    for tree in (root, worktree):
+        tree.mkdir()
+        (tree / "conftest.py").write_text("", encoding="utf-8")
+    (root / "pyproject.toml").write_text("[project]\nname='target'\n", encoding="utf-8")
+    (root / "mod.py").write_text("", encoding="utf-8")  # the feature does not exist here
+    (worktree / "mod.py").write_text("def feature():\n    return 42\n", encoding="utf-8")
+
+    settings = FluxConfig(
+        root=root,
+        gates=(
+            GateSpec(name="test", kind="pytest", command=(sys.executable, "-m", "pytest", "-q")),
+        ),
+    )
+    ticket = TicketContext(ticket_id="flux-1", root=root, worktree=worktree, brief=BRIEF)
+    held = root / ".flux" / "held-out" / "flux-1"
+    held.mkdir(parents=True)
+    (held / "test_acceptance.py").write_text(
+        "import mod\n\n\ndef test_feature():\n    assert mod.feature() == 42\n",
+        encoding="utf-8",
+    )
+
+    gate = held_out_gate(ticket, settings)
+    assert gate is not None
+    outcome = gate.run(worktree)
+    assert outcome.passed, outcome.detail

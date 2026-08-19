@@ -483,6 +483,18 @@ feature, and the kill-criterion can fire falsely. Before any benchmark number is
 before either arm runs and stored outside both worktrees; the ordinal gains a level for
 "acceptance green" above "gates green".
 
+As built (T5.5a): the acceptance verdict is an ordinary gate line named `held-out`
+(`metrics.ab.ACCEPTANCE_GATE`, which `stages.implement.HELD_OUT_GATE` aliases so the two
+spellings cannot drift). `flux.ab.vanilla_suite` composes the baseline's suite through the same
+`held_out_gate` the implement/fix/pr stages use, so the two arms cannot be judged by different
+suites; the gate's `PYTHONPATH` names each arm's own worktree. The ordinal reads: acceptance
+green (3) > gates green (2) > no gates (1) > any red gate — acceptance included — (0); an arm
+whose ticket has no held-out tests tops out at "gates green" on both sides, which keeps
+old-style pairings comparable. One repair the first live pairing forced: held-out tests live
+under the *root*, so pytest's upward conftest scan from them loads the root's own `conftest.py`
+and puts the root — un-worked code — ahead of the worktree on `sys.path`; `held_out_gate` now
+passes `--confcutdir=<held-out dir>` so acceptance judges the tree the session actually changed.
+
 ## 4. What gets built vs. bought
 
 | Piece | Verdict |

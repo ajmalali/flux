@@ -14,7 +14,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from flux import __version__, knowledge
-from flux.ab import run_vanilla, vanilla_config, vanilla_pack
+from flux.ab import run_vanilla, vanilla_config, vanilla_pack, vanilla_suite
 from flux.config import FluxConfig
 from flux.errors import ConfigError, FluxError, ParkSignal
 from flux.executor.billing import detect_billing_redirects, preflight, sanitize_process_env
@@ -239,7 +239,8 @@ def _run_vanilla(
         pack = vanilla_pack(ticket)
         cfg = vanilla_config(ticket, settings)
         print(f"next:    vanilla  [{cfg.model} · effort={cfg.effort} · max_turns={cfg.max_turns}]")
-        print(f"gates:   {', '.join(g.name for g in settings.gates) or '(none)'}")
+        suite = vanilla_suite(ticket, settings)
+        print(f"gates:   {', '.join(g.name for g in suite) or '(none)'}")
         print(f"pack:    {pack.size_chars} chars (~{pack.approx_tokens} tokens)")
         print(f"\n--- prompt ---\n{pack.prompt}")
         return EXIT_OK

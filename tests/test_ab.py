@@ -204,3 +204,28 @@ def test_gates_default_to_the_configured_suite(tmp_path: Path) -> None:
     assert [g.name for g in result.gates] == ["test"]
     # The real pytest gate cannot pass in an empty tmp repo; what matters is that it ran.
     assert not result.gates_passed
+
+
+def test_default_suite_includes_the_held_out_acceptance_tests(tmp_path: Path) -> None:
+    """Both arms are judged by the ticket's held-out acceptance tests (ADR 0011).
+
+    This is the mechanism that stops a do-nothing baseline from winning: the repo's
+    own suite stays green under a session that changes nothing, but acceptance tests
+    written for the unbuilt feature are red until the feature exists — and here they
+    run against the *vanilla* tree and land on the vanilla metrics line.
+    """
+    settings, ticket = make(tmp_path)
+    held = tmp_path / ".flux" / "held-out" / "flux-1"
+    held.mkdir(parents=True)
+    (held / "test_acceptance.py").write_text(
+        "def test_report_takes_a_json_flag():\n    assert False, 'feature not built'\n"
+    )
+    result = run_vanilla(
+        ticket, settings, RecordingExecutor(), metrics=MetricsStore(ticket.metrics_path)
+    )
+    by_name = {g.name: g.passed for g in result.gates}
+    assert set(by_name) == {"test", "held-out"}
+    assert not by_name["held-out"]  # the do-nothing tree fails acceptance
+    assert not result.ok
+    (recorded,) = MetricsStore(ticket.metrics_path).read()
+    assert {g.name for g in recorded.gates} == {"test", "held-out"}

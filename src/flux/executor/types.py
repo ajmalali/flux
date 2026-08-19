@@ -40,9 +40,15 @@ _NO_TOOL_USES: Mapping[str, int] = MappingProxyType({})
 class PromptPack:
     """The complete input to one stage session (design.md §2).
 
-    The split is deliberate and load-bearing for prompt caching: everything in the
-    stable prefix is identical across the stages of a ticket, so consecutive stage
-    sessions hit the cache on it. Only :attr:`stage_tail` varies per stage.
+    The split is load-bearing for determinism and for measuring pack size: the
+    prefix is identical across the stages of a ticket, only :attr:`stage_tail` varies
+    per stage, and the "pack size must not grow across stages" invariant is asserted
+    over exactly these parts. What the split does **not** buy is cross-stage prompt
+    caching (ADR 0011): the per-stage system prompt precedes the user prompt and
+    varies, so the cache breaks before the "stable" prefix is reached, and stages run
+    on different models, whose caches are separate. Within-session caching across
+    turns is real and is what the pack's shape earns; no design decision may cite
+    cross-stage cache hits until they are measured.
 
     ``appendix`` exists for exactly one purpose: the runner's single retry after a
     required artifact fails validation appends a nudge without rebuilding the pack.
@@ -65,7 +71,10 @@ class PromptPack:
 
     @property
     def stable_prefix(self) -> str:
-        """The cache-stable portion of the user-visible prompt."""
+        """The portion of the user prompt that is identical across a ticket's stages.
+
+        "Stable" means stable for determinism and size accounting, not cached across
+        stages — see the class docstring (ADR 0011)."""
         return _join_sections(self.plan_summary, self.context_pack)
 
     @property

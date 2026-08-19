@@ -16,6 +16,12 @@ exists because breaking it would quietly hand the comparison to one side:
   instead of measuring it in one. Denying vanilla the gates would beat it with a handicap.
 * **A clean starting tree.** A vanilla run in the worktree where the harness already did
   the work is measuring nothing, so it is refused rather than recorded.
+* **The same held-out acceptance tests as the harness arm (ADR 0011).** The repo's own
+  gate suite stays green when a session changes nothing, so grading vanilla on it alone
+  scores "did nothing" the same as "delivered the feature" — and the kill-criterion can
+  fire against a harness that delivered. When the ticket has held-out tests, flux runs
+  them against the vanilla tree exactly as the implement stage's gates run them against
+  the harness tree, and the verdict lands on the same metrics line.
 """
 
 from __future__ import annotations
@@ -33,6 +39,7 @@ from flux.metrics.record import GateOutcome, MetricRecord, MetricsStore
 from flux.runner.checkpoint import CheckpointStore
 from flux.runner.context import TicketContext
 from flux.runner.stage import Gate
+from flux.stages.implement import held_out_gate
 
 VANILLA_VARIANT = "vanilla"
 HARNESS_VARIANT = "harness"
@@ -90,9 +97,11 @@ def run_vanilla(
 
     Args:
         gates: the suite to judge the sample by. Defaults to the repo's configured
-            suite, which is the only setting that makes the two arms comparable —
-            the parameter exists so tests can supply verdicts, not so callers can
-            grade the baseline on a different curve.
+            suite plus the ticket's held-out acceptance tests when it has any — the
+            same suite the harness arm faces, which is the only setting that makes
+            the two arms comparable (ADR 0011). The parameter exists so tests can
+            supply verdicts, not so callers can grade the baseline on a different
+            curve.
         force: run even though the harness has already worked this ticket here. The
             resulting number is not comparable; only useful for a deliberate re-measure
             in a tree that has since been reset.
@@ -104,7 +113,7 @@ def run_vanilla(
     pack = vanilla_pack(ticket)
     cfg = vanilla_config(ticket, settings)
 
-    suite = settings.build_gates() if gates is None else tuple(gates)
+    suite = vanilla_suite(ticket, settings) if gates is None else tuple(gates)
     result, wall_ms = _timed(executor, pack, cfg)
     outcomes = tuple(gate.run(ticket.worktree) for gate in suite)
     record = store.record(
@@ -123,6 +132,19 @@ def run_vanilla(
         record=record,
         gates=outcomes,
     )
+
+
+def vanilla_suite(ticket: TicketContext, settings: FluxConfig) -> tuple[Gate, ...]:
+    """The repo's gates, plus the ticket's held-out acceptance tests when it has any.
+
+    The same composition the implement stage's ``gates()`` makes, and via the same
+    :func:`held_out_gate`, so the two arms cannot end up judged by different suites.
+    The gate's ``PYTHONPATH`` points at *this* ticket's worktree, which for a baseline
+    is the vanilla tree — the acceptance tests judge the work each arm actually did.
+    """
+    suite: tuple[Gate, ...] = settings.build_gates()
+    acceptance = held_out_gate(ticket, settings)
+    return suite if acceptance is None else (*suite, acceptance)
 
 
 def _refuse_contaminated(ticket: TicketContext) -> None:

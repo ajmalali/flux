@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from flux.config import AbConfig
 from flux.metrics.ab import (
+    ACCEPTANCE_GATE,
+    QUALITY_ACCEPTED,
     QUALITY_FAILED,
     QUALITY_GREEN,
     QUALITY_UNVERIFIED,
@@ -47,6 +49,8 @@ def line(
 
 GREEN = (GateOutcome(name="test", passed=True),)
 RED = (GateOutcome(name="test", passed=False),)
+ACCEPTED = (*GREEN, GateOutcome(name=ACCEPTANCE_GATE, passed=True))
+REJECTED = (*GREEN, GateOutcome(name=ACCEPTANCE_GATE, passed=False))
 AB = AbConfig(vanilla_every=10, kill_streak=3)
 
 
@@ -123,6 +127,55 @@ def test_ungated_beats_nothing_and_loses_to_green() -> None:
     assert not by_ticket["t-1"].vanilla_wins  # green outranks unverified
     assert by_ticket["t-2"].harness.quality == QUALITY_FAILED
     assert by_ticket["t-2"].vanilla_wins  # unverified outranks a red gate
+
+
+def test_a_do_nothing_vanilla_run_loses_its_pairing() -> None:
+    """The T5.5a criterion (ADR 0011): the repo's own suite stays green under a session
+    that changes nothing, so a do-nothing vanilla arm used to win at near-zero cost.
+    With both arms judged by the same held-out acceptance tests, it fails them instead.
+    """
+    verdict = build_verdict(
+        [
+            line("t-1", "harness", tokens=10_000, gates=ACCEPTED),
+            line("t-1", "vanilla", tokens=50, gates=REJECTED),
+        ],
+        ab=AB,
+    )
+    (pairing,) = verdict.pairings
+    assert pairing.vanilla.quality == QUALITY_FAILED
+    assert pairing.harness.quality == QUALITY_ACCEPTED
+    assert not pairing.vanilla_wins
+    assert verdict.streak == 0
+
+
+def test_acceptance_green_outranks_gates_green() -> None:
+    """"Every gate green" without an acceptance verdict is only "nothing broke" — an
+    arm the acceptance tests passed is better evidence, whatever it cost."""
+    verdict = build_verdict(
+        [
+            line("t-1", "harness", tokens=10_000, gates=ACCEPTED),
+            line("t-1", "vanilla", tokens=50, gates=GREEN),
+        ],
+        ab=AB,
+    )
+    (pairing,) = verdict.pairings
+    assert pairing.harness.quality == QUALITY_ACCEPTED
+    assert pairing.harness.quality_label == "acceptance green"
+    assert pairing.vanilla.quality == QUALITY_GREEN
+    assert not pairing.vanilla_wins
+
+
+def test_acceptance_follows_last_wins_like_any_gate() -> None:
+    """Held-out red at implement and green after the fix is the loop doing its job."""
+    verdict = build_verdict(
+        [
+            line("t-1", "harness", stage="implement", gates=REJECTED, ts="2026-08-18T00:00:01Z"),
+            line("t-1", "harness", stage="fix", gates=ACCEPTED, ts="2026-08-18T00:00:02Z"),
+            line("t-1", "vanilla", gates=GREEN, ts="2026-08-18T00:00:03Z"),
+        ],
+        ab=AB,
+    )
+    assert verdict.pairings[0].harness.quality == QUALITY_ACCEPTED
 
 
 def test_a_gate_that_went_red_then_green_ends_green() -> None:

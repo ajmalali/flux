@@ -23,6 +23,7 @@ from flux.gates.command import CommandGate
 from flux.gates.spec import bash_permissions
 from flux.gates.summaries import pytest_summary
 from flux.git import head_sha, stage_commit
+from flux.metrics.ab import ACCEPTANCE_GATE
 from flux.metrics.record import GateOutcome
 from flux.runner.artifact import ArtifactSpec
 from flux.runner.context import TicketContext
@@ -38,8 +39,12 @@ CONTEXT_PACK_FILENAME = "context-pack.md"
 PLAN_SUMMARY_FILENAME = "plan-summary.md"
 TESTS_ARTIFACT_FILENAME = tests_stage.ARTIFACT_FILENAME
 
-HELD_OUT_GATE = "held-out"
-"""Name of the gate that runs the tests the implement session never sees (ADR 0005)."""
+HELD_OUT_GATE = ACCEPTANCE_GATE
+"""Name of the gate that runs the tests the implement session never sees (ADR 0005).
+
+An alias of the metrics layer's :data:`~flux.metrics.ab.ACCEPTANCE_GATE`, because the
+A/B quality ordinal keys on this exact name (ADR 0011) — spelled twice, the two would
+drift and every acceptance verdict would quietly score as an ordinary gate."""
 
 NOTES_SPEC = ArtifactSpec(
     path=NOTES_FILENAME,
@@ -305,13 +310,24 @@ def held_out_gate(ticket: TicketContext, settings: FluxConfig) -> Gate | None:
     project's. Naming the worktree is restoring what the tests would have had if they
     had been allowed to sit inside it, which is the only difference held-out is
     supposed to make.
+
+    ``--confcutdir`` is the other half of the same repair, found by a live A/B run
+    (T5.5a): held-out tests live under the *root*, so pytest's upward conftest scan
+    from them finds the root repo's own ``conftest.py``, and loading it puts the root
+    — whose code the session never touched — at ``sys.path[0]``, ahead of the
+    worktree. Every acceptance test then interrogates the un-worked tree and fails,
+    on both arms, whenever ``--worktree`` differs from ``--root``. Cutting the scan
+    at the held-out directory keeps the import the ``PYTHONPATH`` one.
     """
     command = settings.tests_command()
     if not command or not has_held_out(ticket, settings):
         return None
+    directory = held_out_dir(ticket, settings)
+    is_pytest = any(part == "pytest" or part.endswith("/pytest") for part in command)
+    cut = (f"--confcutdir={directory}",) if is_pytest else ()
     return CommandGate(
         name=HELD_OUT_GATE,
-        argv=(*command, str(held_out_dir(ticket, settings))),
+        argv=(*command, *cut, str(directory)),
         timeout_s=settings.tests.timeout_s,
         summarize=pytest_summary,
         env={"PYTHONPATH": str(ticket.worktree)},

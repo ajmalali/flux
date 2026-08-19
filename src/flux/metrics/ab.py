@@ -18,9 +18,15 @@ function of recorded data and never of anyone's recollection:
 * **Cost** is uncached input + output — what actually consumes a subscription window
   (`Usage.budget_tokens`), summed over every line the ticket cost including retries.
   Cache reads are excluded for the same reason the runner's budget excludes them.
-* **Quality** is an ordinal from the gates the runner itself ran: all green (2) beats
-  no gates at all (1) beats a failure (0). "Nothing verified it" cannot outrank "gates
-  green", and it is not scored as a failure either.
+* **Quality** is an ordinal from the gates the runner itself ran: acceptance green (3)
+  beats all gates green (2) beats no gates at all (1) beats a failure (0). "Nothing
+  verified it" cannot outrank "gates green", and it is not scored as a failure either.
+  The top level exists because the one below it cannot detect an unimplemented feature
+  (ADR 0011): the repo's own suite stays green when a session changes nothing, so
+  "gates green" is only evidence that nothing broke, never that the ticket was done.
+  "Acceptance green" is the verdict of the per-ticket held-out tests — written before
+  either arm runs, stored outside both worktrees, run by flux against each arm's tree —
+  and those are red until the feature exists.
 * **Vanilla wins** a ticket when it is *strictly cheaper* and *not worse* on quality.
   Read the asymmetry as the criterion means it: the harness is the thing on trial, so a
   tie on quality at a lower price is a loss for the harness, not a draw.
@@ -56,15 +62,24 @@ class AbPolicy(Protocol):
 HARNESS_VARIANT = "harness"
 VANILLA_VARIANT = "vanilla"
 
+ACCEPTANCE_GATE = "held-out"
+"""Name of the gate that runs a ticket's held-out acceptance tests (ADR 0005/0011).
+
+Defined here, at the bottom of the layering, so the stages that append the gate and
+this module that scores it share one spelling — the quality ordinal keys on it, and a
+drifted name would silently demote every acceptance verdict to "gates green"."""
+
 # Quality ordinal. Deliberately coarse: the gate suite is a verdict, not a score.
 QUALITY_FAILED = 0
 QUALITY_UNVERIFIED = 1
 QUALITY_GREEN = 2
+QUALITY_ACCEPTED = 3
 
 _QUALITY_LABELS = {
     QUALITY_FAILED: "gates red",
     QUALITY_UNVERIFIED: "no gates",
     QUALITY_GREEN: "gates green",
+    QUALITY_ACCEPTED: "acceptance green",
 }
 
 
@@ -97,10 +112,19 @@ class Arm:
 
     @property
     def quality(self) -> int:
+        """The ordinal the pairing is judged on — see the module docstring.
+
+        An arm reaches :data:`QUALITY_ACCEPTED` only through a green
+        :data:`ACCEPTANCE_GATE` verdict; "every gate green" without one tops out at
+        :data:`QUALITY_GREEN`, because a suite that predates the ticket cannot say the
+        ticket was done (ADR 0011). Any red gate — acceptance included — is a failure.
+        """
         if not self.final_ok or any(not passed for _, passed in self.gates):
             return QUALITY_FAILED
         if not self.gates:
             return QUALITY_UNVERIFIED
+        if any(name == ACCEPTANCE_GATE for name, _ in self.gates):
+            return QUALITY_ACCEPTED
         return QUALITY_GREEN
 
     @property

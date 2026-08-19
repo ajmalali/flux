@@ -302,17 +302,28 @@ def render_ab(verdict: AbVerdict) -> str:
 
 def _ab_table(pairings: Sequence[Pairing]) -> str:
     width = max(len("ticket"), *(len(p.ticket) for p in pairings))
-    header = f"  {'ticket':<{width}}  " + "  ".join(f"{c:>12}" for c in _AB_COLUMNS)
-    out = [header, "  " + "-" * (len(header) - 2)]
+    rows: list[tuple[str, ...]] = []
     for pairing in pairings:
         ratio = pairing.token_ratio
-        cells = (
-            f"{pairing.harness.billable_tokens:,}",
-            f"{pairing.vanilla.billable_tokens:,}",
-            f"{ratio:.2f}x" if ratio is not None else "n/a",
-            pairing.harness.quality_label,
-            pairing.vanilla.quality_label,
-            "vanilla" if pairing.vanilla_wins else "harness/tie",
+        rows.append(
+            (
+                f"{pairing.harness.billable_tokens:,}",
+                f"{pairing.vanilla.billable_tokens:,}",
+                f"{ratio:.2f}x" if ratio is not None else "n/a",
+                pairing.harness.quality_label,
+                pairing.vanilla.quality_label,
+                "vanilla" if pairing.vanilla_wins else "harness/tie",
+            )
         )
-        out.append(f"  {pairing.ticket:<{width}}  " + "  ".join(f"{c:>12}" for c in cells))
+    # Sized per column, not fixed: "acceptance green" is wider than any fixed guess.
+    widths = [
+        max(12, len(name), *(len(row[i]) for row in rows)) for i, name in enumerate(_AB_COLUMNS)
+    ]
+    header = f"  {'ticket':<{width}}  " + "  ".join(
+        f"{c:>{w}}" for c, w in zip(_AB_COLUMNS, widths, strict=True)
+    )
+    out = [header, "  " + "-" * (len(header) - 2)]
+    for pairing, row in zip(pairings, rows, strict=True):
+        cells = "  ".join(f"{c:>{w}}" for c, w in zip(row, widths, strict=True))
+        out.append(f"  {pairing.ticket:<{width}}  " + cells)
     return "\n".join(out)

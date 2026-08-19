@@ -1,9 +1,17 @@
 # flux-harness — status & next task
 
-Updated: 2026-08-19 (**direction review → ADR 0011**: T5.5 cut, M2/M3 frozen, the A/B quality axis found flawed. Next: T5.5a, acceptance-judged quality on both arms)
+Updated: 2026-08-19 (**T5.5a done**: acceptance-judged quality on both arms, live-paired; a held-out-gate import bug found and fixed by the live run. Next: T5.6, the expanded M1 exit benchmark)
 
 ## Current state
 
+- **T5.5a done (2026-08-19): the A/B quality axis is trustworthy now.** Both arms are judged
+  by the ticket's held-out acceptance tests (one gate name, `ACCEPTANCE_GATE = "held-out"`,
+  defined in `metrics/ab.py` and composed into the vanilla suite by `flux.ab.vanilla_suite`
+  through the same `held_out_gate` the stages use); the ordinal is acceptance green (3) >
+  gates green (2) > no gates (1) > any red (0). Findings 1 and 2 below are fixed in code;
+  finding 3 (goal-5 cost) got *worse* on the new pairing — 4.49x — and is what T5.7/T5.8
+  exist for. The live pairing also surfaced and fixed a held-out-gate import bug
+  (`--confcutdir`; see the log). 622 tests. Next: **T5.6, the expanded exit benchmark.**
 - **2026-08-19 direction review (ADR 0011) — read this first.** The repo was scored against
   the six goals flux exists for: (1) automate the deterministic layers; (2) offload/rehydrate
   context, state on disk; (3) smart-zone chunking with fresh-context continuation; (4)
@@ -309,15 +317,21 @@ Updated: 2026-08-19 (**direction review → ADR 0011**: T5.5 cut, M2/M3 frozen, 
     between two review configurations is premature while nothing shows the review stage earns
     its place at all — T5.6's table is what answers that. Revisit only if the review loop
     survives the benchmark and its cost is the complaint.
-  - [ ] **T5.5a — fix the A/B quality axis (ADR 0011). Do this before T5.6; every benchmark
-    number routes through it.** Quality must be judged by the same per-ticket **held-out
-    acceptance tests on both arms**, written before either arm runs and stored outside both
-    worktrees. The held-out machinery from T5.2 is the mechanism; what is new is running it
-    against the vanilla arm's tree in `flux/ab.py` and folding an "acceptance green" level into
-    `metrics/ab.py`'s ordinal, above "gates green". Also amend the `Arm.quality` and
-    `PromptPack` docstrings (design.md §2/§3 already carry the corrections). Done when: a
-    do-nothing vanilla run loses its pairing in a unit test, and one live pairing records
-    acceptance verdicts for both arms.
+  - [x] **T5.5a — fix the A/B quality axis (ADR 0011). Done 2026-08-19.** Both arms are now
+    judged by the same per-ticket held-out acceptance tests: `flux.ab.vanilla_suite` composes
+    the baseline's suite through the same `held_out_gate` the implement/fix/pr stages use, and
+    `metrics/ab.py`'s ordinal gained "acceptance green" (3) above "gates green" (2), keyed on
+    the `held-out` gate name (`ACCEPTANCE_GATE`, defined in the metrics layer and aliased by
+    the stages so the spellings cannot drift). Docstrings amended (`Arm.quality`,
+    `PromptPack`/`stable_prefix` per the ADR 0011 cache correction); the `--vanilla --dry-run`
+    gate listing now prints the composed suite instead of under-reporting it.
+    **Both done-criteria met:** a do-nothing vanilla run loses its pairing in a unit test, and
+    a live pairing on a scratch `tinylib` ticket recorded acceptance verdicts on both arms —
+    harness "acceptance green" (86,269 tok, four stages, pushed branch verified), vanilla
+    "gates red" (19,216 tok: held-out *passed* but it shipped a self-contradicting test, so its
+    own suite was red). **The live run found a real bug, again** (details in the log): the
+    held-out gate imported the *root's* un-worked code whenever `--worktree` ≠ `--root`,
+    misgrading both arms; fixed with `--confcutdir` + a regression test.
   - [ ] **T5.6 — M1 exit benchmark (expanded, ADR 0011).** (a) one real ticket runs to a
     mergeable PR unattended; (b) a deliberately gameable ticket (one a session could pass by
     weakening a test) is caught; (c) **5–10 paired real tickets** vs vanilla on a real repo
@@ -432,6 +446,36 @@ Updated: 2026-08-19 (**direction review → ADR 0011**: T5.5 cut, M2/M3 frozen, 
    surprises, deviations from design.md, or decisions made (new ADR if load-bearing).
 
 ## Log
+
+- 2026-08-19 — **T5.5a done: acceptance tests judge both arms, and the first trustworthy
+  pairing went to the harness.** The code catch-up ADR 0011 prescribed, plus what the live run
+  taught:
+  - **The mechanism is one gate name, shared by construction.** `ACCEPTANCE_GATE = "held-out"`
+    lives in `metrics/ab.py` (the bottom of the layering) and `stages/implement.py` aliases it;
+    the ordinal keys on that name, so "ran the acceptance tests" is a property of the recorded
+    line, not of anyone's memory. `vanilla_suite` reuses `held_out_gate` itself — the arms
+    cannot drift onto different suites because there is only one composition.
+  - **The live run found the second real bug in two live runs, and it was exactly the kind no
+    unit test had seen:** with `--worktree` ≠ `--root` (the A/B configuration), pytest's upward
+    conftest scan from the held-out dir loaded the *root's* `conftest.py`, which put the root —
+    whose code the session never touched — at `sys.path[0]`, ahead of the gate's `PYTHONPATH`.
+    Every acceptance test then interrogated the un-worked tree: the first vanilla sample
+    recorded `held-out=FAIL` against an implementation that was actually correct. Fixed with
+    `--confcutdir=<held-out dir>` (pytest commands only) and a worktree≠root regression test;
+    every prior T5.2 test had worktree == root, which is why it hid. The first sample's metrics
+    line was deleted as measured-by-a-broken-instrument, and the vanilla arm re-run in a reset
+    clone.
+  - **The pairing itself:** harness acceptance green at 86,269 uncached tokens (tests →
+    implement → review → pr, branch `flux/tl-1` verified on the remote) vs vanilla gates red at
+    19,216 (its held-out verdict was *green* — the feature worked — but it shipped a test
+    contradicting its own implementation, and a red suite is a failure by the ordinal's rule).
+    Recorded, not celebrated: n=1 on a toy ticket, and the token ratio is **4.49x** — the
+    goal-5 pressure ADR 0011 named is still the headline for T5.7/T5.8.
+  - **A hazard for T5.6 worth writing down:** `scaffold.IGNORED_DIRS` does not ignore
+    `held-out/`, so a target repo that commits `.flux/` will commit its acceptance tests, and
+    every clone — including a vanilla arm's — carries them in-tree, readable. The scratch repo
+    added `held-out/` to `.flux/.gitignore` by hand; the T5.6 setup must do the same, or
+    scaffold should learn it (not decided here).
 
 - 2026-08-19 — **Direction review: benchmark before machinery (ADR 0011).** A full review of
   the repo and code against the six goals flux exists for, requested by the user with "I'm

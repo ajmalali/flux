@@ -14,3 +14,4 @@ mechanical = "sonnet"
 
 [run]
 tail = 100                    # `flux run` keeps at most this many trailing lines
+filter = "elide"              # elide | failures | tail:80 | raw (--filter overrides)

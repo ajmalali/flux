@@ -1,6 +1,6 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-20 (later session: `flux init` hardening shipped — detected check command is now a candidate with a `verified` stamp)
+Updated: 2026-08-20 (later session: `flux run --filter` shipped — check's failure extractor is now reusable for scoped runs; Phase 01 code is complete)
 
 ## Current state
 
@@ -18,8 +18,8 @@ Updated: 2026-08-20 (later session: `flux init` hardening shipped — detected c
     (grill = wrapper + grilling/domain-modeling as `references/`), synced by
     `scripts/sync-vendored.sh`, pinned to mattpocock-skills 1.2.3
     (claude-plugins-official commit 2ab9580…), MIT attributed in `skills/VENDORED.md`.
-  - 28 tests, `python3 -m unittest discover -s tests`, all passing; dogfooded on
-    this repo (`.flux/flux.toml` check = the unittest run; prime/state/check verified live).
+  - 36 tests, `python3 -m unittest discover -s tests`, all passing; dogfooded on
+    this repo (`.flux/flux.toml` check = the unittest run; prime/state/check/run verified live).
   - **Check-candidate flow shipped (2026-08-20):** `flux init` writes
     `verified = false` under `[check]` and prints "check candidate: … run `flux check`
     once to validate"; the first full `flux check` pass flips the stamp in place
@@ -27,9 +27,18 @@ Updated: 2026-08-20 (later session: `flux init` hardening shipped — detected c
     never passed here, and `flux prime` shows `[unverified — run it once]`. Configs
     without the key (legacy) are untouched. This repo's own flux.toml stamp flipped
     live on this session's gate run.
-- **Not yet done in Phase 01:** installing the plugin (`/plugin marketplace add`)
-  on this machine and adopting in zaps/kiosk; Phase 00 global-config quick wins are
-  the user's, outside this repo.
+  - **`flux run --filter` shipped (2026-08-20):** `flux run [--tail N]
+    [--filter elide|failures|tail:N|raw] -- <cmd>`. `elide` is run's own head+tail
+    squeeze (the previous, still-default behaviour); `failures`/`tail:N`/`raw` are
+    `check`'s filters reused verbatim (`apply_filter`), so a scoped test run costs
+    the same context as the gate. Default comes from `[run].filter` (new key in the
+    init template, `"elide"`); the flag beats config; an unknown flag value is a
+    usage error (exit 2), an unknown config value warns on stderr and falls back to
+    elide. Summary line now reports the mode: `[flux run: 200 -> 40 lines,
+    filter=failures, exit 0]`.
+- **Not yet done in Phase 01:** the code is complete; what remains is installing
+  the plugin (`/plugin marketplace add`) on this machine and adopting in
+  zaps/kiosk. Phase 00 global-config quick wins are the user's, outside this repo.
 
 ## Decisions from the check-command review (2026-08-20, user-confirmed)
 
@@ -42,8 +51,6 @@ Updated: 2026-08-20 (later session: `flux init` hardening shipped — detected c
 
 ## Task queue
 
-- [ ] `flux run --filter failures`: reuse check's failure-extraction filter so
-      scoped test runs are as context-cheap as the gate (+ test).
 - [ ] Install the plugin from this repo (`/plugin marketplace add ~/Dev/flux` or
       push + `ajmalali/flux`), restart, confirm SessionStart prime fires here and
       fast-no-ops in a non-flux repo.
@@ -54,8 +61,8 @@ Updated: 2026-08-20 (later session: `flux init` hardening shipped — detected c
 - [ ] Phase 02 — write the five lifecycle skills. **Source needed:** PAUL originals
       live in zaps/kiosk (not in ~/.claude); read them there before writing
       plan/audit/apply/wrap; resume is thin and can be written from plan.md alone.
-      apply/wrap must state the convention: iterate with `flux run`, conclude with
-      `flux check`; never report done on a subset.
+      apply/wrap must state the convention: iterate with `flux run --filter failures`,
+      conclude with `flux check`; never report done on a subset.
 - [ ] Phase 02 — migrate kiosk PAUL state into `.flux/`, archive `.paul/`.
 - [ ] Phase 02 — one full real phase (plan → audit → apply → wrap) in kiosk.
 - [ ] Phase 03 — generalize (zaps/api), retire PAUL/mattpocock installs, first

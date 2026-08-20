@@ -252,6 +252,76 @@ class TestRun(FluxRepoCase):
         self.assertEqual(out.returncode, 0)
         self.assertIn("hi", out.stdout)
 
+    NOISY_FAILURE = ("for i in $(seq 1 60); do echo noise$i; done; "
+                     "echo 'FAIL: test_x broke'; "
+                     "for i in $(seq 1 60); do echo more$i; done; exit 1")
+
+    def test_filter_failures_keeps_failures_drops_noise(self):
+        run_flux(["init"], self.repo)
+        out = run_flux(["run", "--filter", "failures", "--", "sh", "-c", self.NOISY_FAILURE],
+                       self.repo)
+        self.assertEqual(out.returncode, 1)
+        self.assertIn("FAIL: test_x broke", out.stdout)
+        self.assertIn("noise60", out.stdout)       # context lines survive
+        self.assertNotIn("noise1\n", out.stdout)   # the rest of the noise does not
+        self.assertNotIn("more60", out.stdout)
+        self.assertIn("filter=failures", out.stdout)
+
+    def test_filter_failures_falls_back_to_tail_when_clean(self):
+        run_flux(["init"], self.repo)
+        out = run_flux(["run", "--filter", "failures", "--", "sh", "-c", "seq 1 200"], self.repo)
+        self.assertEqual(out.returncode, 0)
+        # check's no-match fallback: the last 40 lines, nothing before them
+        self.assertTrue(out.stdout.startswith("161\n"), out.stdout[:80])
+        self.assertIn("\n200\n", out.stdout)
+
+    def test_filter_raw_keeps_everything(self):
+        run_flux(["init"], self.repo)
+        out = run_flux(["run", "--filter", "raw", "--", "sh", "-c", "seq 1 300"], self.repo)
+        self.assertEqual(out.returncode, 0)
+        self.assertIn("\n150\n", out.stdout)
+        self.assertNotIn("elided", out.stdout)
+
+    def test_filter_tail_n(self):
+        run_flux(["init"], self.repo)
+        out = run_flux(["run", "--filter", "tail:5", "--", "sh", "-c", "seq 1 200"], self.repo)
+        self.assertEqual(out.returncode, 0)
+        self.assertIn("200", out.stdout)
+        self.assertNotIn("\n150\n", out.stdout)
+        self.assertIn("filter=tail:5", out.stdout)
+
+    def test_config_run_filter_is_the_default(self):
+        run_flux(["init"], self.repo)
+        self.write(".flux/flux.toml",
+                   '[check]\ncommand = "true"\n[run]\nfilter = "failures"\n')
+        out = run_flux(["run", "--", "sh", "-c", self.NOISY_FAILURE], self.repo)
+        self.assertIn("FAIL: test_x broke", out.stdout)
+        self.assertNotIn("more60", out.stdout)
+        self.assertIn("filter=failures", out.stdout)
+
+    def test_flag_beats_config_filter(self):
+        run_flux(["init"], self.repo)
+        self.write(".flux/flux.toml",
+                   '[check]\ncommand = "true"\n[run]\nfilter = "failures"\n')
+        out = run_flux(["run", "--filter", "raw", "--", "sh", "-c", self.NOISY_FAILURE], self.repo)
+        self.assertIn("more60", out.stdout)
+
+    def test_unknown_filter_flag_is_a_usage_error(self):
+        run_flux(["init"], self.repo)
+        out = run_flux(["run", "--filter", "bogus", "--", "echo", "hi"], self.repo)
+        self.assertEqual(out.returncode, 2)
+        self.assertIn("unknown --filter", out.stderr)
+        self.assertNotIn("hi", out.stdout)
+
+    def test_unknown_config_filter_warns_and_elides(self):
+        run_flux(["init"], self.repo)
+        self.write(".flux/flux.toml",
+                   '[check]\ncommand = "true"\n[run]\ntail = 10\nfilter = "bogus"\n')
+        out = run_flux(["run", "--", "sh", "-c", "seq 1 200"], self.repo)
+        self.assertEqual(out.returncode, 0)
+        self.assertIn("ignoring unknown [run].filter", out.stderr)
+        self.assertIn("lines elided", out.stdout)
+
 
 class TestHelp(unittest.TestCase):
     def test_no_args_prints_usage(self):

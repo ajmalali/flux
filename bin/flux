@@ -6,6 +6,8 @@ call it as a bare command with zero install latency. Everything it injects into
 model context has a hard byte budget it enforces itself (tokens ~= bytes / 4).
 
 Commands: init | prime | state get/set | check | handoff | run -- <cmd>
+
+  flux run [--tail N] [--filter elide|failures|tail:N|raw] -- <command...>
 """
 
 import os
@@ -164,6 +166,7 @@ mechanical = "sonnet"
 
 [run]
 tail = 100                    # `flux run` keeps at most this many trailing lines
+filter = "elide"              # elide | failures | tail:80 | raw (--filter overrides)
 """
 
 STATE_SCAFFOLD = {
@@ -348,6 +351,17 @@ def apply_filter(mode, lines):
         return lines[-n:]
     return filter_failures(lines)
 
+RUN_FILTER_MODES = ("elide", "raw", "failures")
+
+def valid_filter_mode(mode):
+    """Modes `flux run --filter` / `[run].filter` accept. `elide` is run's own
+    head+tail squeeze; the rest are check's filters, reused verbatim."""
+    if mode in RUN_FILTER_MODES:
+        return True
+    if mode.startswith("tail:"):
+        return mode[len("tail:"):].isdigit()
+    return False
+
 def _mark_check_verified(root):
     """Flip `verified = false` -> `verified = true` in flux.toml in place,
     preserving every other byte of the user's file."""
@@ -456,18 +470,41 @@ def dedupe(lines):
 
 def cmd_run(args):
     tail = None
-    if args[:1] == ["--tail"] and len(args) >= 2:
-        tail = int(args[1])
-        args = args[2:]
+    mode = None
+    while args and args[0] != "--":
+        if args[0] == "--tail" and len(args) >= 2:
+            try:
+                tail = int(args[1])
+            except ValueError:
+                print("flux run: --tail wants an integer, got %r" % args[1], file=sys.stderr)
+                return 2
+            args = args[2:]
+        elif args[0] == "--filter" and len(args) >= 2:
+            mode = args[1]
+            if not valid_filter_mode(mode):
+                print("flux run: unknown --filter %r (elide | failures | tail:N | raw)"
+                      % mode, file=sys.stderr)
+                return 2
+            args = args[2:]
+        else:
+            break
     if args[:1] == ["--"]:
         args = args[1:]
     if not args:
-        print("usage: flux run [--tail N] -- <command...>", file=sys.stderr)
+        print("usage: flux run [--tail N] [--filter elide|failures|tail:N|raw] -- <command...>",
+              file=sys.stderr)
         return 2
     root = repo_root()
     cfg = read_config(root) or {}
+    run_cfg = cfg.get("run") or {}
     if tail is None:
-        tail = (cfg.get("run") or {}).get("tail", 100)
+        tail = run_cfg.get("tail", 100)
+    if mode is None:
+        mode = str(run_cfg.get("filter", "elide"))
+        if not valid_filter_mode(mode):
+            print("flux run: ignoring unknown [run].filter %r — using elide" % mode,
+                  file=sys.stderr)
+            mode = "elide"
     proc = subprocess.run(
         args if len(args) > 1 else args[0],
         shell=(len(args) == 1), cwd=os.getcwd(),
@@ -477,14 +514,18 @@ def cmd_run(args):
              for l in proc.stdout.splitlines()]
     lines = dedupe(lines)
     total = len(lines)
-    if total > tail + 15:
-        shown = lines[:15] + ["[flux: %d lines elided]" % (total - tail - 15)] + lines[-tail:]
+    if mode == "elide":
+        if total > tail + 15:
+            shown = lines[:15] + ["[flux: %d lines elided]" % (total - tail - 15)] + lines[-tail:]
+        else:
+            shown = lines
     else:
-        shown = lines
+        shown = apply_filter(mode, lines)
     for line in shown:
         print(line)
     if total != len(shown):
-        print("[flux run: %d -> %d lines, exit %d]" % (total, len(shown), proc.returncode))
+        print("[flux run: %d -> %d lines, filter=%s, exit %d]"
+              % (total, len(shown), mode, proc.returncode))
     return proc.returncode
 
 # ------------------------------------------------------------------------ main

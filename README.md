@@ -29,7 +29,7 @@ plugin is enabled.
 | `flux state get\|set` | Tiny TOML state; writes over budget are refused |
 | `flux check` | Run the repo's configured verification; print failures only; exit-code semantics |
 | `flux handoff` | Deterministic, capped handoff from git status + state + commits |
-| `flux run -- <cmd>` | Output filter (dedupe, truncate, elide) for noisy commands |
+| `flux run -- <cmd>` | Output filter for noisy commands: dedupe + truncate, then `--filter elide` (default, head+tail), `failures` (check's failure extractor), `tail:N`, or `raw`; default from `[run].filter` |
 
 ## Skills
 

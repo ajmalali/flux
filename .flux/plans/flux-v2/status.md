@@ -1,6 +1,6 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-20 (later session: plugin installed from this repo and SessionStart prime verified live — Phase 01 is done end to end; next stop is adoption in zaps/kiosk)
+Updated: 2026-08-20 (later session: kiosk adopted — gate verified green, state seeded from PAUL; Phase 01 fully closed. One real defect found: init's nx detector proposes a scoped `affected` gate)
 
 ## Current state
 
@@ -70,10 +70,25 @@ Updated: 2026-08-20 (later session: plugin installed from this repo and SessionS
       restart, confirm SessionStart prime fires here and fast-no-ops in a non-flux
       repo. **Done 2026-08-20** — see the install note above, including the
       copy-not-symlink caveat.
-- [ ] Adopt in zaps/kiosk: `flux init`, then the config-then-verify flow — propose
-      the check command, run it once, confirm the output is the repo's real
-      verification, commit flux.toml. Set state from current PAUL position; PAUL
-      untouched (prime replaces the `/paul:resume` read).
+- [x] Adopt in zaps/kiosk. **Done 2026-08-20** (kiosk commit 9dc00e3, on branch
+      `chore/retire-gitnexus-for-codegraph`). `flux init` detected `nx.json`;
+      candidate was corrected (see the defect below) to
+      `npx nx run-many -t lint,typecheck,test`; ran green first try across
+      31 projects / 83 tasks, so `verified` stamped true. `[check].filter` left at
+      `failures` — the gate emits ~950 lines raw, one line filtered. State seeded
+      from PAUL (v0.6 complete 19/19, phase 22.5 closed) plus branch reality, with
+      the three unverified hardware gaps + DEV-T-READER-RECONNECT-SINGLE-SHOT in
+      `open`. `.paul/` untouched; `prime` verified live there.
+      Datapoint for the ledger: kiosk's `.paul/STATE.md` is **299 KB**; the prime
+      pack that replaces it is capped at 2000 tokens.
+
+- [ ] **Defect — `flux init`'s nx detector violates the full-gate decision.** It
+      proposes `npx nx affected -t lint,typecheck,test --base=main`, a *scoped*
+      run whose meaning changes with the diff. That is precisely what the
+      check-command decision forbids: "check passed" must mean the full configured
+      gate. Fix the detector to propose `nx run-many -t lint,typecheck,test`
+      (affected belongs behind `flux run --`, not `flux check`), and add a test.
+      Audit the other detectors for the same class of error before shipping.
 - [ ] Phase 02 — write the five lifecycle skills. **Source needed:** PAUL originals
       live in zaps/kiosk (not in ~/.claude); read them there before writing
       plan/audit/apply/wrap; resume is thin and can be written from plan.md alone.

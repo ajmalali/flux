@@ -1,6 +1,6 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-20 (v2 pivot session: v1 retired at tag `v1-final`, Phase 01 built)
+Updated: 2026-08-20 (v2 pivot session: v1 retired at tag `v1-final`, Phase 01 built; check-command design reviewed with the user — decisions below)
 
 ## Current state
 
@@ -24,16 +24,34 @@ Updated: 2026-08-20 (v2 pivot session: v1 retired at tag `v1-final`, Phase 01 bu
   on this machine and adopting in zaps/kiosk; Phase 00 global-config quick wins are
   the user's, outside this repo.
 
+## Decisions from the check-command review (2026-08-20, user-confirmed)
+
+- `flux check` stays, and stays **unmodifiable**: no args, no agent-side narrowing —
+  "check passed" must always mean the full configured gate, or it means nothing.
+- Subset/iterative runs go through `flux run --` (the escape hatch); `flux check` is
+  the only thing apply/wrap accept as "verified".
+- The check command is per-repo config (`[check].command`), set once at adoption;
+  `flux check` itself contains no repo knowledge.
+
 ## Task queue
 
+- [ ] `flux init` hardening: treat the detected check command as a **candidate** —
+      print "run `flux check` once to validate; edit [check].command if wrong"
+      (optionally a `verified` stamp that flips after the first completed run).
+- [ ] `flux run --filter failures`: reuse check's failure-extraction filter so
+      scoped test runs are as context-cheap as the gate (+ test).
 - [ ] Install the plugin from this repo (`/plugin marketplace add ~/Dev/flux` or
       push + `ajmalali/flux`), restart, confirm SessionStart prime fires here and
       fast-no-ops in a non-flux repo.
-- [ ] Adopt in zaps/kiosk: `flux init`, set state from current PAUL position; PAUL
+- [ ] Adopt in zaps/kiosk: `flux init`, then the config-then-verify flow — propose
+      the check command, run it once, confirm the output is the repo's real
+      verification, commit flux.toml. Set state from current PAUL position; PAUL
       untouched (prime replaces the `/paul:resume` read).
 - [ ] Phase 02 — write the five lifecycle skills. **Source needed:** PAUL originals
       live in zaps/kiosk (not in ~/.claude); read them there before writing
       plan/audit/apply/wrap; resume is thin and can be written from plan.md alone.
+      apply/wrap must state the convention: iterate with `flux run`, conclude with
+      `flux check`; never report done on a subset.
 - [ ] Phase 02 — migrate kiosk PAUL state into `.flux/`, archive `.paul/`.
 - [ ] Phase 02 — one full real phase (plan → audit → apply → wrap) in kiosk.
 - [ ] Phase 03 — generalize (zaps/api), retire PAUL/mattpocock installs, first

@@ -1,0 +1,12 @@
+{
+  "description": "flux session lifecycle. prime is a fast silent no-op in repos without .flux/, so user-scoped enablement is safe everywhere.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/flux\" prime", "timeout": 10 }
+        ]
+      }
+    ]
+  }
+}

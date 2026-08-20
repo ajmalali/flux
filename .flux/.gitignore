@@ -1,5 +1,2 @@
-# Written by `flux init` (ADR 0006). Runtime state is rebuildable; artifacts are not.
-state/
-transcripts/
-usage/
+# flux runtime scratch — rebuildable, never committed
 cache/

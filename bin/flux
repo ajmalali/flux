@@ -1,0 +1,485 @@
+#!/usr/bin/env python3
+"""flux — deterministic session machinery for Claude Code.
+
+Single-file, stdlib-only, Python 3.9+. Rides in the plugin's bin/ so hooks can
+call it as a bare command with zero install latency. Everything it injects into
+model context has a hard byte budget it enforces itself (tokens ~= bytes / 4).
+
+Commands: init | prime | state get/set | check | handoff | run -- <cmd>
+"""
+
+import os
+import re
+import subprocess
+import sys
+import time
+
+BYTES_PER_TOKEN = 4
+DEFAULT_STATE_BUDGET_TOKENS = 2000
+COLD_SECONDS = 3600
+
+# ---------------------------------------------------------------- toml (subset)
+
+def _parse_value(raw):
+    raw = raw.strip()
+    if raw.startswith('"') and raw.endswith('"'):
+        return raw[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+    if raw.startswith("[") and raw.endswith("]"):
+        inner = raw[1:-1].strip()
+        if not inner:
+            return []
+        return [_parse_value(p) for p in re.findall(r'"(?:[^"\\]|\\.)*"|[^,]+', inner)]
+    if raw in ("true", "false"):
+        return raw == "true"
+    try:
+        return int(raw)
+    except ValueError:
+        return raw
+
+def load_toml(path):
+    """Read a TOML file. Uses tomllib when available; otherwise a parser for the
+    flat subset flux itself emits (sections, strings, ints, bools, string arrays)."""
+    try:
+        import tomllib
+        with open(path, "rb") as f:
+            return tomllib.load(f)
+    except ImportError:
+        pass
+    data = {}
+    section = data
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("[") and line.endswith("]"):
+                section = data.setdefault(line[1:-1].strip(), {})
+                continue
+            if "=" in line:
+                key, _, raw = line.partition("=")
+                raw = re.sub(r'\s+#(?![^"]*").*$', "", raw)  # trailing comment
+                section[key.strip()] = _parse_value(raw)
+    return data
+
+def dump_flat_toml(mapping):
+    """Serialize a flat str->str mapping (state.toml is nothing fancier)."""
+    lines = []
+    for key, value in mapping.items():
+        escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
+        lines.append('%s = "%s"' % (key, escaped))
+    return "\n".join(lines) + "\n"
+
+# ------------------------------------------------------------------- utilities
+
+def repo_root():
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if out.returncode == 0:
+            return out.stdout.strip()
+    except Exception:
+        pass
+    return os.getcwd()
+
+def flux_dir(root=None):
+    return os.path.join(root or repo_root(), ".flux")
+
+def git(args, cwd=None):
+    try:
+        out = subprocess.run(
+            ["git"] + args, capture_output=True, text=True, timeout=15, cwd=cwd
+        )
+        return out.stdout.rstrip("\n") if out.returncode == 0 else ""
+    except Exception:
+        return ""
+
+def read_config(root):
+    path = os.path.join(flux_dir(root), "flux.toml")
+    if not os.path.isfile(path):
+        return None
+    try:
+        return load_toml(path)
+    except Exception as exc:
+        print("flux: could not parse .flux/flux.toml: %s" % exc, file=sys.stderr)
+        return None
+
+def read_state(root):
+    path = os.path.join(flux_dir(root), "state.toml")
+    if not os.path.isfile(path):
+        return {}
+    try:
+        return {k: v for k, v in load_toml(path).items() if not isinstance(v, dict)}
+    except Exception:
+        return {}
+
+def state_budget_bytes(cfg):
+    budget = DEFAULT_STATE_BUDGET_TOKENS
+    if cfg and isinstance(cfg.get("state"), dict):
+        budget = cfg["state"].get("budget_tokens", budget)
+    return int(budget) * BYTES_PER_TOKEN
+
+def clip(text, max_bytes, marker="\n[flux: truncated at budget]"):
+    data = text.encode("utf-8")
+    if len(data) <= max_bytes:
+        return text
+    keep = data[: max(0, max_bytes - len(marker.encode("utf-8")))]
+    return keep.decode("utf-8", errors="ignore") + marker
+
+def now_stamp():
+    return time.strftime("%Y-%m-%d %H:%M", time.localtime())
+
+# ------------------------------------------------------------------------ init
+
+CHECK_COMMANDS = [
+    ("nx.json", "npx nx affected -t lint,typecheck,test --base=main"),
+    ("turbo.json", "npx turbo run lint typecheck test"),
+    ("Cargo.toml", "cargo clippy --quiet && cargo test --quiet"),
+    ("uv.lock", "uv run ruff check . && uv run pytest -q"),
+    ("pyproject.toml", "python3 -m pytest -q"),
+    ("package.json", "npm run lint --if-present && npm test"),
+]
+
+def detect_check_command(root):
+    for filename, command in CHECK_COMMANDS:
+        if os.path.exists(os.path.join(root, filename)):
+            return filename, command
+    return None, ""
+
+FLUX_TOML_TEMPLATE = """\
+# .flux/flux.toml — the whole per-repo adapter. Written by `flux init`.
+
+[check]
+command = "%(check)s"
+filter  = "failures"          # failures | tail:80 | raw
+
+[state]
+budget_tokens = 2000          # flux refuses to emit or store more than this
+
+[routing]                     # /flux:plan stamps one of these into each plan
+design = "opus"
+mechanical = "sonnet"
+
+[run]
+tail = 100                    # `flux run` keeps at most this many trailing lines
+"""
+
+STATE_SCAFFOLD = {
+    "phase": "",
+    "position": "",
+    "next": "",
+    "routing": "",
+    "open": "",
+}
+
+def cmd_init(args):
+    root = repo_root()
+    fdir = flux_dir(root)
+    toml_path = os.path.join(fdir, "flux.toml")
+    if os.path.exists(toml_path) and "--force" not in args:
+        print("flux init: .flux/flux.toml already exists (use --force to overwrite)")
+        return 1
+    os.makedirs(fdir, exist_ok=True)
+    detected, check = detect_check_command(root)
+    with open(toml_path, "w", encoding="utf-8") as f:
+        f.write(FLUX_TOML_TEMPLATE % {"check": check.replace('"', '\\"')})
+    state_path = os.path.join(fdir, "state.toml")
+    if not os.path.exists(state_path):
+        scaffold = dict(STATE_SCAFFOLD)
+        scaffold["updated"] = now_stamp()
+        with open(state_path, "w", encoding="utf-8") as f:
+            f.write(dump_flat_toml(scaffold))
+    gitignore_path = os.path.join(fdir, ".gitignore")
+    if not os.path.exists(gitignore_path):
+        with open(gitignore_path, "w", encoding="utf-8") as f:
+            f.write("# flux runtime scratch — rebuildable, never committed\ncache/\n")
+    if detected:
+        print("flux init: wrote .flux/flux.toml (detected %s -> check: %s)" % (detected, check))
+    else:
+        print("flux init: wrote .flux/flux.toml — no build system detected, set [check].command yourself")
+    return 0
+
+# ----------------------------------------------------------------------- prime
+
+def cmd_prime(_args):
+    """SessionStart hook target. Must be fast and must never fail or nag in
+    repos that don't use flux — hence the blanket except and silent no-op."""
+    try:
+        return _prime_inner()
+    except Exception:
+        return 0
+
+def _prime_inner():
+    root = repo_root()
+    cfg = read_config(root)
+    if cfg is None:
+        return 0  # not a flux repo — silent no-op
+    state = read_state(root)
+    budget = state_budget_bytes(cfg)
+
+    lines = []
+    branch = git(["branch", "--show-current"], cwd=root) or "(detached)"
+    dirty = git(["status", "--porcelain"], cwd=root)
+    dirty_note = ", %d dirty files" % len(dirty.splitlines()) if dirty else ", clean"
+    lines.append("## flux prime — %s @ %s%s" % (os.path.basename(root), branch, dirty_note))
+
+    cold = _cold_gap_seconds(root)
+    if cold is not None and cold > COLD_SECONDS:
+        lines.append(
+            "note: %.1fh since last session — the prompt cache is cold; start from this pack, don't revive old context."
+            % (cold / 3600.0)
+        )
+
+    for key in ("phase", "position", "next", "routing", "open"):
+        value = str(state.get(key, "")).strip()
+        if value:
+            lines.append("%s: %s" % (key, value))
+    check = (cfg.get("check") or {}).get("command", "")
+    if check:
+        lines.append("check: flux check  (%s)" % check)
+    latest = _latest_handoff(root)
+    if latest:
+        lines.append("last handoff: %s" % os.path.relpath(latest, root))
+    if not state.get("next"):
+        lines.append("next: (unset — `flux state set next \"...\"` at wrap)")
+
+    print(clip("\n".join(lines), budget))
+    return 0
+
+def _cold_gap_seconds(root):
+    marker = os.path.join(flux_dir(root), "cache", "last-prime")
+    gap = None
+    try:
+        if os.path.exists(marker):
+            gap = time.time() - os.path.getmtime(marker)
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        with open(marker, "w") as f:
+            f.write(str(int(time.time())))
+    except Exception:
+        pass
+    return gap
+
+def _latest_handoff(root):
+    hdir = os.path.join(flux_dir(root), "handoffs")
+    if not os.path.isdir(hdir):
+        return None
+    entries = sorted(e for e in os.listdir(hdir) if e.endswith(".md"))
+    return os.path.join(hdir, entries[-1]) if entries else None
+
+# ----------------------------------------------------------------------- state
+
+def cmd_state(args):
+    root = repo_root()
+    cfg = read_config(root)
+    if cfg is None:
+        print("flux state: no .flux/flux.toml here — run `flux init` first", file=sys.stderr)
+        return 1
+    state = read_state(root)
+    if not args or args[0] == "get":
+        keys = args[1:] if args else []
+        if keys:
+            for key in keys:
+                print(state.get(key, ""))
+        else:
+            for key, value in state.items():
+                print("%s = %s" % (key, value))
+        return 0
+    if args[0] == "set":
+        pairs = args[1:]
+        if not pairs or len(pairs) % 2 != 0:
+            print("usage: flux state set <key> <value> [<key> <value>...]", file=sys.stderr)
+            return 2
+        for i in range(0, len(pairs), 2):
+            state[pairs[i]] = pairs[i + 1]
+        state["updated"] = now_stamp()
+        serialized = dump_flat_toml(state)
+        budget = state_budget_bytes(cfg)
+        if len(serialized.encode("utf-8")) > budget:
+            print(
+                "flux state: refused — write would be %d bytes, budget is %d "
+                "([state].budget_tokens x %d). Trim values; move prose to a plan doc."
+                % (len(serialized.encode("utf-8")), budget, BYTES_PER_TOKEN),
+                file=sys.stderr,
+            )
+            return 1
+        path = os.path.join(flux_dir(root), "state.toml")
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(serialized)
+        os.replace(tmp, path)
+        return 0
+    print("usage: flux state get [key...] | flux state set <key> <value>...", file=sys.stderr)
+    return 2
+
+# ----------------------------------------------------------------------- check
+
+FAILURE_RE = re.compile(
+    r"(?i)\b(error|errors|fail|failed|failing|failure|failures|exception|traceback|"
+    r"assert|panic|fatal)\b|✗|✖|ERR!"
+)
+
+def filter_failures(lines, context=2, cap=200):
+    keep = set()
+    for i, line in enumerate(lines):
+        if FAILURE_RE.search(line):
+            for j in range(max(0, i - context), min(len(lines), i + context + 1)):
+                keep.add(j)
+    if not keep:
+        return lines[-40:]
+    picked = [lines[i] for i in sorted(keep)]
+    if len(picked) > cap:
+        picked = picked[:cap] + ["[flux: +%d more matching lines suppressed]" % (len(picked) - cap)]
+    return picked
+
+def apply_filter(mode, lines):
+    if mode == "raw":
+        return lines
+    if mode.startswith("tail:"):
+        try:
+            n = int(mode.split(":", 1)[1])
+        except ValueError:
+            n = 80
+        return lines[-n:]
+    return filter_failures(lines)
+
+def cmd_check(_args):
+    root = repo_root()
+    cfg = read_config(root)
+    if cfg is None:
+        print("flux check: no .flux/flux.toml here — run `flux init` first", file=sys.stderr)
+        return 1
+    check_cfg = cfg.get("check") or {}
+    command = check_cfg.get("command", "")
+    if not command:
+        print("flux check: [check].command is empty in .flux/flux.toml", file=sys.stderr)
+        return 1
+    proc = subprocess.run(
+        command, shell=True, cwd=root,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+    )
+    lines = proc.stdout.splitlines()
+    if proc.returncode == 0:
+        print("check passed: %s (%d lines suppressed)" % (command, len(lines)))
+        return 0
+    mode = check_cfg.get("filter", "failures")
+    for line in apply_filter(mode, lines):
+        print(line)
+    print("check FAILED (exit %d): %s [filter=%s, %d raw lines]"
+          % (proc.returncode, command, mode, len(lines)))
+    return proc.returncode
+
+# --------------------------------------------------------------------- handoff
+
+def cmd_handoff(_args):
+    root = repo_root()
+    cfg = read_config(root)
+    if cfg is None:
+        print("flux handoff: no .flux/flux.toml here — run `flux init` first", file=sys.stderr)
+        return 1
+    state = read_state(root)
+    budget = state_budget_bytes(cfg)
+
+    sections = ["# handoff — %s" % now_stamp(), ""]
+    branch = git(["branch", "--show-current"], cwd=root) or "(detached)"
+    sections.append("branch: %s" % branch)
+    sections.append("")
+    sections.append("## state")
+    for key, value in state.items():
+        if str(value).strip():
+            sections.append("- %s: %s" % (key, value))
+    status = git(["status", "--short"], cwd=root)
+    sections.append("")
+    sections.append("## working tree")
+    sections.append("```")
+    status_lines = status.splitlines() if status else ["(clean)"]
+    sections.extend(status_lines[:40])
+    if len(status_lines) > 40:
+        sections.append("... +%d more" % (len(status_lines) - 40))
+    sections.append("```")
+    sections.append("")
+    sections.append("## recent commits")
+    sections.append("```")
+    sections.append(git(["log", "--oneline", "-10"], cwd=root) or "(no commits)")
+    sections.append("```")
+
+    content = clip("\n".join(sections) + "\n", budget)
+    hdir = os.path.join(flux_dir(root), "handoffs")
+    os.makedirs(hdir, exist_ok=True)
+    path = os.path.join(hdir, time.strftime("%Y-%m-%d-%H%M") + ".md")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+    print(os.path.relpath(path, os.getcwd()))
+    return 0
+
+# ------------------------------------------------------------------------- run
+
+def dedupe(lines):
+    out = []
+    for line in lines:
+        if out and out[-1][0] == line:
+            out[-1][1] += 1
+        else:
+            out.append([line, 1])
+    result = []
+    for line, count in out:
+        result.append(line if count == 1 else "%s  [x%d]" % (line, count))
+    return result
+
+def cmd_run(args):
+    tail = None
+    if args[:1] == ["--tail"] and len(args) >= 2:
+        tail = int(args[1])
+        args = args[2:]
+    if args[:1] == ["--"]:
+        args = args[1:]
+    if not args:
+        print("usage: flux run [--tail N] -- <command...>", file=sys.stderr)
+        return 2
+    root = repo_root()
+    cfg = read_config(root) or {}
+    if tail is None:
+        tail = (cfg.get("run") or {}).get("tail", 100)
+    proc = subprocess.run(
+        args if len(args) > 1 else args[0],
+        shell=(len(args) == 1), cwd=os.getcwd(),
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+    )
+    lines = [l[:500] + " [flux: line truncated]" if len(l) > 500 else l
+             for l in proc.stdout.splitlines()]
+    lines = dedupe(lines)
+    total = len(lines)
+    if total > tail + 15:
+        shown = lines[:15] + ["[flux: %d lines elided]" % (total - tail - 15)] + lines[-tail:]
+    else:
+        shown = lines
+    for line in shown:
+        print(line)
+    if total != len(shown):
+        print("[flux run: %d -> %d lines, exit %d]" % (total, len(shown), proc.returncode))
+    return proc.returncode
+
+# ------------------------------------------------------------------------ main
+
+COMMANDS = {
+    "init": cmd_init,
+    "prime": cmd_prime,
+    "state": cmd_state,
+    "check": cmd_check,
+    "handoff": cmd_handoff,
+    "run": cmd_run,
+}
+
+def main(argv):
+    if len(argv) < 2 or argv[1] in ("-h", "--help", "help"):
+        print(__doc__.strip())
+        return 0
+    handler = COMMANDS.get(argv[1])
+    if handler is None:
+        print("flux: unknown command %r\n" % argv[1], file=sys.stderr)
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    return handler(argv[2:])
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

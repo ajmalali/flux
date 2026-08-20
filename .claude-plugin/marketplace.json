@@ -1,0 +1,7 @@
+{
+  "name": "flux-market",
+  "owner": { "name": "Ajmal Ali" },
+  "plugins": [
+    { "name": "flux", "source": "./" }
+  ]
+}

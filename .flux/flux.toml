@@ -1,113 +1,15 @@
-# flux configuration (ADR 0006). Committed: a run is only reproducible if the
-# gate suite and the model routing are part of the repo, not of someone's shell.
+# .flux/flux.toml — the whole per-repo adapter. Written by `flux init`.
 
-schema_version = 1
-target = "python"
+[check]
+command = "python3 -m unittest discover -s tests"
+filter  = "failures"          # failures | tail:80 | raw
 
-[runner]
-max_review_iters = 3
-artifact_retries = 1
-max_stage_runs = 40
-stage_commits = true
+[state]
+budget_tokens = 2000          # flux refuses to emit or store more than this
 
-# Model and effort are always explicit (ADR 0007) — never an SDK default.
+[routing]                     # /flux:plan stamps one of these into each plan
+design = "opus"
+mechanical = "sonnet"
 
-[stages.tests]
-model = "claude-sonnet-5"
-effort = "high"
-permission_mode = "acceptEdits"
-max_turns = 40
-max_tokens = 200000
-
-[stages.implement]
-model = "claude-sonnet-5"
-effort = "high"
-permission_mode = "acceptEdits"
-max_turns = 40
-max_tokens = 200000
-
-[stages.review]
-model = "claude-opus-5"
-effort = "high"
-permission_mode = "acceptEdits"
-max_turns = 30
-max_tokens = 200000
-
-[stages.fix]
-model = "claude-sonnet-5"
-effort = "high"
-permission_mode = "acceptEdits"
-max_turns = 40
-max_tokens = 200000
-
-[stages.pr]
-model = "claude-haiku-4-5-20251001"
-effort = "low"
-permission_mode = "acceptEdits"
-max_turns = 15
-max_tokens = 200000
-
-# Deterministic gates are the merge authority (ADR 0005). 'kind' only picks
-# how output is summarised; the verdict is always the command's exit status.
-
-[[gates]]
-name = "lint"
-kind = "ruff"
-command = ["uv", "run", "ruff", "check", "."]
-
-[[gates]]
-name = "typecheck"
-kind = "pyright"
-command = ["uv", "run", "pyright"]
-
-[[gates]]
-name = "test"
-kind = "pytest"
-command = ["uv", "run", "pytest", "-q", "-rf"]
-
-# A/B baseline against vanilla Claude Code, with a standing kill-criterion
-# (ADR 0008). Written down so it can be enforced, not remembered.
-[ab]
-vanilla_every = 10
-kill_streak = 3
-kill_criterion = "If vanilla Claude Code wins on cost AND quality for 3 consecutive samples, freeze harness feature work and investigate."
-
-# The baseline arm has no [stages.vanilla] entry on purpose: it mirrors
-# [stages.implement] so the comparison isolates the harness, not the model.
-# Add one only to break that mirror deliberately.
-
-# Repo map: bought, not built (ADR 0009). `flux index` runs this command and
-# caches the ranked file list; stages fold a slice into their context pack.
-[repo_map]
-command = ["uvx", "--from", "repowiki", "repowiki", "map"]
-top = 60
-pack_entries = 25
-
-# The tests stage writes here and nowhere else; the implement stage may
-# not write here at all (ADR 0005). An empty 'command' means 'whatever the
-# test gate runs', so the red step and the gate cannot measure differently.
-[tests]
-dir = "tests"
-command = []
-gate = ""
-held_out_dir = ".flux/held-out"
-
-# The reviewer is advisory and runs on a different model (ADR 0005).
-# 'fix_severities' is the only part of its verdict the machine acts on:
-# those findings turn the review-fix loop and, unresolved, park the ticket.
-[review]
-fix_severities = ["blocker"]
-max_diff_chars = 60000
-max_hunks = 12
-
-# Where a finished ticket lands. flux never pushes to a protected branch
-# and never force-pushes: the push is the one thing a git reset cannot
-# undo, so it is the one place the defaults are about restraint.
-[pr]
-push = true
-remote = "origin"
-base = ""
-branch_prefix = "flux/"
-protected_branches = ["main", "master", "trunk", "develop"]
-create = "auto"
-draft = true
+[run]
+tail = 100                    # `flux run` keeps at most this many trailing lines

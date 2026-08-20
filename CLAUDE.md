@@ -1,43 +1,40 @@
 # flux
 
-**F**ast **L**oop **U**nified e**X**ecution — a deterministic orchestration harness around
-Claude Code (Python CLI, run inside target repos).
-
-Status: M0 complete; M1 in progress — executor seam, metrics store, runner spine, gates, repo
-map, the A/B baseline, and all five stages (`tests`, `implement`, `review`, `fix`, `pr`) are in,
-so a ticket runs end to end and lands on a pushed, verified branch. Remaining for M1 (re-sequenced
-2026-08-19, ADR 0011): the A/B quality-axis fix (T5.5a), then the expanded exit benchmark
-(T5.6). The review bake-off (T5.5) was cut; M2/M3 are frozen; T5.7 (per-ticket pipeline
-config) and T5.8 (smart-zone continuation) follow the benchmark.
+Deterministic session machinery for Claude Code — one repo that is both a plugin and
+its own marketplace: a dependency-free CLI (`bin/flux`) wired to hooks, plus a lean
+skill set. v2, rebuilt 2026-08-20; the v1 orchestration harness is archived at tag
+`v1-final` and `.flux/archive/v1/` (pivot rationale: ADR 0012 there).
 
 ## Session bootstrap (do this first, in order)
 
-1. Read `.flux/plans/flux-harness/status.md` — current state, task queue, session-close checklist.
-   Do the first unchecked task unless the user says otherwise.
-2. Before writing runner/stage/executor code, read `.flux/plans/flux-harness/design.md` — it pins
-   the binding contracts: state machine, `Executor` protocol, artifact-handoff rules, stage I/O
-   table.
-3. `.flux/plans/flux-harness/plan.md` (v2.1) holds milestones and exit benchmarks.
-   `.flux/adr/` holds binding decisions — never contradict an ADR silently; amend or supersede it
-   with a new ADR.
-
-Only pull `.flux/research/` files when a task's rationale is genuinely unclear; they are source
-material, not instructions.
+1. Read `.flux/plans/flux-v2/status.md` — current state, task queue, session-close
+   checklist. Do the first unchecked task unless the user says otherwise.
+2. `.flux/plans/flux-v2/plan.md` pins the binding design: principles, CLI surface,
+   skill roster, targets table, phases. Don't contradict it silently — amend it.
 
 ## Conventions (binding)
 
-- Everything flux generates or tracks as project docs lives under `.flux/` (ADR 0006). Code in
-  `src/flux/`, tests in `tests/`.
-- Python ≥3.12, `uv`-managed. Gates on this repo: `uv run ruff check .`, `uv run pyright`,
-  `uv run pytest`. All three must pass before any commit.
-- Only `src/flux/executor/` may import `claude_agent_sdk` (ADR 0007). Stage/runner code depends
-  on the `Executor` protocol only.
-- Model and effort are always explicit in `ExecConfig` — never rely on SDK defaults.
-- flux runs on the user's logged-in Claude **subscription**. Never configure or suggest API-key
-  billing except through the approved fallback ladder in ADR 0010 (requires user approval).
-  Executor code must strip `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` from child environments.
-- Milestone exit benchmarks (plan.md §5) gate advancement: do not open new scope while the
-  current milestone's benchmark is unmet.
-- End every working session by executing the session-close checklist in status.md — status.md is
-  the handoff artifact that makes the next fresh session possible; an unupdated status.md means
-  the session's knowledge is lost.
+- **`bin/flux` stays single-file, stdlib-only, Python ≥3.9 compatible** (no
+  3.10+ syntax; tomllib is optional via fallback). It rides the plugin's PATH and a
+  SessionStart hook — no dependencies, no install step, ever.
+- **Budgets are enforced in code.** Anything flux emits into model context or stores
+  as state has a byte cap (tokens ≈ bytes/4) that the CLI refuses to exceed. Never
+  add an uncapped output path.
+- **`flux prime` must never fail and never nag**: silent no-op wherever `.flux/`
+  is absent (user-scoped hooks fire in every repo).
+- **No MCP, no SDK.** flux talks to nothing programmatically; it is invoked by hooks
+  and Bash. Skills contain judgment only; procedures live in the CLI.
+- **Vendored skills** (`skills/` minus the lifecycle five) are frozen copies —
+  edit them only through `scripts/sync-vendored.sh` (pin + rewrites), MIT-attributed
+  in `skills/VENDORED.md`.
+- Gate on this repo: `python3 -m unittest discover -s tests` (also wired as
+  `flux check` here). It must pass before any commit.
+- Everything flux tracks as project docs lives under `.flux/`; skill frontmatter
+  keeps `disable-model-invocation: true` for lifecycle skills.
+- flux runs on the user's logged-in Claude **subscription**; never configure or
+  suggest API-key billing.
+- **Every feature is falsifiable**: name the ledger metric it moves (plan.md
+  targets table); two unmoved reporting cycles ⇒ delete it.
+- End every working session by executing the session-close checklist in
+  `.flux/plans/flux-v2/status.md` — an unupdated status.md means the session's
+  knowledge is lost.

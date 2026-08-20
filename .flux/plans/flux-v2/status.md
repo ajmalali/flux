@@ -1,6 +1,6 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-20 (later session: `flux run --filter` shipped — check's failure extractor is now reusable for scoped runs; Phase 01 code is complete)
+Updated: 2026-08-20 (later session: plugin installed from this repo and SessionStart prime verified live — Phase 01 is done end to end; next stop is adoption in zaps/kiosk)
 
 ## Current state
 
@@ -36,9 +36,24 @@ Updated: 2026-08-20 (later session: `flux run --filter` shipped — check's fail
     usage error (exit 2), an unknown config value warns on stderr and falls back to
     elide. Summary line now reports the mode: `[flux run: 200 -> 40 lines,
     filter=failures, exit 0]`.
-- **Not yet done in Phase 01:** the code is complete; what remains is installing
-  the plugin (`/plugin marketplace add`) on this machine and adopting in
-  zaps/kiosk. Phase 00 global-config quick wins are the user's, outside this repo.
+  - **Plugin installed & prime verified live (2026-08-20):** installed as
+    `flux@flux-market` v2.0.0 from a **directory-source** marketplace
+    (`known_marketplaces.json` → `{"source": "directory", "path": "/Users/ajmalali/Dev/flux"}`).
+    After restart the SessionStart hook fired in this repo and rendered the prime pack
+    (phase/position/next/routing/check); run from a directory with no `.flux/` it
+    printed nothing and exited 0 — the hook-safe no-op holds in the real harness.
+    The `flux:` namespace also resolves (skill `flux:review`, agents
+    `flux:flux-explorer` / `flux:flux-verifier` appear in the session roster).
+  - **Gotcha — the install is a COPY, not a symlink.** Despite the directory source,
+    the plugin lives at `~/.claude/plugins/cache/flux-market/flux/2.0.0`, pinned to
+    `gitCommitSha` 98193b1, and `CLAUDE_PLUGIN_ROOT` points there. `diff -rq` against
+    the repo is clean today, so edits to `bin/flux` here do **not** reach the running
+    hook until the plugin is updated/reinstalled. When changing CLI behaviour that
+    hooks depend on, refresh the install before trusting a live test.
+
+- **Not yet done in Phase 01:** code complete and installed; what remains is
+  adopting in zaps/kiosk. Phase 00 global-config quick wins are the user's,
+  outside this repo.
 
 ## Decisions from the check-command review (2026-08-20, user-confirmed)
 
@@ -51,9 +66,10 @@ Updated: 2026-08-20 (later session: `flux run --filter` shipped — check's fail
 
 ## Task queue
 
-- [ ] Install the plugin from this repo (`/plugin marketplace add ~/Dev/flux` or
-      push + `ajmalali/flux`), restart, confirm SessionStart prime fires here and
-      fast-no-ops in a non-flux repo.
+- [x] Install the plugin from this repo (`/plugin marketplace add ~/Dev/flux`),
+      restart, confirm SessionStart prime fires here and fast-no-ops in a non-flux
+      repo. **Done 2026-08-20** — see the install note above, including the
+      copy-not-symlink caveat.
 - [ ] Adopt in zaps/kiosk: `flux init`, then the config-then-verify flow — propose
       the check command, run it once, confirm the output is the repo's real
       verification, commit flux.toml. Set state from current PAUL position; PAUL

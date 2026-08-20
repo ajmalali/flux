@@ -50,6 +50,14 @@ class TestInit(FluxRepoCase):
         self.assertTrue(os.path.exists(os.path.join(self.repo, ".flux", "state.toml")))
         self.assertTrue(os.path.exists(os.path.join(self.repo, ".flux", ".gitignore")))
 
+    def test_detected_command_is_a_candidate(self):
+        self.write("uv.lock", "")
+        out = run_flux(["init"], self.repo)
+        self.assertIn("check candidate", out.stdout)
+        self.assertIn("run `flux check` once", out.stdout)
+        with open(os.path.join(self.repo, ".flux", "flux.toml")) as f:
+            self.assertIn("verified = false", f.read())
+
     def test_detects_nx_before_package_json(self):
         self.write("nx.json", "{}")
         self.write("package.json", "{}")
@@ -98,6 +106,13 @@ class TestPrime(FluxRepoCase):
         self.assertEqual(out.returncode, 0)
         self.assertLessEqual(len(out.stdout.encode()), 40 + 1)  # + newline
 
+    def test_flags_unverified_check(self):
+        self.write("uv.lock", "")
+        run_flux(["init"], self.repo)
+        out = run_flux(["prime"], self.repo)
+        self.assertEqual(out.returncode, 0)
+        self.assertIn("[unverified — run it once]", out.stdout)
+
     def test_never_fails(self):
         run_flux(["init"], self.repo)
         self.write(".flux/flux.toml", "[[[garbage")
@@ -133,11 +148,16 @@ class TestState(FluxRepoCase):
 
 
 class TestCheck(FluxRepoCase):
-    def configure(self, command, filt="failures"):
+    def configure(self, command, filt="failures", verified=None):
         run_flux(["init"], self.repo)
+        stamp = "" if verified is None else "verified = %s\n" % ("true" if verified else "false")
         self.write(".flux/flux.toml",
-                   '[check]\ncommand = "%s"\nfilter = "%s"\n[state]\nbudget_tokens = 2000\n'
-                   % (command, filt))
+                   '[check]\ncommand = "%s"\nfilter = "%s"\n%s[state]\nbudget_tokens = 2000\n'
+                   % (command, filt, stamp))
+
+    def read_toml(self):
+        with open(os.path.join(self.repo, ".flux", "flux.toml")) as f:
+            return f.read()
 
     def test_pass_suppresses_output(self):
         self.configure("seq 5 9; true")
@@ -165,6 +185,31 @@ class TestCheck(FluxRepoCase):
         out = run_flux(["check"], self.repo)
         self.assertEqual(out.returncode, 1)
         self.assertIn("empty", out.stderr)
+
+    def test_first_pass_flips_verified_stamp(self):
+        self.configure("true", verified=False)
+        out = run_flux(["check"], self.repo)
+        self.assertEqual(out.returncode, 0)
+        self.assertIn("marked verified", out.stdout)
+        self.assertIn("verified = true", self.read_toml())
+        # second pass: stamp already flipped, no repeat note
+        out2 = run_flux(["check"], self.repo)
+        self.assertEqual(out2.returncode, 0)
+        self.assertNotIn("marked verified", out2.stdout)
+
+    def test_fail_keeps_stamp_and_warns_candidate(self):
+        self.configure("exit 1", verified=False)
+        out = run_flux(["check"], self.repo)
+        self.assertEqual(out.returncode, 1)
+        self.assertIn("never passed", out.stdout)
+        self.assertIn("verified = false", self.read_toml())
+
+    def test_legacy_config_without_stamp_untouched(self):
+        self.configure("true")
+        out = run_flux(["check"], self.repo)
+        self.assertEqual(out.returncode, 0)
+        self.assertNotIn("verified", out.stdout)
+        self.assertNotIn("verified", self.read_toml())
 
 
 class TestHandoff(FluxRepoCase):

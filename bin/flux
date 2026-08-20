@@ -153,6 +153,7 @@ FLUX_TOML_TEMPLATE = """\
 [check]
 command = "%(check)s"
 filter  = "failures"          # failures | tail:80 | raw
+verified = false              # flips to true on the first full `flux check` pass
 
 [state]
 budget_tokens = 2000          # flux refuses to emit or store more than this
@@ -195,9 +196,11 @@ def cmd_init(args):
         with open(gitignore_path, "w", encoding="utf-8") as f:
             f.write("# flux runtime scratch — rebuildable, never committed\ncache/\n")
     if detected:
-        print("flux init: wrote .flux/flux.toml (detected %s -> check: %s)" % (detected, check))
+        print("flux init: wrote .flux/flux.toml (detected %s -> check candidate: %s)" % (detected, check))
+        print("run `flux check` once to validate it; edit [check].command in .flux/flux.toml if wrong")
     else:
-        print("flux init: wrote .flux/flux.toml — no build system detected, set [check].command yourself")
+        print("flux init: wrote .flux/flux.toml — no build system detected, "
+              "set [check].command yourself, then run `flux check` once to validate it")
     return 0
 
 # ----------------------------------------------------------------------- prime
@@ -235,9 +238,11 @@ def _prime_inner():
         value = str(state.get(key, "")).strip()
         if value:
             lines.append("%s: %s" % (key, value))
-    check = (cfg.get("check") or {}).get("command", "")
+    check_cfg = cfg.get("check") or {}
+    check = check_cfg.get("command", "")
     if check:
-        lines.append("check: flux check  (%s)" % check)
+        unverified = "  [unverified — run it once]" if check_cfg.get("verified") is False else ""
+        lines.append("check: flux check  (%s)%s" % (check, unverified))
     latest = _latest_handoff(root)
     if latest:
         lines.append("last handoff: %s" % os.path.relpath(latest, root))
@@ -343,6 +348,24 @@ def apply_filter(mode, lines):
         return lines[-n:]
     return filter_failures(lines)
 
+def _mark_check_verified(root):
+    """Flip `verified = false` -> `verified = true` in flux.toml in place,
+    preserving every other byte of the user's file."""
+    path = os.path.join(flux_dir(root), "flux.toml")
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        new, n = re.subn(r"(?m)^(\s*verified\s*=\s*)false\b", r"\1true", text, count=1)
+        if n != 1:
+            return False
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(new)
+        os.replace(tmp, path)
+        return True
+    except Exception:
+        return False
+
 def cmd_check(_args):
     root = repo_root()
     cfg = read_config(root)
@@ -361,12 +384,17 @@ def cmd_check(_args):
     lines = proc.stdout.splitlines()
     if proc.returncode == 0:
         print("check passed: %s (%d lines suppressed)" % (command, len(lines)))
+        if check_cfg.get("verified") is False and _mark_check_verified(root):
+            print("note: first full pass — [check].command marked verified in .flux/flux.toml")
         return 0
     mode = check_cfg.get("filter", "failures")
     for line in apply_filter(mode, lines):
         print(line)
     print("check FAILED (exit %d): %s [filter=%s, %d raw lines]"
           % (proc.returncode, command, mode, len(lines)))
+    if check_cfg.get("verified") is False:
+        print("note: this command has never passed here — if the failure looks wrong, "
+              "edit [check].command in .flux/flux.toml")
     return proc.returncode
 
 # --------------------------------------------------------------------- handoff

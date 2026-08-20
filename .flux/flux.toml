@@ -3,6 +3,7 @@
 [check]
 command = "python3 -m unittest discover -s tests"
 filter  = "failures"          # failures | tail:80 | raw
+verified = true              # flips to true on the first full `flux check` pass
 
 [state]
 budget_tokens = 2000          # flux refuses to emit or store more than this

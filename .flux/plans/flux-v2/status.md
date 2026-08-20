@@ -1,6 +1,6 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-20 (v2 pivot session: v1 retired at tag `v1-final`, Phase 01 built; check-command design reviewed with the user — decisions below)
+Updated: 2026-08-20 (later session: `flux init` hardening shipped — detected check command is now a candidate with a `verified` stamp)
 
 ## Current state
 
@@ -18,8 +18,15 @@ Updated: 2026-08-20 (v2 pivot session: v1 retired at tag `v1-final`, Phase 01 bu
     (grill = wrapper + grilling/domain-modeling as `references/`), synced by
     `scripts/sync-vendored.sh`, pinned to mattpocock-skills 1.2.3
     (claude-plugins-official commit 2ab9580…), MIT attributed in `skills/VENDORED.md`.
-  - 23 tests, `python3 -m unittest discover -s tests`, all passing; dogfooded on
+  - 28 tests, `python3 -m unittest discover -s tests`, all passing; dogfooded on
     this repo (`.flux/flux.toml` check = the unittest run; prime/state/check verified live).
+  - **Check-candidate flow shipped (2026-08-20):** `flux init` writes
+    `verified = false` under `[check]` and prints "check candidate: … run `flux check`
+    once to validate"; the first full `flux check` pass flips the stamp in place
+    (byte-preserving regex edit), failures while unverified warn that the command has
+    never passed here, and `flux prime` shows `[unverified — run it once]`. Configs
+    without the key (legacy) are untouched. This repo's own flux.toml stamp flipped
+    live on this session's gate run.
 - **Not yet done in Phase 01:** installing the plugin (`/plugin marketplace add`)
   on this machine and adopting in zaps/kiosk; Phase 00 global-config quick wins are
   the user's, outside this repo.
@@ -35,9 +42,6 @@ Updated: 2026-08-20 (v2 pivot session: v1 retired at tag `v1-final`, Phase 01 bu
 
 ## Task queue
 
-- [ ] `flux init` hardening: treat the detected check command as a **candidate** —
-      print "run `flux check` once to validate; edit [check].command if wrong"
-      (optionally a `verified` stamp that flips after the first completed run).
 - [ ] `flux run --filter failures`: reuse check's failure-extraction filter so
       scoped test runs are as context-cheap as the gate (+ test).
 - [ ] Install the plugin from this repo (`/plugin marketplace add ~/Dev/flux` or

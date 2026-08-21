@@ -254,6 +254,14 @@ class TestState(FluxRepoCase):
     def test_odd_args_usage_error(self):
         self.assertEqual(run_flux(["state", "set", "phase"], self.repo).returncode, 2)
 
+    def test_set_confirms_the_write_against_the_budget(self):
+        # a silent write leaves no way to see how close the pack is to its cap
+        out = run_flux(["state", "set", "phase", "P2"], self.repo)
+        self.assertRegex(out.stdout, r"flux state: wrote \d+ keys, (\d+)/8000 bytes")
+        used = int(re.search(r"wrote \d+ keys, (\d+)/", out.stdout).group(1))
+        state = os.path.join(self.repo, ".flux", "state.toml")
+        self.assertEqual(used, os.path.getsize(state))
+
 
 class TestCheck(FluxRepoCase):
     def configure(self, command, filt="failures", verified=None):

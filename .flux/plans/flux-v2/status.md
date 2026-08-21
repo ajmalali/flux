@@ -1,6 +1,6 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-20 (later session: lifecycle skills + /flux:adopt — 64 tests green)
+Updated: 2026-08-20 (later session: /flux:adopt run end-to-end on kiosk — 65 tests green)
 
 ## Current state
 
@@ -50,6 +50,9 @@ Updated: 2026-08-20 (later session: lifecycle skills + /flux:adopt — 64 tests 
     the repo is clean today, so edits to `bin/flux` here do **not** reach the running
     hook until the plugin is updated/reinstalled. When changing CLI behaviour that
     hooks depend on, refresh the install before trusting a live test.
+    **And refreshing needs a version bump** — `claude plugin update` compares versions,
+    not commits, so it will report "already at the latest version" over a stale cache.
+    See the adopt-run entry in the task queue; the plugin is now 2.1.0.
 
   - **Detection generalized (2026-08-20)** — the goal the user set is "works for
     any repository, any project type", so detection was rebuilt as a rule table
@@ -154,10 +157,48 @@ Updated: 2026-08-20 (later session: lifecycle skills + /flux:adopt — 64 tests 
       `bin/flux` — that is the per-project fork plan.md rules out.
       plan.md amended: `/flux:adopt` added to the roster with its ledger metric
       (median context per request), `--scan` added to the CLI surface.
-- [ ] Phase 02 — migrate kiosk PAUL state into `.flux/`, archive `.paul/`.
-      **Now the first real run of `/flux:adopt`** — kiosk's `.paul/` is 7.4 MB / 427
-      files (STATE.md 299 KB) plus a 454 KB `.claude/paul-framework`. Adopt it, run a
-      phase, and only then consider retiring.
+- [x] **Phase 02 — `/flux:adopt` run end-to-end on kiosk. Done 2026-08-20.**
+      `.paul/` (7.4 MB / 427 files) left in place as frozen history; nothing archived,
+      per the skill's own adopt → run a phase → then retire order.
+      **Ledger datapoints:** kiosk's PAUL state is 300 KB (`STATE.md`) + 149 KB
+      (`ROADMAP.md`) + 89 KB (`PROJECT.md`); the flux pack that replaces it as the
+      session opener is **1282 bytes**. Its gate emits 946 lines; `flux check` prints 1.
+      **What adoption caught that a copy would have carried forward:** `STATE.md` is
+      append-layered, so it leads with a current 2026-08-14 position while its
+      *Git State*, *Session Continuity* and *Blockers* sections still describe
+      2026-05-18 (Phase 19, PRs #29–32, a branch that no longer exists). Step 4 —
+      trust the tree — is what caught it. Corrections written into the pack: the branch
+      is 2 commits ahead of main, not 1; and `DEV-T-READER-RECONNECT-SINGLE-SHOT` was
+      **re-verified against source** (`StripeTerminalProvider.tsx:633` — one timer, and
+      a failed discovery never re-arms it), so it now carries a file:line instead of a
+      claim.
+
+      **Three defects the run surfaced — two fixed here, one is a live gotcha:**
+      1. **Directory-source plugins refresh on version bump, not on new commits.**
+         `claude plugin update flux@flux-market` reported "already at the latest
+         version (2.0.0)" while the cache lacked *all six* skills shipped since.
+         Bumped `plugin.json` to **2.1.0**; the update then took, and
+         `~/.claude/plugins/cache/flux-market/flux/2.1.0/skills/` now holds all twelve.
+         **Standing rule: every skill or CLI change that hooks depend on needs a
+         version bump before it can be tested live.** This supersedes the weaker
+         "the install is a COPY" note above — the copy is the mechanism, the version
+         is the trigger.
+      2. **Fixed — adopt's "read from the ends" was byte-blind.** These state files
+         have enormous lines (kiosk's `STATE.md`: 300 KB over 631 lines, longest line
+         17 KB), so a plain `head -60` returned 100 KB — the exact cost adoption
+         exists to avoid. Step 3 now says to map with `grep -n '^#\{1,3\} '` and read
+         sections through `cut -c1-300`: **cap line length, not line count.**
+      3. **Fixed — `flux state set` wrote silently.** Over-budget writes were loud but
+         successful ones said nothing, so there was no way to see how close the pack
+         sat to its cap. It now prints `flux state: wrote N keys, N/8000 bytes`,
+         guarded by a test that asserts the reported size equals the file on disk.
+         65 tests green.
+- [ ] **Candidate — derived facts belong in prime's live header, not in stored prose.**
+      Found at adopt's read-back step: `position` said "2 commits ahead of main", and
+      the commit that *wrote* it made that 3. Branch and dirty-file count are already
+      read live from git in the header; ahead/behind should join them, and `position`
+      should carry only what git can't derive. Small, and it removes a whole class of
+      self-invalidating state.
 - [ ] Phase 02 — one full real phase (plan → audit → apply → wrap) in kiosk.
 - [ ] Phase 03 — generalize (zaps/api), retire PAUL/mattpocock installs, first
       ledger before/after.

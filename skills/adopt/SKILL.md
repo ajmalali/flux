@@ -38,10 +38,18 @@ lives — that sentence is what makes the loss safe.
 ## 3. Read from the ends, and narrowly
 
 Never load a large state file whole; that spends the context adoption exists to save.
-Read its head for structure and its tail for recency, and send targeted questions to
-`flux-explorer` ("what does this file say is in progress, blocked, or unfinished?").
-Take its pointers back, not its pages. Read history only where it explains something
-live.
+Map it first, then read only the live sections:
+
+```
+grep -n '^#\{1,3\} ' STATE.md        # the section index
+sed -n '10,88p' STATE.md | cut -c1-300  # one section, line length capped
+```
+
+**Cap line length, not line count.** These files are append-layered and their lines
+run long — kiosk's `STATE.md` is 300 KB over 631 lines, with a single 17 KB line, so a
+plain `head -60` returned 100 KB. `head`/`tail` alone are not a budget; `cut -c1-300`
+is. Prefer targeted questions to `flux-explorer` over reading at all, and take its
+pointers back rather than its pages. Read history only where it explains something live.
 
 ## 4. Trust the tree over the framework
 

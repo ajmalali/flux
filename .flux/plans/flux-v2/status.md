@@ -1,6 +1,6 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-20 (later session: prime derives ahead/behind live — 69 tests green, plugin 2.2.0)
+Updated: 2026-08-21 (first full lifecycle run: kiosk phase 01 shipped as PR #66, CI green)
 
 ## Current state
 
@@ -207,7 +207,54 @@ Updated: 2026-08-20 (later session: prime derives ahead/behind live — 69 tests
       repeat what prime derives. **Four tests** (ahead / behind / quiet-when-synced /
       dirty singular+plural). 69 tests green. Plugin bumped to **2.2.0** — prime is
       hook-invoked, so the cache needs the version to take.
-- [ ] Phase 02 — one full real phase (plan → audit → apply → wrap) in kiosk.
+- [x] **Phase 02 — one full real phase (plan → audit → apply → wrap) in kiosk. Done
+      2026-08-21.** The five lifecycle skills' first end-to-end run. Phase
+      `01-ship-codegraph-and-flux` in `zaps/kiosk/.flux/plans/`: pushed
+      `chore/retire-gitnexus-for-codegraph` and opened **PR #66** with CI green
+      (`ci` pass, 2m7s). Not merged — the repo's own rule is that the user signs off.
+
+      **The audit is the part that earned its keep.** Three blocking findings, nine
+      recommended, four deferred — on a plan I'd have called obviously fine:
+      1. AC-4 pinned `c5842e7` as `origin/main` (it's the *parent*; the tip is
+         `a6577b1`) and justified itself with "this repo merges through PRs, never
+         directly" — falsified by that very tip, pushed straight to main with no PR,
+         on a repo with no branch protection.
+      2. "The local gate is a superset of CI" — false. CI also runs
+         `nx run-many -t build --exclude=@zaps/kiosk`; kiosk's `flux check` is
+         lint/typecheck/test and never builds. Worse, every target in that gate is an
+         Nx **cache hit** for this diff (nothing it touches lives inside a
+         `projectRoot`), and `flux check` prints the same pass line for a replay as for
+         a real run.
+      3. The plan told the executor to write into the PR body that `.paul/` was
+         "untouched" — the branch amends `DECISIONS.md` and `PROJECT.md`. A false
+         statement, headed for a reviewer, with no AC that could catch it.
+      Folding them in took the plan from 4958 → 11910 bytes, all `<!-- audit -->`
+      marked, one file, no second artifact. Verdict: ready with conditions.
+
+      **Ledger datapoints:** kiosk's gate emits **946 lines; `flux check` printed 1**
+      (twice — T1 and wrap). The audit subagent burned ~71k tokens reading the repo
+      and returned only findings; none of that reading entered the executing session.
+
+      **What the skills got right in the wild:** apply's qualify step (the four AC-2
+      greps came from the audit, and re-running them fresh is what made "DONE"
+      mean something), and wrap's reconcile-against-the-tree (it's what surfaced the
+      deviation below).
+
+      **Honest deviation, recorded in the plan's outcome:** T1's gate ran in *parallel*
+      with the audit to save wall-clock, so the order was plan → (audit ∥ T1), not
+      plan → audit → T1. It passed, and the audit then rewrote what that pass meant.
+      Also: CI passed first try, so T3's re-trigger and fix-forward paths were never
+      exercised — they're in the plan untested.
+
+- [ ] **Candidate — prime hides drift-vs-main once a branch has an upstream.**
+      Surfaced at the wrap read-back of this very run. Before the push, kiosk's header
+      read `3 ahead of origin/main` — the useful number. After `git push -u`, the
+      branch has its own upstream, is in sync with it, and `_drift_base` prefers
+      upstream, so the header now says **nothing**. For a feature branch, "in sync with
+      my own remote" is the boring fact; "3 ahead of main" is the one worth a line.
+      Fix shape: when the upstream is the same-named remote branch *and* a distinct
+      default branch exists, report drift against the default branch too (or instead).
+      Shipped 2026-08-20 in the same session; caught by using it the next day.
 - [ ] Phase 03 — generalize (zaps/api), retire PAUL/mattpocock installs, first
       ledger before/after.
 

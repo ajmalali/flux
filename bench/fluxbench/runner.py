@@ -187,6 +187,10 @@ class Runner:
         if not sm.ok:
             self._log("    ! %s" % (sm.error or outcome.error))
         self._append({"type": "session", **sm.to_json()})
+        if sm.num_turns == 0 and sm.cost_usd == 0.0 and not step.optional:
+            raise ArmMisconfigured(
+                "%s produced no turns -- check the prompt resolves (arm %s, step %s)"
+                % (label, arm.name, step.label))
         return sm
 
     # -- arms ---------------------------------------------------------------
@@ -196,8 +200,12 @@ class Runner:
         repo = materialize(self.project, arm, self.out / arm.name)
         records: List[TaskRecord] = []
 
-        for i, step in enumerate(arm.bootstrap):
-            self._run_step(arm, step, repo, None, i)
+        try:
+            for i, step in enumerate(arm.bootstrap):
+                self._run_step(arm, step, repo, None, i)
+        except ArmMisconfigured as exc:
+            self._log("  ! %s -- abandoning arm %s before any task" % (exc, arm.name))
+            return records
         if arm.bootstrap:
             _commit_all(repo, "bootstrap: %s" % arm.name)
 
@@ -220,6 +228,11 @@ class Runner:
             except BudgetExhausted as exc:
                 record.aborted = str(exc)
                 self._log("  ! %s" % exc)
+            except ArmMisconfigured as exc:
+                record.aborted = str(exc)
+                self._log("  ! %s -- abandoning arm %s" % (exc, arm.name))
+                self._append(record.to_json())
+                return records
 
             record.wall_ms = int((time.monotonic() - started) * 1000)
             result = grade(
@@ -268,6 +281,8 @@ class Runner:
             except BudgetExhausted as exc:
                 self._log("! %s -- stopping before remaining arms" % exc)
                 break
+            except ArmMisconfigured as exc:
+                self._log("! %s" % exc)
         self._log("\nspent $%.2f of $%.2f budget; records: %s"
                   % (self.spent, self.config.max_usd, self.records_path))
         return manifest
@@ -275,3 +290,12 @@ class Runner:
 
 class BudgetExhausted(RuntimeError):
     pass
+
+
+class ArmMisconfigured(RuntimeError):
+    """A step did nothing at all -- a setup bug, not a result worth recording.
+
+    Distinct from an ordinary failed session, which is a real outcome an arm
+    should be judged on. This one means the benchmark was asking the wrong
+    question, so the arm is abandoned rather than scored."""
+

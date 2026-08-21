@@ -17,6 +17,11 @@ That is a real and coherent use of the tool. It is not its full intended loop,
 and a reader comparing this row to flux's four-session lifecycle should hold
 that difference in mind.
 
+project-install.sh writes the commands into .claude/commands/agent-os/, so they
+are invoked as /agent-os:<name>. Plain /discover-standards resolves to nothing --
+and an unresolved slash command exits *successfully* with zero turns, which is
+why the harness now refuses a no-op step outright.
+
 Staged by setup-frameworks.sh (git clone + project-install.sh; no piped
 installer).
 """
@@ -30,11 +35,11 @@ command = "test -x ${FRAMEWORKS}/agent-os-base/scripts/project-install.sh && bas
 [[bootstrap]]
 kind = "session"
 label = "discover-standards"
-prompt = """/discover-standards Read README.md, CLAUDE.md and the meridian package. CLAUDE.md states this project's conventions explicitly — capture those, plus the patterns you find in the code, as standards. Proceed without asking questions: there is no user available in this session, so choose sensible defaults and say what you chose."""
+prompt = """/agent-os:discover-standards Read README.md, CLAUDE.md and the meridian package. CLAUDE.md states this project's conventions explicitly — capture those, plus the patterns you find in the code, as standards. Proceed without asking questions: there is no user available in this session, so choose sensible defaults and say what you chose."""
 
 [[step]]
 label = "inject"
-prompt = """/inject-standards Then read {brief_path} in the repository root and write `agent-os/current-task.md`: what is being built, which standards apply, and the steps you intend to take. Proceed without asking questions; choose sensible defaults."""
+prompt = """/agent-os:inject-standards Then read {brief_path} in the repository root and write `agent-os/current-task.md`: what is being built, which standards apply, and the steps you intend to take. Proceed without asking questions; choose sensible defaults."""
 
 [[step]]
 label = "implement"

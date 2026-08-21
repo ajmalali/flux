@@ -195,6 +195,16 @@ def parse_result_envelope(payload: Dict[str, Any], into: SessionMetrics) -> Sess
     into.ok = not payload.get("is_error") and payload.get("subtype") == "success"
     if not into.ok:
         into.error = str(payload.get("api_error_status") or payload.get("terminal_reason") or "error")
+    elif into.num_turns == 0 and into.cost_usd == 0.0:
+        # An unresolved slash command exits with is_error=false, subtype=success,
+        # zero turns and zero cost -- the CLI's "success" for a prompt that did
+        # nothing at all. Trusting it would score a misconfigured arm as an
+        # efficient one, which is the single most dangerous way this benchmark
+        # could lie. It cost the agentos arm two silent no-op steps before this
+        # check existed.
+        into.ok = False
+        into.error = ("no turns and no cost -- the prompt produced nothing "
+                      "(usually an unresolved slash command)")
 
     usage = payload.get("modelUsage") or {}
     if usage:

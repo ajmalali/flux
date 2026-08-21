@@ -69,6 +69,39 @@ class ContextAccountingTests(unittest.TestCase):
         self.assertTrue(m.ok)
 
 
+class NoOpSessionTests(unittest.TestCase):
+    """An unresolved slash command is the benchmark's most dangerous lie.
+
+    Claude Code exits with is_error=false, subtype=success, zero turns and zero
+    cost when a prompt resolves to nothing. Recorded naively, a misconfigured
+    arm looks like a cheap, efficient one -- it scores well precisely because it
+    did no work. This actually happened to the agentos arm."""
+
+    @staticmethod
+    def _envelope(**over):
+        payload = {"session_id": "s", "subtype": "success", "is_error": False,
+                   "num_turns": 0, "total_cost_usd": 0, "duration_ms": 0,
+                   "modelUsage": {}}
+        payload.update(over)
+        return payload
+
+    def test_zero_turn_zero_cost_session_is_not_ok(self):
+        m = metrics.parse_result_envelope(self._envelope(), metrics.SessionMetrics())
+        self.assertFalse(m.ok)
+        self.assertIn("no turns", m.error)
+
+    def test_a_real_session_is_still_ok(self):
+        m = metrics.parse_result_envelope(
+            self._envelope(num_turns=3, total_cost_usd=0.4), metrics.SessionMetrics())
+        self.assertTrue(m.ok)
+
+    def test_a_free_but_real_session_is_still_ok(self):
+        """Zero cost alone is not proof of a no-op; zero turns with it is."""
+        m = metrics.parse_result_envelope(
+            self._envelope(num_turns=2, total_cost_usd=0), metrics.SessionMetrics())
+        self.assertTrue(m.ok)
+
+
 class TranscriptParsingTests(unittest.TestCase):
     def _write(self, entries):
         tmp = Path(tempfile.mkdtemp(prefix="fluxbench-t-"))

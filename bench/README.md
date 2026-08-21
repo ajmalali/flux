@@ -31,9 +31,34 @@ tools, the starting tree, the environment, and the grading suite. `Arm` has no
 field for a model or an effort level, and there is a test asserting it never
 gains one — otherwise a "win" might only ever mean a bigger model.
 
-Shipped arms: `vanilla` (the control), `flux` (full lifecycle), `flux-lite`
-(machinery only — the control *within* flux), `paul`, and framework arms staged by
-`setup-frameworks.sh`.
+| arm | per-task procedure | what it is |
+|---|---|---|
+| `vanilla` | implement | the control: one session, the brief, the gate |
+| `flux` | plan → audit → apply → wrap | flux as plan.md prescribes it |
+| `flux-lite` | apply | flux's machinery without the ceremony — the control *within* flux |
+| `paul` | plan → audit → apply → verify | the incumbent flux was distilled from |
+| `speckit` | specify → plan → tasks → implement | GitHub Spec Kit |
+| `agentos` | inject → implement | Agent OS v3's standards layer (see caveat) |
+
+`flux-lite` exists to keep flux honest against itself. It separates two claims
+that are easy to conflate: what the deterministic machinery (prime, budgeted
+state, filtered check) is worth, and what the four-session lifecycle costs on top
+of it. If `flux-lite` beats `flux`, plan.md's falsifiability rule says the
+ceremony goes.
+
+**Agent OS caveat.** v3 is built to interview the user: every command drives the
+work through `AskUserQuestion`, and `/shape-spec` refuses outright unless the
+session is in plan mode. `AskUserQuestion` is denied to every arm here — a
+headless run has no human — so depending on it is a property of the framework
+rather than a handicap imposed on it. But a hard refusal is not a graceful
+degradation, so `/shape-spec` is excluded rather than burned on a stop. The
+`agentos` row therefore measures Agent OS's standards layer, not its full loop,
+and should be read with that in mind.
+
+**Spec Kit note.** It ships project *skills*, not commands. They resolve by
+explicit `/name` under `--setting-sources project` even though a headless session
+never advertises them in context — verified by invoking a planted probe skill,
+after asking the model "do you have this skill?" gave a confidently wrong "no".
 
 ## Why the project is multi-task and the sessions are never resumed
 

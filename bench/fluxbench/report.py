@@ -287,6 +287,102 @@ def render_markdown(manifest: Dict[str, Any], summaries: List[ArmSummary]) -> st
     return "\n".join(lines)
 
 
-def report(records_path: Path) -> str:
+FOCUS_ARM = "flux"
+
+
+def render_verdict(summaries: List[ArmSummary], focus: str = FOCUS_ARM) -> str:
+    """Answer the question the benchmark was built to answer, in words.
+
+    "Is flux beating everything?" is not readable off a twelve-column table at a
+    glance, and the whole point of the exercise is that an unfavourable answer
+    triggers work rather than being quietly absorbed. So the verdict names every
+    metric flux loses, who beat it, and by how much.
+    """
+    lines: List[str] = ["## verdict", ""]
+    target = next((s for s in summaries if s.arm == focus), None)
+    if target is None:
+        return "\n".join(lines + ["No `%s` arm in this run." % focus, ""])
+
+    others = [s for s in summaries if s.arm != focus and s.delivered_count > 0]
+    lines.append("`%s` delivered **%s** at **$%.2f/task**%s."
+                 % (focus, target.delivered, target.cost_per_task,
+                    "" if target.delivered_count == 0
+                    else " ($%.2f per delivered task)" % target.cost_per_delivered))
+    lines.append("")
+
+    if target.delivered_count == 0:
+        lines.append("**It delivered nothing.** No efficiency number below counts for "
+                     "anything until that changes.")
+        lines.append("")
+        return "\n".join(lines)
+
+    best_delivery = max((s.delivered_count for s in summaries), default=0)
+    if target.delivered_count < best_delivery:
+        beaten_by = [s.arm for s in summaries if s.delivered_count == best_delivery]
+        lines.append("**Out-delivered.** %s delivered %d of %d; `%s` delivered %d. "
+                     "Cost comparisons are secondary to this."
+                     % (", ".join("`%s`" % a for a in beaten_by), best_delivery,
+                        target.tasks, focus, target.delivered_count))
+        lines.append("")
+
+    losses = []
+    for key, header, unit, lower_is_better, _t in COLUMNS:
+        if key == "delivered":
+            continue
+        mine = target.value(key)
+        for other in others:
+            theirs = other.value(key)
+            better = theirs < mine if lower_is_better else theirs > mine
+            if better:
+                losses.append((header, unit, mine, other.arm, theirs, lower_is_better))
+                break
+        else:
+            continue
+
+    if not losses:
+        lines.append("**`%s` wins every measured column** against every arm that "
+                     "delivered. Nothing here says to change it." % focus)
+        lines.append("")
+        return "\n".join(lines)
+
+    lines.append("Where `%s` is beaten — each row is a thing to fix or a claim to "
+                 "retire:" % focus)
+    lines.append("")
+    lines.append("| metric | %s | best | beaten by | gap |" % focus)
+    lines.append("|---|---|---|---|---|")
+    for header, unit, mine, arm, theirs, lower_is_better in losses:
+        best = min((o.value(_key_for(header)) for o in others),
+                   key=lambda v: v) if lower_is_better else max(
+                       (o.value(_key_for(header)) for o in others))
+        winner = min(others, key=lambda o: o.value(_key_for(header))) if lower_is_better \
+            else max(others, key=lambda o: o.value(_key_for(header)))
+        lines.append("| %s | %s | %s | `%s` | %s |"
+                     % (header, _fmt(_key_for(header), mine, unit),
+                        _fmt(_key_for(header), best, unit), winner.arm,
+                        _gap(mine, best, lower_is_better)))
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _key_for(header: str) -> str:
+    for key, head, _u, _l, _t in COLUMNS:
+        if head == header:
+            return key
+    raise KeyError(header)
+
+
+def _gap(mine: float, best: float, lower_is_better: bool) -> str:
+    try:
+        mine, best = float(mine), float(best)
+    except (TypeError, ValueError):
+        return "-"
+    if best == 0 or mine == 0:
+        return "-"
+    ratio = (mine / best) if lower_is_better else (best / mine)
+    return "%.2gx" % ratio if ratio >= 1.05 else "~equal"
+
+
+def report(records_path: Path, focus: str = FOCUS_ARM) -> str:
     manifest, rows = load(records_path)
-    return render_markdown(manifest, summarize(manifest, rows))
+    summaries = summarize(manifest, rows)
+    return render_markdown(manifest, summaries) + "\n" + render_verdict(summaries, focus)

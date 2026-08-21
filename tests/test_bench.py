@@ -292,6 +292,44 @@ class ReportTests(unittest.TestCase):
         self.assertAlmostEqual(worker.cost_usd, 6.0)
         self.assertEqual(worker.median_context, 90000)
 
+    def test_verdict_names_every_metric_the_focus_arm_loses(self):
+        """The point of the exercise is that a bad answer triggers work, so the
+        losses have to be spelled out rather than left to be read off a table."""
+        manifest, rows = self._rows()
+        manifest["arms"] = [{"name": "lazy"}, {"name": "worker"}]
+        text = report.render_verdict(report.summarize(manifest, rows), focus="worker")
+        self.assertIn("worker", text)
+        self.assertIn("delivered", text)
+
+    def test_verdict_says_so_when_the_focus_arm_delivered_nothing(self):
+        manifest, rows = self._rows()
+        text = report.render_verdict(report.summarize(manifest, rows), focus="lazy")
+        self.assertIn("delivered nothing", text)
+        self.assertIn("does not count" if "does not count" in text else "count", text)
+
+    def test_verdict_declares_a_clean_sweep_when_there_is_one(self):
+        manifest = {"run_id": "t", "config": {}, "project": {"tasks": []},
+                    "arms": [{"name": "flux"}, {"name": "rival"}]}
+        rows = [
+            {"type": "session", "arm": "flux", "task": "a", "cost_usd": 1.0, "wall_ms": 10,
+             "input_tokens": 1, "output_tokens": 1, "cache_read_tokens": 1,
+             "cache_creation_tokens": 0, "tool_calls": {"Read": 10}, "tool_errors": 0,
+             "requests": [{"input_tokens": 10, "cache_read_tokens": 0,
+                           "cache_creation_tokens": 0, "sidechain": False}]},
+            {"type": "task", "arm": "flux", "task": "a", "delivered": True,
+             "grade": {"accept_total": 1, "accept_passed": 1, "gate_ok": True}},
+            {"type": "session", "arm": "rival", "task": "a", "cost_usd": 9.0, "wall_ms": 900,
+             "input_tokens": 100, "output_tokens": 100, "cache_read_tokens": 100,
+             "cache_creation_tokens": 900, "tool_calls": {"Read": 10}, "tool_errors": 9,
+             "redundant_reads": 8, "bash_output_chars": 90000,
+             "requests": [{"input_tokens": 900, "cache_read_tokens": 0,
+                           "cache_creation_tokens": 0, "sidechain": False}]},
+            {"type": "task", "arm": "rival", "task": "a", "delivered": True,
+             "grade": {"accept_total": 1, "accept_passed": 1, "gate_ok": True}},
+        ]
+        text = report.render_verdict(report.summarize(manifest, rows), focus="flux")
+        self.assertIn("wins every measured column", text)
+
     def test_report_renders_delivery_next_to_efficiency(self):
         manifest, rows = self._rows()
         text = report.render_markdown(manifest, report.summarize(manifest, rows))

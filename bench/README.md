@@ -110,6 +110,15 @@ $ per task — plus delivery rate and wall time. "Context" counts cache reads:
 cached context is still context, and reading `input_tokens` alone would report a
 30k-token turn as 2 tokens.
 
+## The verdict section
+
+Under the table, the report answers the question in words: every metric `flux`
+loses, who beat it, and by how much. "Is flux beating everything?" is not
+readable off a twelve-column table at a glance, and the point of the exercise is
+that an unfavourable answer triggers work rather than being quietly absorbed.
+Pass a different focus arm to `report(records, focus=...)` to turn it on someone
+else.
+
 ## Isolation
 
 Sessions run with `--setting-sources project`, so the operator's own `~/.claude`

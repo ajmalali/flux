@@ -26,6 +26,18 @@ already has `round_half_up` — use it rather than a second rounding rule.
 A new module `meridian/domain/policy.py` owns the tiers and the arithmetic. It is
 domain code: pure, no clock reads, no I/O. The time of cancellation is passed in.
 
+It must expose exactly this function, by this name and signature:
+
+```python
+def refund_cents(price_cents: int, gap: timedelta) -> int:
+    """The refund owed on ``price_cents`` for a cancellation ``gap`` ahead of
+    the booking's start."""
+```
+
+Add whatever else you find useful alongside it — a booking-level convenience
+wrapper, the tiers as a table — but `refund_cents(price_cents, gap)` is the
+contract other code and other people will bind to.
+
 ## 3. What changes elsewhere
 
 - `Booking` gains `refund_cents: int = 0`. A confirmed booking always has `0`.

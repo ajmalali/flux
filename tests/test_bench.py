@@ -337,6 +337,31 @@ class ReportTests(unittest.TestCase):
         self.assertIn("Efficiency without delivery is not a win.", text)
 
 
+class UnbriefedApiTests(unittest.TestCase):
+    """A test may only hold an arm to API the brief names, or the seed already has."""
+
+    def test_seed_scaffolding_is_allowed(self):
+        from fluxbench.verify import seed_symbols, unbriefed_symbols
+
+        project = Project.load("meridian")
+        seed = seed_symbols(project)
+        self.assertIn("BookingService", seed)
+        self.assertIn("JsonStore", seed)
+        for task in project.tasks:
+            self.assertEqual(unbriefed_symbols(task, seed), [], task.id)
+
+    def test_a_helper_nobody_asked_for_is_caught(self):
+        from fluxbench.spec import Task
+        from fluxbench.verify import unbriefed_symbols
+
+        tmp = Path(tempfile.mkdtemp(prefix="fluxbench-u-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        (tmp / "test_x.py").write_text(
+            "from meridian.domain.policy import invented_helper\n", encoding="utf-8")
+        task = Task(id="x", title="x", brief="Add a policy module.", accept_dir=tmp)
+        self.assertEqual(unbriefed_symbols(task, set()), ["invented_helper"])
+
+
 class CorpusTests(unittest.TestCase):
     def test_every_shipped_project_is_fit_to_judge(self):
         """Red on the seed, green on the reference, gate intact -- for every task

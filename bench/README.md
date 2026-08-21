@@ -93,10 +93,26 @@ can win a column.
   still passes. Otherwise the brief is ambiguous and every arm loses points for the
   task author's writing.
 
-This is not hypothetical. The first smoke run had both arms fail the same
-acceptance test on a boundary the brief never pinned down (`max_length=9` against a
-9-character slug). `verify` is what stops that reaching a real run, and it runs as
-part of this repo's own gate.
+`verify` also refuses a task whose acceptance tests import names that are neither
+in the seed nor mentioned in the brief — testing a helper nobody asked for
+measures whether the arm guessed the author's imagination.
+
+This is not hypothetical, twice over. The first smoke run had both arms fail the
+same acceptance test on a boundary the brief never pinned down (`max_length=9`
+against a 9-character slug). And m2 shipped with a worse version of it: the tests
+bound to `refund_cents(price_cents, gap)` while the brief named only the module.
+Vanilla wrote `refund_cents(booking, cancelled_at)` — a perfectly good design —
+and lost a task it had actually delivered. That run was thrown away.
+
+**The corpus rule, because red/green cannot enforce it.** The reference
+implementation is written by the same person as the tests, so it agrees with them
+by construction; verification can never catch a shared assumption. Therefore:
+
+> If an acceptance test calls it, the brief must name it — including its
+> signature. Anything else the test needs must already exist in the seed.
+
+Signatures are the part that bites. `verify` catches unbriefed *names*; only this
+rule catches unbriefed *shapes*.
 
 ## What gets measured
 

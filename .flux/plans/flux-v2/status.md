@@ -84,6 +84,41 @@ Updated: 2026-08-21 (lifecycle run + the drift-base defect it surfaced, fixed �
 - The check command is per-repo config (`[check].command`), set once at adoption;
   `flux check` itself contains no repo knowledge.
 
+## Benchmark (`bench/`) — added 2026-08-21
+
+`fluxbench` exists and is validated end to end: six arms, two projects, 97 tests
+in the repo gate. See `bench/README.md` for the fairness rules and `plan.md` for
+why it is part of the plan.
+
+Four things it established that were not known before, each of which would have
+corrupted a result:
+
+1. **`--setting-sources project` is the isolation lever.** A bare session's
+   cached prefix is ~6.5k tokens with it; without it every one of the operator's
+   installed plugins rides along in every arm and drowns the differences.
+   `--plugin-dir <repo>` loads flux from the working tree and fires its
+   SessionStart hook — so the bench always measures checked-out flux, no version
+   bump needed.
+2. **An unresolved slash command exits successfully.** `is_error=false`,
+   `subtype=success`, zero turns, zero cost. Recorded naively it makes a
+   misconfigured arm look like a cheap efficient one. A zero-turn zero-cost
+   session is now a hard failure that abandons the arm. Found live: two agentos
+   steps had been scoring as "ok" at $0.000.
+3. **Project skills resolve headlessly, but are not advertised.** Asking the
+   model "do you have skill X" returns a confident NO; invoking `/X` works.
+   spec-kit ships skills, so the wrong answer would have made that arm run four
+   sessions of nothing.
+4. **Acceptance tests need a reference implementation to be trustworthy.** The
+   first smoke run had every arm fail the same test on a boundary the brief never
+   pinned down — the corpus author's bug scored against the arms. `verify` now
+   proves each task red-on-seed and green-on-reference before it may judge.
+
+**In flight:** `meridian-001` — 6 arms x 4 tasks on sonnet, $40 cap, launched
+2026-08-21. Log at `/tmp/meridian-001.log`, records in
+`~/.flux-bench/runs/meridian-001/`. Expect several hours; the runner appends
+records as it goes, so a partial run is still usable
+(`./bench/run.py report meridian-001`).
+
 ## Task queue
 
 - [x] Install the plugin from this repo (`/plugin marketplace add ~/Dev/flux`),

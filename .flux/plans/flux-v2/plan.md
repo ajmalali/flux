@@ -66,6 +66,38 @@ transcripts.
 - **Model routing** only at session boundaries (prime surfaces the plan's routing
   stamp) and subagent boundaries. Never `/model` or skill `model:` mid-session.
 
+## The benchmark (`bench/`) *(amendment, 2026-08-21 — not in the original blueprint)*
+
+The falsifiability rule above was unenforceable: no feature could be killed for
+failing to move a metric, because the metrics did not exist outside a one-off
+ledger read. `bench/` is the rig that produces them — `fluxbench`, a stdlib
+harness that runs one multi-task project end to end through several Claude Code
+setups and reports the targets table below, per arm, alongside delivery rate.
+
+- **Arms** differ in exactly three ways: seeded files, `--plugin-dir`, and the
+  per-task prompt sequence. Model, effort, permission mode, denied tools, the
+  starting tree and the grading suite belong to the runner. `Arm` has no model
+  field and a test asserts it never gains one.
+- **Six arms**: `vanilla`, `flux`, `flux-lite`, `paul`, `speckit`, `agentos`.
+  `flux-lite` is the control *within* flux — same machinery, no lifecycle
+  ceremony. If it beats `flux`, the four-session lifecycle is overhead and the
+  falsifiability rule applies to it.
+- **Corpus**: `projects/meridian`, a layered stdlib booking service (20 modules,
+  41 tests) and four tasks that build on each other. Sessions are never resumed;
+  carrying knowledge across a cold start is the arm's job and most of what flux
+  is.
+- **Quality axis** (inherited from v1's ADR 0011): held-out acceptance tests per
+  task, written before any arm runs. An arm delivers only when its acceptance
+  tests pass *and* the repo gate still passes, and no arm with zero deliveries
+  may win a column. Each task also ships a reference implementation, and
+  `run.py verify` asserts red-on-seed / green-on-reference before the corpus may
+  judge anyone.
+- **Out of the plugin's way**: run artifacts land in `~/.flux-bench/runs`, and
+  third-party framework payloads in `~/.flux-bench/frameworks` — never in this
+  repo, which ships by being copied.
+
+Ledger metric it must move: all of them. This is the instrument, not a feature.
+
 ## Targets (ledger-measured; baseline = Aug 19 Session Ledger)
 
 | Metric | Baseline | Target |

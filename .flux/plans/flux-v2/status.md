@@ -178,9 +178,21 @@ to act on — but n=3 against one control, and `flux-lite` (the arm that separat
 machinery from ceremony) never ran. **The decisive missing evidence is
 flux vs flux-lite vs vanilla over the same four tasks.**
 
-**Next session:** relaunch as `meridian-003` on the fixed harness — the rerun is
-now safe, because a rate limit voids instead of lying. Then act on the verdict
-table.
+**In flight:** `meridian-003` — the same 6 arms x 4 tasks on sonnet, $40 cap,
+launched 2026-08-21 on the fixed harness, detached (`nohup`). Log
+`/tmp/meridian-003.log`, records `~/.flux-bench/runs/meridian-003/`. meridian-002
+was killed at $16.93 rather than finished: its speckit arm was already void, so
+nothing it produced from there could be compared. Its records are kept.
+
+**Read it with:** `./bench/run.py report meridian-003`. If a rate limit hits
+again the run now waits it out, and anything it still cannot reach comes back as
+`void` rather than as an arm that failed to deliver — so a partial report is
+safe to read at face value.
+
+**Next session:** read the report and act on the verdict table. The question it
+has to answer is the one meridian-002 could not: **flux vs flux-lite vs vanilla
+over the same four tasks** — whether the 2.6x cost is the machinery or the
+ceremony.
 
 ## Task queue
 
@@ -371,9 +383,10 @@ table.
       void-aware tables and verdict in the report, shared-task comparison when arms
       scored different sets, and the rule applied retroactively to old records.
       12 tests, 114 green. Full write-up in the benchmark section above.
-- [ ] **Relaunch the benchmark as `meridian-003`** on the fixed harness — 6 arms x
-      4 tasks, sonnet. meridian-002 answered only flux-vs-vanilla over 3 tasks, and
-      the arm that matters most (`flux-lite`, machinery vs ceremony) never ran.
+- [~] **`meridian-003` launched 2026-08-21** on the fixed harness — 6 arms x 4
+      tasks, sonnet, $40. meridian-002 answered only flux-vs-vanilla over 3 tasks,
+      and the arm that matters most (`flux-lite`, machinery vs ceremony) never ran.
+      **Read the report first thing next session.**
 - [ ] Phase 03 — generalize (zaps/api), retire PAUL/mattpocock installs, first
       ledger before/after.
 

@@ -1,6 +1,6 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-21 (first full lifecycle run: kiosk phase 01 shipped as PR #66, CI green)
+Updated: 2026-08-21 (lifecycle run + the drift-base defect it surfaced, fixed — 73 tests green, plugin 2.3.0)
 
 ## Current state
 
@@ -246,15 +246,27 @@ Updated: 2026-08-21 (first full lifecycle run: kiosk phase 01 shipped as PR #66,
       Also: CI passed first try, so T3's re-trigger and fix-forward paths were never
       exercised — they're in the plan untested.
 
-- [ ] **Candidate — prime hides drift-vs-main once a branch has an upstream.**
-      Surfaced at the wrap read-back of this very run. Before the push, kiosk's header
-      read `3 ahead of origin/main` — the useful number. After `git push -u`, the
-      branch has its own upstream, is in sync with it, and `_drift_base` prefers
-      upstream, so the header now says **nothing**. For a feature branch, "in sync with
-      my own remote" is the boring fact; "3 ahead of main" is the one worth a line.
-      Fix shape: when the upstream is the same-named remote branch *and* a distinct
-      default branch exists, report drift against the default branch too (or instead).
-      Shipped 2026-08-20 in the same session; caught by using it the next day.
+- [x] **Fixed 2026-08-21 — prime reports drift as two independent legs.** The
+      candidate below was found by using yesterday's feature the next day: after
+      `git push -u`, kiosk's header went from `3 ahead of origin/main` to **silence**,
+      because `_drift_base` preferred the upstream and the branch was in sync with it.
+      One base was the wrong model. The upstream answers *"have I pushed?"*; the
+      default branch answers *"how far has this branch come?"* — and a feature branch
+      needs both. `_ahead_behind` now emits up to two legs, each omitted when zero:
+
+        kiosk  @ chore/retire-gitnexus-for-codegraph, 4 ahead of origin/main
+        kiosk  @ chore/...,  1 unpushed, 5 ahead of origin/main
+        flux   @ main, 14 unpushed
+
+      The upstream leg says **"N unpushed"** rather than "N ahead of origin/main" —
+      shorter, and it's what the number actually means. The default-branch leg is
+      skipped when its base *is* the upstream (standing on `main`), so nothing is
+      double-reported. `_default_base` never returns the branch you're standing on.
+      **Four new tests**, all against a real bare-repo remote: pushed-and-in-sync still
+      reports default-branch drift (the regression), unpushed and default drift appear
+      as separate legs, `main` reports only `unpushed`, and behind-your-own-upstream
+      renders. 73 tests green. Plugin **2.3.0**.
+
 - [ ] Phase 03 — generalize (zaps/api), retire PAUL/mattpocock installs, first
       ledger before/after.
 

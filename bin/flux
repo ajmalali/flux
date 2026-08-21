@@ -547,42 +547,63 @@ def _prime_inner():
     return 0
 
 def _ahead_behind(root, branch):
-    """Divergence from upstream (or the default branch), derived live.
+    """Divergence, derived live — two independent legs.
 
-    Anything git can answer must not be stored in `position` — stored prose about
-    the tree invalidates itself on the very next commit."""
-    base = _drift_base(root, branch)
-    if not base:
-        return None
-    counts = git(["rev-list", "--left-right", "--count", "%s...HEAD" % base], cwd=root)
-    parts = counts.split()
+    The upstream answers "have I pushed?"; the default branch answers "how far has
+    this branch come?". A feature branch in sync with its own remote must still
+    report the second, or the header goes silent exactly when the branch is most
+    interesting. Anything git can answer must not be stored in `position` — stored
+    prose about the tree invalidates itself on the very next commit."""
+    legs = []
+    upstream = git(
+        ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], cwd=root
+    )
+    if upstream:
+        counts = _rev_list_counts(root, upstream)
+        if counts:
+            behind, ahead = counts
+            if ahead and behind:
+                legs.append("%d unpushed, %d behind %s" % (ahead, behind, upstream))
+            elif ahead:
+                legs.append("%d unpushed" % ahead)
+            elif behind:
+                legs.append("%d behind %s" % (behind, upstream))
+    base = _default_base(root, branch)
+    if base and base != upstream:
+        counts = _rev_list_counts(root, base)
+        if counts:
+            behind, ahead = counts
+            if ahead and behind:
+                legs.append("%d ahead, %d behind %s" % (ahead, behind, base))
+            elif ahead:
+                legs.append("%d ahead of %s" % (ahead, base))
+            elif behind:
+                legs.append("%d behind %s" % (behind, base))
+    return ", ".join(legs) if legs else None
+
+def _rev_list_counts(root, base):
+    """(behind, ahead) relative to base, or None if git can't answer."""
+    parts = git(
+        ["rev-list", "--left-right", "--count", "%s...HEAD" % base], cwd=root
+    ).split()
     if len(parts) != 2:
         return None
     try:
-        behind, ahead = int(parts[0]), int(parts[1])
+        return int(parts[0]), int(parts[1])
     except ValueError:
         return None
-    if ahead and behind:
-        return "%d ahead, %d behind %s" % (ahead, behind, base)
-    if ahead:
-        return "%d ahead of %s" % (ahead, base)
-    if behind:
-        return "%d behind %s" % (behind, base)
-    return None
 
-def _drift_base(root, branch):
-    upstream = git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], cwd=root)
-    if upstream:
-        return upstream
+def _default_base(root, branch):
+    """The repo's default branch, never the branch we're standing on."""
     for candidate in ("origin/HEAD", "origin/main", "origin/master", "main", "master"):
         if candidate in (branch, "origin/" + branch):
             continue
-        if git(["rev-parse", "--verify", "--quiet", candidate + "^{commit}"], cwd=root):
-            if candidate == "origin/HEAD":
-                resolved = git(["rev-parse", "--abbrev-ref", "origin/HEAD"], cwd=root)
-                if not resolved or resolved.split("/")[-1] == branch:
-                    continue
+        if candidate == "origin/HEAD":
+            resolved = git(["rev-parse", "--abbrev-ref", "origin/HEAD"], cwd=root)
+            if resolved and resolved.split("/")[-1] != branch:
                 return resolved
+            continue
+        if git(["rev-parse", "--verify", "--quiet", candidate + "^{commit}"], cwd=root):
             return candidate
     return None
 

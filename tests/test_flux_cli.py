@@ -3,6 +3,7 @@
 import importlib.machinery
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -254,6 +255,56 @@ class TestPrime(FluxRepoCase):
         self.write("scratch.txt", "x")
         header = run_flux(["prime"], self.repo).stdout.splitlines()[0]
         self.assertIn("2 dirty files", header)
+
+    def test_header_reports_default_branch_drift_even_with_upstream(self):
+        """The regression this exists for: a pushed feature branch went silent."""
+        run_flux(["init"], self.repo)
+        self._with_remote()
+        self._git("checkout", "-q", "-b", "feature")
+        self._commit("one")
+        self._commit("two")
+        self._git("push", "-q", "-u", "origin", "feature")
+        header = run_flux(["prime"], self.repo).stdout.splitlines()[0]
+        self.assertIn("@ feature, 2 ahead of origin/main", header)
+        self.assertNotIn("unpushed", header)
+
+    def test_header_separates_unpushed_from_default_branch_drift(self):
+        run_flux(["init"], self.repo)
+        self._with_remote()
+        self._git("checkout", "-q", "-b", "feature")
+        self._commit("one")
+        self._commit("two")
+        self._git("push", "-q", "-u", "origin", "feature")
+        self._commit("three")  # local only
+        header = run_flux(["prime"], self.repo).stdout.splitlines()[0]
+        self.assertIn("1 unpushed, 3 ahead of origin/main", header)
+
+    def test_header_does_not_double_report_on_the_default_branch(self):
+        run_flux(["init"], self.repo)
+        self._with_remote()
+        self._commit("one")
+        self._commit("two")
+        header = run_flux(["prime"], self.repo).stdout.splitlines()[0]
+        self.assertIn("2 unpushed", header)
+        self.assertNotIn("ahead of", header)
+
+    def test_header_reports_behind_own_upstream(self):
+        run_flux(["init"], self.repo)
+        self._with_remote()
+        self._git("checkout", "-q", "-b", "feature")
+        self._commit("one")
+        self._git("push", "-q", "-u", "origin", "feature")
+        self._git("reset", "-q", "--hard", "HEAD~1")
+        header = run_flux(["prime"], self.repo).stdout.splitlines()[0]
+        self.assertIn("1 behind origin/feature", header)
+
+    def _with_remote(self):
+        """A bare origin with main pushed — no origin/HEAD, as `git remote add` leaves it."""
+        bare = os.path.join(self._tmp.name + "-origin.git")
+        subprocess.run(["git", "init", "-q", "--bare", "-b", "main", bare], check=True)
+        self.addCleanup(shutil.rmtree, bare, True)
+        self._git("remote", "add", "origin", bare)
+        self._git("push", "-q", "-u", "origin", "main")
 
     def _git(self, *args):
         subprocess.run(["git", "-C", self.repo] + list(args), check=True)

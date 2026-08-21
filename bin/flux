@@ -10,6 +10,8 @@ Commands: init | prime | state get/set | check | handoff | run -- <cmd>
   flux run [--tail N] [--filter elide|failures|tail:N|raw] -- <command...>
 """
 
+import fnmatch
+import json
 import os
 import re
 import subprocess
@@ -134,20 +136,159 @@ def now_stamp():
 
 # ------------------------------------------------------------------------ init
 
-CHECK_COMMANDS = [
-    ("nx.json", "npx nx affected -t lint,typecheck,test --base=main"),
-    ("turbo.json", "npx turbo run lint typecheck test"),
-    ("Cargo.toml", "cargo clippy --quiet && cargo test --quiet"),
-    ("uv.lock", "uv run ruff check . && uv run pytest -q"),
-    ("pyproject.toml", "python3 -m pytest -q"),
-    ("package.json", "npm run lint --if-present && npm test"),
+# Detection proposes a *candidate* gate; a human confirms it at adoption and the
+# first full pass stamps it verified. Two rules bind every entry below:
+#   1. the command must run the WHOLE gate. Never a diff-scoped subset
+#      (`nx affected`, `jest -o`, `cargo test -p one`) — a gate whose meaning
+#      moves with the diff is not a gate. Scoped runs are `flux run --`.
+#   2. if a marker can't yield a runnable command, return None so the next rule
+#      gets a turn. Proposing a command that cannot work is worse than silence.
+
+JS_SCRIPT_PREFERENCE = ("check", "ci", "verify", "test:ci", "test")
+JS_LOCKFILES = (("pnpm-lock.yaml", "pnpm"), ("yarn.lock", "yarn"),
+                ("bun.lockb", "bun"), ("bun.lock", "bun"))
+MAKE_TARGETS = ("check", "ci", "verify", "test")
+
+
+def _read_json(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def _first_marker(root, markers):
+    """First marker present in root. Patterns containing '*' glob the tree top."""
+    entries = None
+    for pattern in markers:
+        if "*" in pattern:
+            if entries is None:
+                try:
+                    entries = sorted(os.listdir(root))
+                except OSError:
+                    entries = []
+            hits = fnmatch.filter(entries, pattern)
+            if hits:
+                return hits[0]
+        elif os.path.exists(os.path.join(root, pattern)):
+            return pattern
+    return None
+
+
+def _read_text(root, name):
+    try:
+        with open(os.path.join(root, name), encoding="utf-8", errors="ignore") as f:
+            return f.read()
+    except OSError:
+        return ""
+
+
+def _js_command(root, _marker):
+    pkg = _read_json(os.path.join(root, "package.json"))
+    if pkg is None:
+        return None
+    scripts = pkg.get("scripts") or {}
+    manager = "npm"
+    for lockfile, name in JS_LOCKFILES:
+        if os.path.exists(os.path.join(root, lockfile)):
+            manager = name
+            break
+    for script in JS_SCRIPT_PREFERENCE:
+        if script in scripts:
+            if script == "test" and "lint" in scripts:
+                return "%s run lint && %s run test" % (manager, manager)
+            return "%s run %s" % (manager, script)
+    return None                      # a package.json without a test script is not a gate
+
+
+def _dart_command(root, marker):
+    if "\nflutter:" in _read_text(root, marker):
+        return "flutter analyze && flutter test"
+    return "dart analyze && dart test"
+
+
+def _unittest_command(root, marker):
+    """A Python repo with tests but no packaging metadata — flux's own shape."""
+    try:
+        names = os.listdir(os.path.join(root, marker))
+    except OSError:
+        return None
+    if any(n.startswith("test_") and n.endswith(".py") for n in names) or \
+       any(n.endswith("_test.py") for n in names):
+        return "python3 -m unittest discover -s %s" % marker
+    return None
+
+
+def _ruby_command(root, _marker):
+    if os.path.exists(os.path.join(root, "Rakefile")):
+        return "bundle exec rake"
+    if os.path.isdir(os.path.join(root, "spec")):
+        return "bundle exec rspec"
+    return None
+
+
+def _php_command(root, _marker):
+    pkg = _read_json(os.path.join(root, "composer.json"))
+    scripts = (pkg or {}).get("scripts") or {}
+    for script in ("check", "ci", "test"):
+        if script in scripts:
+            return "composer run-script %s" % script
+    return None
+
+
+def _make_command(root, marker):
+    """`make test` is a gate only if the file actually declares that target."""
+    runner = "just" if marker.lower() == "justfile" else "make"
+    text = _read_text(root, marker)
+    for target in MAKE_TARGETS:
+        if re.search(r"^%s\s*:" % re.escape(target), text, re.M):
+            return "%s %s" % (runner, target)
+    return None
+
+
+def _static(command):
+    return lambda root, marker: command
+
+
+# Ordered most specific first: a monorepo runner beats the package manager it
+# wraps, a wrapper script beats the bare tool, a lockfile beats its manifest.
+CHECK_RULES = [
+    (("nx.json",), _static("npx nx run-many -t lint,typecheck,test")),
+    (("turbo.json",), _static("npx turbo run lint typecheck test")),
+    (("MODULE.bazel", "WORKSPACE.bazel", "WORKSPACE"), _static("bazel test //...")),
+    (("Cargo.toml",), _static("cargo clippy --quiet && cargo test --quiet")),
+    (("go.mod",), _static("go vet ./... && go test ./...")),
+    (("mix.exs",), _static("mix test")),
+    (("Package.swift",), _static("swift test")),
+    (("deno.json", "deno.jsonc"), _static("deno lint && deno test -A")),
+    (("pubspec.yaml",), _dart_command),
+    (("gradlew",), _static("./gradlew check")),
+    (("build.gradle", "build.gradle.kts", "settings.gradle"), _static("gradle check")),
+    (("mvnw",), _static("./mvnw -q verify")),
+    (("pom.xml",), _static("mvn -q verify")),
+    (("*.sln", "*.slnx", "*.csproj", "*.fsproj"), _static("dotnet test")),
+    (("uv.lock",), _static("uv run ruff check . && uv run pytest -q")),
+    (("poetry.lock",), _static("poetry run pytest -q")),
+    (("pyproject.toml", "tox.ini", "setup.cfg"), _static("python3 -m pytest -q")),
+    (("tests", "test"), _unittest_command),
+    (("Gemfile",), _ruby_command),
+    (("composer.json",), _php_command),
+    (("package.json",), _js_command),
+    (("justfile", "Justfile", "Makefile", "makefile"), _make_command),
 ]
 
+
 def detect_check_command(root):
-    for filename, command in CHECK_COMMANDS:
-        if os.path.exists(os.path.join(root, filename)):
-            return filename, command
+    for markers, build in CHECK_RULES:
+        marker = _first_marker(root, markers)
+        if marker is None:
+            continue
+        command = build(root, marker)
+        if command:
+            return marker, command
     return None, ""
+
 
 FLUX_TOML_TEMPLATE = """\
 # .flux/flux.toml — the whole per-repo adapter. Written by `flux init`.
@@ -202,8 +343,9 @@ def cmd_init(args):
         print("flux init: wrote .flux/flux.toml (detected %s -> check candidate: %s)" % (detected, check))
         print("run `flux check` once to validate it; edit [check].command in .flux/flux.toml if wrong")
     else:
-        print("flux init: wrote .flux/flux.toml — no build system detected, "
-              "set [check].command yourself, then run `flux check` once to validate it")
+        print("flux init: wrote .flux/flux.toml — no gate detected. Set [check].command "
+              "to whatever verifies this repo (any shell command), then run `flux check` "
+              "once to validate it")
     return 0
 
 # ----------------------------------------------------------------------- prime

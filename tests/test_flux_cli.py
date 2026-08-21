@@ -1,9 +1,20 @@
 """Tests for bin/flux. Stdlib only: python3 -m unittest discover -s tests"""
 
+import importlib.machinery
 import os
 import subprocess
 import tempfile
 import unittest
+
+def flux_module():
+    """Import bin/flux (extensionless) so tests can sweep its rule table."""
+    import importlib.util
+    spec = importlib.util.spec_from_loader(
+        "flux_cli", importlib.machinery.SourceFileLoader("flux_cli", FLUX))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
 
 FLUX = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin", "flux")
 
@@ -30,6 +41,10 @@ class FluxRepoCase(unittest.TestCase):
 
     def tearDown(self):
         self._tmp.cleanup()
+
+    def candidate(self):
+        with open(os.path.join(self.repo, ".flux", "flux.toml")) as f:
+            return f.read()
 
     def write(self, rel, content):
         path = os.path.join(self.repo, rel)
@@ -62,13 +77,105 @@ class TestInit(FluxRepoCase):
         self.write("nx.json", "{}")
         self.write("package.json", "{}")
         run_flux(["init"], self.repo)
-        with open(os.path.join(self.repo, ".flux", "flux.toml")) as f:
-            self.assertIn("nx affected", f.read())
+        self.assertIn("nx run-many", self.candidate())
+
+    def test_nx_candidate_is_never_scoped(self):
+        """A gate whose meaning moves with the diff is not a gate."""
+        self.write("nx.json", "{}")
+        run_flux(["init"], self.repo)
+        self.assertNotIn("affected", self.candidate())
+
+    def test_no_rule_proposes_a_scoped_gate(self):
+        """Sweep every marker in the table: none may yield a diff-scoped command."""
+        scoped = ("affected", "--base=", "--changed", "--onlyChanged", "--since")
+        support = {
+            "package.json": '{"scripts": {"test": "jest"}}',
+            "composer.json": '{"scripts": {"test": "phpunit"}}',
+            "Rakefile": "",
+        }
+        for markers, _build in flux_module().CHECK_RULES:
+            for marker in markers:
+                if "*" in marker:
+                    continue
+                with tempfile.TemporaryDirectory() as tmp:
+                    subprocess.run(["git", "init", "-q", "-b", "main", tmp], check=True)
+                    for name, body in support.items():
+                        with open(os.path.join(tmp, name), "w") as f:
+                            f.write(body)
+                    with open(os.path.join(tmp, marker), "w") as f:
+                        f.write(support.get(marker, "test:\n\techo hi\n"))
+                    run_flux(["init"], tmp)
+                    with open(os.path.join(tmp, ".flux", "flux.toml")) as f:
+                        command = f.read()
+                    for needle in scoped:
+                        self.assertNotIn(needle, command, "%s -> %s" % (marker, command))
+
+    def test_detects_bare_python_tests(self):
+        """flux's own shape: a tests/ dir and no packaging metadata."""
+        self.write("tests/test_thing.py", "")
+        run_flux(["init"], self.repo)
+        self.assertIn("python3 -m unittest discover -s tests", self.candidate())
+
+    def test_test_dir_without_python_tests_falls_through(self):
+        self.write("test/thing.spec.js", "")
+        self.write("package.json", '{"scripts": {"test": "jest"}}')
+        run_flux(["init"], self.repo)
+        self.assertIn("npm run test", self.candidate())
+
+    def test_detects_go(self):
+        self.write("go.mod", "module x\n")
+        run_flux(["init"], self.repo)
+        self.assertIn("go test ./...", self.candidate())
+
+    def test_detects_gradle_wrapper_before_bare_gradle(self):
+        self.write("gradlew", "")
+        self.write("build.gradle", "")
+        run_flux(["init"], self.repo)
+        self.assertIn("./gradlew check", self.candidate())
+
+    def test_detects_dotnet_by_glob(self):
+        self.write("App.csproj", "<Project/>")
+        run_flux(["init"], self.repo)
+        self.assertIn("dotnet test", self.candidate())
+
+    def test_js_uses_the_lockfiles_package_manager(self):
+        self.write("package.json", '{"scripts": {"test": "jest"}}')
+        self.write("pnpm-lock.yaml", "")
+        run_flux(["init"], self.repo)
+        self.assertIn("pnpm run test", self.candidate())
+
+    def test_js_prefers_an_explicit_check_script(self):
+        self.write("package.json", '{"scripts": {"test": "jest", "check": "npm-run-all"}}')
+        run_flux(["init"], self.repo)
+        self.assertIn("npm run check", self.candidate())
+
+    def test_js_pairs_lint_with_test(self):
+        self.write("package.json", '{"scripts": {"test": "jest", "lint": "eslint ."}}')
+        run_flux(["init"], self.repo)
+        self.assertIn("npm run lint && npm run test", self.candidate())
+
+    def test_scriptless_package_json_falls_through(self):
+        """A manifest with no test script is not a gate — the next rule gets a turn."""
+        self.write("package.json", '{"name": "x"}')
+        self.write("Makefile", "check:\n\tpytest\n")
+        run_flux(["init"], self.repo)
+        self.assertIn("make check", self.candidate())
+
+    def test_makefile_without_a_test_target_detects_nothing(self):
+        self.write("Makefile", "build:\n\tcc main.c\n")
+        out = run_flux(["init"], self.repo)
+        self.assertIn("no gate detected", out.stdout)
+        self.assertIn('command = ""', self.candidate())
+
+    def test_justfile_uses_just(self):
+        self.write("justfile", "test:\n\tcargo test\n")
+        run_flux(["init"], self.repo)
+        self.assertIn("just test", self.candidate())
 
     def test_no_detection_still_writes_config(self):
         out = run_flux(["init"], self.repo)
         self.assertEqual(out.returncode, 0)
-        self.assertIn("no build system detected", out.stdout)
+        self.assertIn("no gate detected", out.stdout)
 
     def test_refuses_overwrite_without_force(self):
         run_flux(["init"], self.repo)

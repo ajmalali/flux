@@ -1,6 +1,6 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-20 (later session: kiosk adopted — gate verified green, state seeded from PAUL; Phase 01 fully closed. One real defect found: init's nx detector proposes a scoped `affected` gate)
+Updated: 2026-08-20 (later session: kiosk adopted; detector defect fixed and detection generalized to ~20 ecosystems — 49 tests green)
 
 ## Current state
 
@@ -51,9 +51,26 @@ Updated: 2026-08-20 (later session: kiosk adopted — gate verified green, state
     hook until the plugin is updated/reinstalled. When changing CLI behaviour that
     hooks depend on, refresh the install before trusting a live test.
 
-- **Not yet done in Phase 01:** code complete and installed; what remains is
-  adopting in zaps/kiosk. Phase 00 global-config quick wins are the user's,
-  outside this repo.
+  - **Detection generalized (2026-08-20)** — the goal the user set is "works for
+    any repository, any project type", so detection was rebuilt as a rule table
+    (`CHECK_RULES` in `bin/flux`) covering nx, turbo, bazel, cargo, go, mix,
+    swift, deno, dart/flutter, gradle (+wrapper), maven (+wrapper), dotnet
+    (glob markers), uv, poetry, pytest, bare unittest, bundler, composer, npm/
+    pnpm/yarn/bun, and make/just. Two properties matter more than the breadth:
+      - **Rules may decline.** A builder returns None when the marker can't yield
+        a runnable command (a `package.json` with no test script, a `Makefile`
+        with no test target, a `test/` dir holding no Python), and the next rule
+        gets a turn. Proposing a command that cannot work is worse than silence.
+      - **Universality never depended on the table.** `[check].command` is an
+        opaque string run under `shell=True`, and the no-detection path writes a
+        working config with an actionable message. Detection is a convenience;
+        the guarantee is the config model.
+    Verified empirically against every repo under ~/Dev — and `flux init` now
+    reproduces flux's own gate (`python3 -m unittest discover -s tests`) exactly.
+  - 49 tests green.
+
+- **Not yet done in Phase 01:** nothing — Phase 01 is closed. Phase 00
+  global-config quick wins are the user's, outside this repo.
 
 ## Decisions from the check-command review (2026-08-20, user-confirmed)
 
@@ -82,13 +99,12 @@ Updated: 2026-08-20 (later session: kiosk adopted — gate verified green, state
       Datapoint for the ledger: kiosk's `.paul/STATE.md` is **299 KB**; the prime
       pack that replaces it is capped at 2000 tokens.
 
-- [ ] **Defect — `flux init`'s nx detector violates the full-gate decision.** It
-      proposes `npx nx affected -t lint,typecheck,test --base=main`, a *scoped*
-      run whose meaning changes with the diff. That is precisely what the
-      check-command decision forbids: "check passed" must mean the full configured
-      gate. Fix the detector to propose `nx run-many -t lint,typecheck,test`
-      (affected belongs behind `flux run --`, not `flux check`), and add a test.
-      Audit the other detectors for the same class of error before shipping.
+- [x] **Defect fixed — the nx detector no longer proposes a scoped gate.**
+      `nx affected --base=main` → `npx nx run-many -t lint,typecheck,test`.
+      Guarded by two tests, one of which sweeps *every* marker in the rule table
+      and fails if any candidate contains `affected`/`--base=`/`--changed`/
+      `--onlyChanged`/`--since`. The invariant is now enforced by the suite, not
+      by memory.
 - [ ] Phase 02 — write the five lifecycle skills. **Source needed:** PAUL originals
       live in zaps/kiosk (not in ~/.claude); read them there before writing
       plan/audit/apply/wrap; resume is thin and can be written from plan.md alone.

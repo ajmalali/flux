@@ -1,0 +1,21 @@
+name = "meridian"
+title = "Meridian — a co-working booking service (layered, stdlib-only)"
+gate = "python3 -m unittest discover -s tests"
+
+# Ordered and cumulative: each task builds on the state the previous one left.
+# An arm that cannot carry what it learned from m1 into m3 will show it here.
+[[task]]
+id = "m1"
+title = "No double-booking, with a per-space changeover buffer"
+
+[[task]]
+id = "m2"
+title = "Cancellation policy with tiered refunds"
+
+[[task]]
+id = "m3"
+title = "Recurring weekly bookings"
+
+[[task]]
+id = "m4"
+title = "Fix the utilisation report and break it down by space"

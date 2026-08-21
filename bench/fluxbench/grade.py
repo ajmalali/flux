@@ -69,25 +69,38 @@ def _run(command: str, cwd: Path, timeout_s: int = 900) -> subprocess.CompletedP
 
 
 def _count_unittest(output: str) -> "tuple[int, int, List[str]]":
-    total = passed = 0
+    """Totals from unittest's summary; names from its verbose lines.
+
+    The summary is authoritative because verbose lines are not reliably one per
+    test -- a warning printed mid-test splits the "... ok" onto its own line, and
+    line-scraping then silently undercounts. That is not hypothetical: it cost
+    this parser a passing test the first time the corpus was verified.
+    """
     failures: List[str] = []
     for line in output.splitlines():
         m = _TEST_LINE.match(line.strip())
-        if not m:
+        if not m or m.group("verdict") in ("ok",) or m.group("verdict").startswith("skipped"):
             continue
-        total += 1
-        verdict = m.group("verdict")
-        if verdict == "ok" or verdict.startswith("skipped"):
-            passed += 1
-        else:
-            ident = m.group("id")
-            failures.append(ident if ident.endswith(m.group("name")) else "%s.%s" % (ident, m.group("name")))
-    if total == 0:  # fall back to the summary line when -v output is unavailable
-        m = re.search(r"^Ran (\d+) tests?", output, re.M)
-        if m:
-            total = int(m.group(1))
-            passed = total if re.search(r"^OK", output, re.M) else 0
-    return total, passed, failures
+        ident = m.group("id")
+        failures.append(ident if ident.endswith(m.group("name"))
+                        else "%s.%s" % (ident, m.group("name")))
+
+    ran = re.search(r"^Ran (\d+) tests?", output, re.M)
+    if not ran:
+        return 0, 0, failures
+    total = int(ran.group(1))
+    if re.search(r"^OK\b", output, re.M):
+        return total, total, failures
+    bad = 0
+    summary = re.search(r"^FAILED \((?P<detail>.*)\)$", output, re.M)
+    if summary:
+        for kind in ("failures", "errors"):
+            m = re.search(r"%s=(\d+)" % kind, summary.group("detail"))
+            if m:
+                bad += int(m.group(1))
+    if bad == 0:
+        bad = len(failures) or total
+    return total, max(0, total - bad), failures
 
 
 def diff_stats(repo: Path, since: str) -> "tuple[int, int, int]":

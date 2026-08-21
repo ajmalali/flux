@@ -33,7 +33,8 @@ transcripts.
 ## Architecture
 
 - **CLI** (`bin/flux`, single-file stdlib Python ≥3.9, on PATH while the plugin is
-  enabled): `init` · `prime` (SessionStart pack, ≤2k tokens, cold->1h warning, silent
+  enabled): `init` (+ `--scan`: inventory prior project state, write nothing) ·
+  `prime` (SessionStart pack, ≤2k tokens, cold->1h warning, silent
   no-op without `.flux/`) · `state get|set` (budget-enforced TOML) · `check`
   (configured verification, failures-only) · `handoff` (generated, capped) ·
   `run -- <cmd>` (dedupe/elide output filter).
@@ -45,6 +46,19 @@ transcripts.
   (execute; delegate exploration; verify via `flux check` only), `/flux:wrap`
   (reconcile plan vs actual, state set, handoff, PR — one exit ceremony),
   `/flux:resume` (thin: read the primed pack, state next action, go).
+- **Adoption skill** `/flux:adopt` *(amendment, 2026-08-20 — not in the original
+  blueprint)*: migrate whatever project knowledge a repo already carries (PAUL,
+  agent-os, a hand-kept STATE/ROADMAP, or just a CLAUDE.md) into `.flux/`, then
+  optionally retire the old framework by archiving it. Run once per repo. The split is
+  the usual one: `flux init --scan` finds and sizes prior state deterministically and
+  parses none of it; the skill decides what is still true. A framework-format parser in
+  `bin/flux` is forbidden — that is the per-project fork this plan rules out.
+  **Ledger metric:** median context per request. Adoption is what replaces a
+  299 KB resume read with a ≤2k-token pack; if adopted repos don't move that number,
+  the skill is theatre and goes.
+  Retirement is opt-in, archives rather than deletes (`git mv` into
+  `.flux/archive/<framework>/`), requires a clean tree, and is recommended only after
+  one real phase has run on flux in that repo.
 - **Vendored skills** (in, synced by `scripts/sync-vendored.sh`, pinned):
   wayfinder, to-spec, to-tickets, ask-matt, grill, review. Big-feature altitude:
   wayfinder → to-spec → to-tickets → /flux:plan per ticket.
@@ -77,8 +91,9 @@ transcripts.
   (in zaps/kiosk); migrate kiosk's PAUL state into `.flux/` (archive `.paul/`);
   run one full real phase (plan → audit → apply → wrap) on flux v2 in kiosk.
 - **03 — package & generalize**: install via marketplace on every machine; adopt in
-  zaps/api and this repo's own sessions; retire PAUL + mattpocock install once
-  parity is proven; first before/after ledger comparison.
+  zaps/api and this repo's own sessions (`/flux:adopt`, shipped 2026-08-20); retire
+  PAUL + mattpocock install once parity is proven; first before/after ledger
+  comparison.
 
 ## Out of scope
 

@@ -27,6 +27,7 @@ plugin is enabled.
 | `flux init` | Detect repo type, write `.flux/flux.toml` + state scaffold |
 | `flux prime` | Session context pack (branch, phase, next, check cmd) — ≤2k tokens, SessionStart hook, silent no-op without `.flux/` |
 | `flux state get\|set` | Tiny TOML state; writes over budget are refused |
+| `flux init --scan` | Inventory prior project state (PAUL, agent-os, hand-kept STATE/ROADMAP, CLAUDE.md) — finds and sizes it, parses none of it, writes nothing |
 | `flux check` | Run the repo's configured verification; print failures only; exit-code semantics |
 | `flux handoff` | Deterministic, capped handoff from git status + state + commits |
 | `flux run -- <cmd>` | Output filter for noisy commands: dedupe + truncate, then `--filter elide` (default, head+tail), `failures` (check's failure extractor), `tail:N`, or `raw`; default from `[run].filter` |
@@ -39,6 +40,10 @@ session from the primed pack. Iterate with `flux run --filter failures`, close w
 `flux check` — nothing else counts as done. Vendored from
 [mattpocock-skills](skills/VENDORED.md) (MIT):
 `/flux:wayfinder` `to-spec` `to-tickets` `ask-matt` `grill` `review`.
+
+`/flux:adopt` brings a repo in: migrates whatever knowledge it already carries into
+`.flux/`, and — only if asked, only onto a clean tree — retires the old framework by
+archiving it into `.flux/archive/`, never deleting. Run once per repo.
 
 ## Development
 

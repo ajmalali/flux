@@ -431,9 +431,86 @@ class TestRun(FluxRepoCase):
         self.assertIn("lines elided", out.stdout)
 
 
+class TestStateSourceDetection(FluxRepoCase):
+    """`flux init --scan` inventories prior project state so /flux:adopt can migrate
+    it. It must find things, size them, and read none of them."""
+
+    def test_empty_repo_reports_nothing_found(self):
+        out = run_flux(["init", "--scan"], self.repo)
+        self.assertEqual(out.returncode, 0)
+        self.assertIn("no prior project state", out.stdout)
+
+    def test_finds_directory_and_file_sources(self):
+        self.write(".paul/STATE.md", "x" * 3000)
+        self.write(".paul/ROADMAP.md", "y" * 500)
+        self.write("CLAUDE.md", "z" * 100)
+        out = run_flux(["init", "--scan"], self.repo)
+        self.assertEqual(out.returncode, 0)
+        self.assertIn(".paul", out.stdout)
+        self.assertIn("2 files", out.stdout)
+        self.assertIn("CLAUDE.md", out.stdout)
+        # Largest prose file is named, so the skill knows where the knowledge is.
+        self.assertIn("STATE.md", out.stdout)
+
+    def test_scan_writes_nothing(self):
+        self.write(".paul/STATE.md", "x" * 100)
+        before = sorted(os.listdir(self.repo))
+        out = run_flux(["init", "--scan"], self.repo)
+        self.assertEqual(out.returncode, 0)
+        self.assertEqual(before, sorted(os.listdir(self.repo)))
+        self.assertFalse(os.path.exists(os.path.join(self.repo, ".flux")))
+
+    def test_scan_works_after_init(self):
+        run_flux(["init"], self.repo)
+        self.write(".paul/STATE.md", "x" * 100)
+        out = run_flux(["init", "--scan"], self.repo)
+        self.assertEqual(out.returncode, 0)
+        self.assertIn(".paul", out.stdout)
+
+    def test_init_routes_to_adopt_when_prior_state_exists(self):
+        self.write(".paul/STATE.md", "x" * 100)
+        out = run_flux(["init"], self.repo)
+        self.assertEqual(out.returncode, 0)
+        self.assertIn("/flux:adopt", out.stdout)
+        self.assertIn(".paul", out.stdout)
+
+    def test_init_stays_quiet_without_prior_state(self):
+        out = run_flux(["init"], self.repo)
+        self.assertEqual(out.returncode, 0)
+        self.assertNotIn("/flux:adopt", out.stdout)
+
+    def test_detection_reads_no_file_contents(self):
+        # Unreadable content must not break the inventory: flux sizes, never opens.
+        self.write(".paul/STATE.md", "x" * 50)
+        path = os.path.join(self.repo, ".paul", "blob.bin")
+        with open(path, "wb") as f:
+            f.write(b"\x00\xff\xfe" * 100)
+        out = run_flux(["init", "--scan"], self.repo)
+        self.assertEqual(out.returncode, 0)
+        self.assertIn("2 files", out.stdout)
+
+    def test_assets_do_not_hide_the_prose(self):
+        # A 3 MB mockup is the biggest file in a real .paul/ but carries no knowledge.
+        self.write(".paul/STATE.md", "x" * 2000)
+        with open(os.path.join(self.repo, ".paul", "mockup.jpg"), "wb") as f:
+            f.write(b"\x00" * 50000)
+        out = run_flux(["init", "--scan"], self.repo)
+        self.assertIn("biggest: STATE.md", out.stdout)
+        self.assertNotIn("mockup.jpg", out.stdout)
+
+    def test_inventory_is_budget_capped(self):
+        # The inventory lands in model context, so it obeys [state].budget_tokens
+        # like everything else flux emits.
+        self.write(".flux/flux.toml", '[check]\ncommand = "true"\n[state]\nbudget_tokens = 20\n')
+        self.write("CLAUDE.md", "x" * 10000)
+        out = run_flux(["init", "--scan"], self.repo)
+        self.assertLessEqual(len(out.stdout.encode("utf-8")), 20 * 4 + 80)
+
+
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILLS = os.path.join(REPO, "skills")
 LIFECYCLE = ("plan", "audit", "apply", "wrap", "resume")
+FLUX_SKILLS = LIFECYCLE + ("adopt",)
 
 # A skill's whole file enters the context window when it is invoked, so leanness is a
 # budget, not a preference. PAUL's equivalent five workflows totalled ~62 KB before the
@@ -462,14 +539,14 @@ class TestLifecycleSkills(unittest.TestCase):
     """The five lifecycle skills are part of flux's contract with a session: they must
     exist, be user-invoked only, and stay inside the context budget."""
 
-    def test_all_five_exist(self):
-        for name in LIFECYCLE:
+    def test_all_flux_skills_exist(self):
+        for name in FLUX_SKILLS:
             self.assertTrue(
                 os.path.isfile(os.path.join(SKILLS, name, "SKILL.md")),
-                "missing lifecycle skill: %s" % name)
+                "missing flux skill: %s" % name)
 
     def test_frontmatter_is_wellformed(self):
-        for name in LIFECYCLE:
+        for name in FLUX_SKILLS:
             path = os.path.join(SKILLS, name, "SKILL.md")
             fields, body = read_frontmatter(path)
             self.assertIsNotNone(fields, "%s: no frontmatter block" % name)
@@ -481,13 +558,13 @@ class TestLifecycleSkills(unittest.TestCase):
     def test_lifecycle_skills_are_not_model_invocable(self):
         # Lifecycle steps are ceremonies the user triggers; a model that invokes /wrap
         # on its own closes phases nobody asked to close.
-        for name in LIFECYCLE:
+        for name in FLUX_SKILLS:
             fields, _ = read_frontmatter(os.path.join(SKILLS, name, "SKILL.md"))
             self.assertEqual(fields.get("disable-model-invocation"), "true",
-                             "%s: lifecycle skills must be user-invoked only" % name)
+                             "%s: flux skills must be user-invoked only" % name)
 
     def test_each_skill_stays_within_budget(self):
-        for name in LIFECYCLE:
+        for name in FLUX_SKILLS:
             path = os.path.join(SKILLS, name, "SKILL.md")
             size = os.path.getsize(path)
             self.assertLessEqual(size, SKILL_BUDGET_BYTES,
@@ -511,7 +588,7 @@ class TestLifecycleSkills(unittest.TestCase):
         # `flux check <target>` would teach sessions otherwise — and the CLI would
         # silently ignore the argument, which is worse.
         invocation = re.compile(r"`(flux check[^`]*)`|^\s*(flux check.*)$", re.M)
-        for name in LIFECYCLE:
+        for name in FLUX_SKILLS:
             _, body = read_frontmatter(os.path.join(SKILLS, name, "SKILL.md"))
             for match in invocation.finditer(body):
                 call = (match.group(1) or match.group(2)).strip()

@@ -7,6 +7,7 @@ model context has a hard byte budget it enforces itself (tokens ~= bytes / 4).
 
 Commands: init | prime | state get/set | check | handoff | run -- <cmd>
 
+  flux init [--force] [--scan]   --scan: inventory prior project state, write nothing
   flux run [--tail N] [--filter elide|failures|tail:N|raw] -- <command...>
 """
 
@@ -290,6 +291,131 @@ def detect_check_command(root):
     return None, ""
 
 
+# ------------------------------------------------- prior project state (adopt)
+
+# Repos arrive carrying knowledge already: a framework's state directory, a
+# hand-kept roadmap, or just a CLAUDE.md. flux finds and sizes those sources so
+# `/flux:adopt` can migrate the live parts. It never parses any of them — teaching
+# the CLI a framework's file format would make the plugin a per-project fork, and
+# deciding what in a 299 KB state file is still true is judgment, not procedure.
+# Adding a framework here is one line; adding a parser is not allowed.
+STATE_SOURCE_RULES = [
+    ("paul", (".paul", ".claude/paul-framework"), "PAUL project state / framework"),
+    ("agent-os", (".agent-os",), "Agent OS state"),
+    ("taskmaster", (".taskmaster", "tasks/tasks.json"), "Task Master tasks"),
+    ("openspec", (".openspec", "openspec"), "OpenSpec specs"),
+    ("kiro", (".kiro",), "Kiro specs / steering"),
+    ("specstory", (".specstory",), "SpecStory history"),
+    ("cursor", (".cursorrules", ".cursor/rules"), "Cursor rules"),
+    ("windsurf", (".windsurfrules", ".windsurf"), "Windsurf rules"),
+    ("copilot", (".github/copilot-instructions.md",), "Copilot instructions"),
+    ("claude-md", ("CLAUDE.md", ".claude/CLAUDE.md"), "Claude project instructions"),
+    ("agents-md", ("AGENTS.md",), "agent instructions"),
+    ("roadmap", ("ROADMAP.md", "docs/ROADMAP.md"), "hand-kept roadmap"),
+    ("status", ("STATE.md", "STATUS.md", "PROGRESS.md"), "hand-kept status"),
+    ("todo", ("TODO.md", "TASKS.md"), "hand-kept task list"),
+    ("decisions", ("DECISIONS.md", "docs/adr", "docs/decisions"), "decision records"),
+]
+
+SCAN_SKIP_DIRS = (".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build")
+SCAN_WALK_LIMIT = 2000       # files inspected per source before we stop counting
+SCAN_MAX_SOURCES = 20        # inventory lines; the rest are summarised as a count
+SCAN_TOP_FILES = 3           # biggest files named per directory source
+PROSE_SUFFIXES = (".md", ".mdx", ".txt", ".rst", ".org", ".json", ".toml", ".yaml", ".yml")
+
+
+def _dir_stats(path):
+    """(total bytes, file count, [(size, path)...]) for a directory source."""
+    total, count, files = 0, 0, []
+    for dirpath, dirnames, filenames in os.walk(path):
+        dirnames[:] = [d for d in dirnames if d not in SCAN_SKIP_DIRS]
+        for name in filenames:
+            full = os.path.join(dirpath, name)
+            try:
+                size = os.path.getsize(full)
+            except OSError:
+                continue
+            total += size
+            count += 1
+            files.append((size, full))
+            if count >= SCAN_WALK_LIMIT:
+                return total, count, files
+    return total, count, files
+
+
+def detect_state_sources(root):
+    """Every prior-state marker present, largest first. Reads no file's contents."""
+    found = []
+    for label, markers, note in STATE_SOURCE_RULES:
+        for marker in markers:
+            path = os.path.join(root, marker)
+            if not os.path.exists(path):
+                continue
+            if os.path.isdir(path):
+                total, count, files = _dir_stats(path)
+                if not count:
+                    continue
+                # Point the skill at the prose, not the assets: a 3 MB mockup is the
+                # biggest file in .paul/ but carries none of the project's knowledge.
+                prose = [f for f in files if f[1].lower().endswith(PROSE_SUFFIXES)]
+                top = [os.path.relpath(p, path) for _, p in
+                       sorted(prose or files, key=lambda f: -f[0])[:SCAN_TOP_FILES]]
+            else:
+                try:
+                    total = os.path.getsize(path)
+                except OSError:
+                    continue
+                if not total:
+                    continue
+                count, top = 1, []
+            found.append({"label": label, "path": marker, "bytes": total,
+                          "files": count, "top": top, "note": note})
+    found.sort(key=lambda s: -s["bytes"])
+    return found
+
+
+def human_bytes(n):
+    if n >= 1024 * 1024:
+        return "%.1f MB" % (n / (1024.0 * 1024.0))
+    if n >= 1024:
+        return "%d KB" % (n // 1024)
+    return "%d B" % n
+
+
+def format_state_sources(sources):
+    lines = []
+    for source in sources[:SCAN_MAX_SOURCES]:
+        size = human_bytes(source["bytes"])
+        detail = "%s, %d files" % (size, source["files"]) if source["files"] > 1 else size
+        line = "  %-11s %-26s %s" % (source["label"], source["path"], detail)
+        if source["top"]:
+            line += "   biggest: %s" % ", ".join(source["top"])
+        lines.append(line)
+    if len(sources) > SCAN_MAX_SOURCES:
+        lines.append("  ... +%d more" % (len(sources) - SCAN_MAX_SOURCES))
+    return lines
+
+
+def _scan_budget(root):
+    cfg = read_config(root)
+    return state_budget_bytes(cfg) if cfg else DEFAULT_STATE_BUDGET_TOKENS * BYTES_PER_TOKEN
+
+
+def cmd_init_scan(root):
+    """`flux init --scan` — inventory only. Writes nothing, reads no contents."""
+    sources = detect_state_sources(root)
+    name = os.path.basename(root)
+    if not sources:
+        print("flux init --scan: no prior project state found in %s" % name)
+        return 0
+    lines = ["flux init --scan: prior project state in %s" % name]
+    lines.extend(format_state_sources(sources))
+    lines.append("nothing read, nothing written. `/flux:adopt` migrates the live parts "
+                 "into .flux/ and can retire the rest.")
+    print(clip("\n".join(lines), _scan_budget(root)))
+    return 0
+
+
 FLUX_TOML_TEMPLATE = """\
 # .flux/flux.toml — the whole per-repo adapter. Written by `flux init`.
 
@@ -320,6 +446,8 @@ STATE_SCAFFOLD = {
 
 def cmd_init(args):
     root = repo_root()
+    if "--scan" in args:
+        return cmd_init_scan(root)
     fdir = flux_dir(root)
     toml_path = os.path.join(fdir, "flux.toml")
     if os.path.exists(toml_path) and "--force" not in args:
@@ -346,7 +474,22 @@ def cmd_init(args):
         print("flux init: wrote .flux/flux.toml — no gate detected. Set [check].command "
               "to whatever verifies this repo (any shell command), then run `flux check` "
               "once to validate it")
+    _report_prior_state(root)
     return 0
+
+
+def _report_prior_state(root):
+    """Name what this repo already knows, and route to the skill that can read it.
+    init itself stays deterministic: it does not open a single one of these files."""
+    sources = detect_state_sources(root)
+    if not sources:
+        return
+    named = ", ".join("%s (%s)" % (s["path"], human_bytes(s["bytes"]))
+                      for s in sources[:3])
+    extra = " +%d more" % (len(sources) - 3) if len(sources) > 3 else ""
+    print("flux init: this repo already carries project state — %s%s" % (named, extra))
+    print("run `/flux:adopt` to migrate the live parts into .flux/ (and optionally "
+          "retire the rest); `flux init --scan` lists all of it")
 
 # ----------------------------------------------------------------------- prime
 

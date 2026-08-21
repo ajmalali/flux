@@ -1,6 +1,6 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-20 (later session: the five lifecycle skills written — 55 tests green)
+Updated: 2026-08-20 (later session: lifecycle skills + /flux:adopt — 64 tests green)
 
 ## Current state
 
@@ -134,7 +134,30 @@ Updated: 2026-08-20 (later session: the five lifecycle skills written — 55 tes
       `flux check` **with arguments** — the unmodifiable-gate decision, enforced by
       the suite instead of by memory. 55 tests green.
       **Not yet exercised end-to-end** — the kiosk phase below is their first real run.
+- [x] **`/flux:adopt` shipped (user request, 2026-08-20).** Plan + outcome in
+      `03-adopt.md`. Any repo carrying prior knowledge can be brought into flux:
+      `flux init --scan` inventories 15 known state sources (PAUL, agent-os,
+      taskmaster, openspec, kiro, specstory, cursor, windsurf, copilot, CLAUDE.md,
+      AGENTS.md, hand-kept ROADMAP/STATE/TODO/DECISIONS), sized and largest-first,
+      **parsing none of them**; plain `flux init` prints a routing line when it finds
+      any. `skills/adopt/SKILL.md` does the judgment: live vs history (only live
+      reaches the five state keys), read a huge state file from its ends via
+      flux-explorer rather than whole, trust the tree over the framework's own claims,
+      then verify by reading `flux prime` back as a stranger.
+      **Retirement is opt-in, archives rather than deletes** (`git mv` into
+      `.flux/archive/<framework>/`), requires a clean tree, treats the state dir and
+      the framework install as separate decisions, and leaves machine-level installs
+      to the user. The skill recommends adopt → run one real phase → *then* retire.
+      Design note worth keeping: `flux init` stays **non-interactive** (it is called
+      from hooks and scripts, where a prompt would hang), so the CLI detects and
+      routes while the skill does the asking. And no framework-format parser may enter
+      `bin/flux` — that is the per-project fork plan.md rules out.
+      plan.md amended: `/flux:adopt` added to the roster with its ledger metric
+      (median context per request), `--scan` added to the CLI surface.
 - [ ] Phase 02 — migrate kiosk PAUL state into `.flux/`, archive `.paul/`.
+      **Now the first real run of `/flux:adopt`** — kiosk's `.paul/` is 7.4 MB / 427
+      files (STATE.md 299 KB) plus a 454 KB `.claude/paul-framework`. Adopt it, run a
+      phase, and only then consider retiring.
 - [ ] Phase 02 — one full real phase (plan → audit → apply → wrap) in kiosk.
 - [ ] Phase 03 — generalize (zaps/api), retire PAUL/mattpocock installs, first
       ledger before/after.

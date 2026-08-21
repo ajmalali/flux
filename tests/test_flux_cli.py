@@ -221,6 +221,47 @@ class TestPrime(FluxRepoCase):
         self.assertEqual(out.returncode, 0)
         self.assertIn("[unverified — run it once]", out.stdout)
 
+    def test_header_reports_ahead_of_default_branch(self):
+        run_flux(["init"], self.repo)
+        self._git("checkout", "-q", "-b", "feature")
+        self._commit("one")
+        self._commit("two")
+        out = run_flux(["prime"], self.repo)
+        self.assertIn("@ feature, 2 ahead of main", out.stdout.splitlines()[0])
+
+    def test_header_reports_behind_default_branch(self):
+        run_flux(["init"], self.repo)
+        self._git("checkout", "-q", "-b", "feature")
+        self._git("checkout", "-q", "main")
+        self._commit("one")
+        self._git("checkout", "-q", "feature")
+        out = run_flux(["prime"], self.repo)
+        self.assertIn("@ feature, 1 behind main", out.stdout.splitlines()[0])
+
+    def test_header_stays_quiet_when_not_diverged(self):
+        run_flux(["init"], self.repo)
+        out = run_flux(["prime"], self.repo)
+        header = out.stdout.splitlines()[0]
+        self.assertIn("@ main", header)
+        self.assertNotIn("ahead", header)
+        self.assertNotIn("behind", header)
+
+    def test_header_counts_dirty_files_in_singular(self):
+        run_flux(["init"], self.repo)  # .flux/ is the one untracked entry
+        header = run_flux(["prime"], self.repo).stdout.splitlines()[0]
+        self.assertIn("1 dirty file", header)
+        self.assertNotIn("1 dirty files", header)
+        self.write("scratch.txt", "x")
+        header = run_flux(["prime"], self.repo).stdout.splitlines()[0]
+        self.assertIn("2 dirty files", header)
+
+    def _git(self, *args):
+        subprocess.run(["git", "-C", self.repo] + list(args), check=True)
+
+    def _commit(self, message):
+        self._git("-c", "user.email=t@t", "-c", "user.name=t",
+                  "commit", "-q", "--allow-empty", "-m", message)
+
     def test_never_fails(self):
         run_flux(["init"], self.repo)
         self.write(".flux/flux.toml", "[[[garbage")

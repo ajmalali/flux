@@ -52,7 +52,10 @@ flux state set phase "<where things are>" position "<what is true right now>" \
 
 Three rules, and they're where wrap usually goes wrong:
 
-- `position` describes **reality**, including what's half-done or unverified.
+- `position` describes **reality**, including what's half-done or unverified — but
+  never what prime derives live. Branch, dirty-file count and ahead/behind are in the
+  header already; writing "2 commits ahead of main" into prose makes it wrong at the
+  next commit.
 - `next` must be executable by someone with no memory of today. "Continue the
   refactor" is not; "`/flux:plan` phase 03 — migrate kiosk state into `.flux/`" is.
 - `open` carries what's still unproven — a device untested, a claim unverified. It

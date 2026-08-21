@@ -512,8 +512,14 @@ def _prime_inner():
     lines = []
     branch = git(["branch", "--show-current"], cwd=root) or "(detached)"
     dirty = git(["status", "--porcelain"], cwd=root)
-    dirty_note = ", %d dirty files" % len(dirty.splitlines()) if dirty else ", clean"
-    lines.append("## flux prime — %s @ %s%s" % (os.path.basename(root), branch, dirty_note))
+    n_dirty = len(dirty.splitlines())
+    dirty_note = ", %d dirty file%s" % (n_dirty, "" if n_dirty == 1 else "s") if dirty else ", clean"
+    drift = _ahead_behind(root, branch)
+    drift_note = ", %s" % drift if drift else ""
+    lines.append(
+        "## flux prime — %s @ %s%s%s"
+        % (os.path.basename(root), branch, drift_note, dirty_note)
+    )
 
     cold = _cold_gap_seconds(root)
     if cold is not None and cold > COLD_SECONDS:
@@ -539,6 +545,46 @@ def _prime_inner():
 
     print(clip("\n".join(lines), budget))
     return 0
+
+def _ahead_behind(root, branch):
+    """Divergence from upstream (or the default branch), derived live.
+
+    Anything git can answer must not be stored in `position` — stored prose about
+    the tree invalidates itself on the very next commit."""
+    base = _drift_base(root, branch)
+    if not base:
+        return None
+    counts = git(["rev-list", "--left-right", "--count", "%s...HEAD" % base], cwd=root)
+    parts = counts.split()
+    if len(parts) != 2:
+        return None
+    try:
+        behind, ahead = int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+    if ahead and behind:
+        return "%d ahead, %d behind %s" % (ahead, behind, base)
+    if ahead:
+        return "%d ahead of %s" % (ahead, base)
+    if behind:
+        return "%d behind %s" % (behind, base)
+    return None
+
+def _drift_base(root, branch):
+    upstream = git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], cwd=root)
+    if upstream:
+        return upstream
+    for candidate in ("origin/HEAD", "origin/main", "origin/master", "main", "master"):
+        if candidate in (branch, "origin/" + branch):
+            continue
+        if git(["rev-parse", "--verify", "--quiet", candidate + "^{commit}"], cwd=root):
+            if candidate == "origin/HEAD":
+                resolved = git(["rev-parse", "--abbrev-ref", "origin/HEAD"], cwd=root)
+                if not resolved or resolved.split("/")[-1] == branch:
+                    continue
+                return resolved
+            return candidate
+    return None
 
 def _cold_gap_seconds(root):
     marker = os.path.join(flux_dir(root), "cache", "last-prime")

@@ -1,6 +1,6 @@
 phase = "Phase 02/03 — adoption proven on kiosk; one full lifecycle phase still unrun"
-position = "/flux:adopt ran end-to-end on zaps/kiosk 2026-08-20: 300 KB of PAUL state -> a 1282-byte pack, three stale sections caught by trusting the tree, the reader defect re-verified to a file:line. Plugin published at 2.1.0 so the cache finally carries all six new skills. Two defects fixed from the run (adopt's byte-blind reading, silent state set). 65 tests green. .paul/ deliberately left in place."
+position = "prime now derives branch drift live (ahead/behind vs upstream, else the default branch), so stored position no longer carries self-invalidating tree facts; wrap and adopt say so explicitly. Plural fix on the dirty-file count. 69 tests green, plugin 2.2.0 so the cache picks it up."
 next = "Run one full lifecycle phase (plan -> audit -> apply -> wrap) in kiosk — the five skills have still never been exercised; the obvious candidate is pushing chore/retire-gitnexus-for-codegraph and opening its PR"
 routing = "design"
 open = "The lifecycle five (plan/audit/apply/wrap) are still unrun end-to-end. Live skill/CLI changes need a plugin version bump before they reach the cache — claude plugin update compares versions, not commits."
-updated = "2026-08-20 23:43"
+updated = "2026-08-20 23:57"

@@ -1,6 +1,6 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-20 (later session: /flux:adopt run end-to-end on kiosk — 65 tests green)
+Updated: 2026-08-20 (later session: prime derives ahead/behind live — 69 tests green, plugin 2.2.0)
 
 ## Current state
 
@@ -193,12 +193,20 @@ Updated: 2026-08-20 (later session: /flux:adopt run end-to-end on kiosk — 65 t
          sat to its cap. It now prints `flux state: wrote N keys, N/8000 bytes`,
          guarded by a test that asserts the reported size equals the file on disk.
          65 tests green.
-- [ ] **Candidate — derived facts belong in prime's live header, not in stored prose.**
+- [x] **Done 2026-08-20 — derived facts now live in prime's header, not in stored prose.**
       Found at adopt's read-back step: `position` said "2 commits ahead of main", and
-      the commit that *wrote* it made that 3. Branch and dirty-file count are already
-      read live from git in the header; ahead/behind should join them, and `position`
-      should carry only what git can't derive. Small, and it removes a whole class of
-      self-invalidating state.
+      the commit that *wrote* it made that 3. Ahead/behind now joins branch and
+      dirty-count as a live-derived header field: `## flux prime — kiosk @ chore/x,
+      2 ahead of main, clean`. Base is `@{upstream}` when the branch has one, else the
+      first existing of `origin/HEAD` / `origin/main` / `origin/master` / `main` /
+      `master` that isn't the current branch; **nothing is printed when the branch
+      hasn't diverged**, so the header stays quiet in the common case. All of it goes
+      through the existing `git()` helper (returns "" on any failure), so prime's
+      never-fail contract is untouched. Also fixed the "1 dirty files" plural on the
+      same line. `wrap` and `adopt` now say in as many words that `position` must not
+      repeat what prime derives. **Four tests** (ahead / behind / quiet-when-synced /
+      dirty singular+plural). 69 tests green. Plugin bumped to **2.2.0** — prime is
+      hook-invoked, so the cache needs the version to take.
 - [ ] Phase 02 — one full real phase (plan → audit → apply → wrap) in kiosk.
 - [ ] Phase 03 — generalize (zaps/api), retire PAUL/mattpocock installs, first
       ledger before/after.

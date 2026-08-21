@@ -65,7 +65,8 @@ flux state set phase "..." position "..." next "..." routing "design|mechanical"
   open "what is unproven, blocked, or untested — or empty"
 ```
 
-`position` is reality including the half-done parts; `next` is executable by someone
+`position` is reality including the half-done parts, minus anything prime derives
+live (branch, dirty count, ahead/behind are in the header); `next` is executable by someone
 with no memory of this repo; `open` carries every unverified claim you found, because
 it reappears at every session start until someone kills it. Then run `flux check` once
 — that both validates the detected gate and flips its `verified` stamp.

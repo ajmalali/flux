@@ -113,11 +113,34 @@ corrupted a result:
    pinned down — the corpus author's bug scored against the arms. `verify` now
    proves each task red-on-seed and green-on-reference before it may judge.
 
-**In flight:** `meridian-001` — 6 arms x 4 tasks on sonnet, $40 cap, launched
-2026-08-21. Log at `/tmp/meridian-001.log`, records in
-`~/.flux-bench/runs/meridian-001/`. Expect several hours; the runner appends
-records as it goes, so a partial run is still usable
-(`./bench/run.py report meridian-001`).
+5. **Red/green cannot catch a shared assumption.** m2's tests bound to
+   `refund_cents(price_cents, gap)`; the brief named only the module. Vanilla
+   wrote `refund_cents(booking, cancelled_at)` — valid, and it lost a task it had
+   delivered. The reference is written by the same person as the tests, so they
+   agree by construction. Corpus rule now in `bench/README.md`: *if an acceptance
+   test calls it, the brief must name it, signature included.* `verify` enforces
+   the name half; only the rule covers signatures. `meridian-001` was killed over
+   it (records kept at `~/.flux-bench/runs/meridian-001-aborted-unfair-m2`).
+
+**In flight:** `meridian-002` — 6 arms x 4 tasks on sonnet, $40 cap, launched
+2026-08-21, detached (`nohup`). Log `/tmp/meridian-002.log`, records
+`~/.flux-bench/runs/meridian-002/`. Arms run control-first
+(vanilla, flux, flux-lite, paul, speckit, agentos) so a budget cut-off costs the
+least decision-relevant arm.
+
+**Read it with:** `./bench/run.py report meridian-002` — works on a partial run,
+and ends with a verdict naming every metric `flux` loses and to whom.
+
+**Results so far:** vanilla 4/4 delivered, $4.43, ~13 min total — a strong
+control. flux 2/4 so far (19/19 and 16/16), roughly $3.1 and 12.5 min per task
+against vanilla's $1.1 and 3.2 min. On this evidence the four-session lifecycle
+has to justify ~3x the cost against a control that is already delivering
+everything; `flux-lite` is in the run to say whether that is the machinery or
+the ceremony.
+
+**Next session:** read the report, then decide per the falsifiability rule —
+if `flux` loses columns it does not win back on delivery, the verdict table is
+the work list.
 
 ## Task queue
 

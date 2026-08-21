@@ -1,0 +1,45 @@
+name = "speckit"
+title = "GitHub Spec Kit — spec-driven development"
+notes = """
+Spec Kit's own loop: a constitution once per project, then
+specify -> plan -> tasks -> implement per feature, each in its own session,
+with the spec, plan and task list on disk carrying state between them. The
+closest competitor in shape to flux's lifecycle, and the one with the most
+artefacts per feature -- which is exactly what makes it interesting to measure.
+
+Ships as project *skills* under .claude/skills/, which resolve by explicit
+/name invocation under --setting-sources project even though they are not
+advertised in a headless session's context. Verified before this arm was
+written; the earlier assumption that they simply did not load was wrong and
+would have made this arm silently do nothing.
+
+Staged by setup-frameworks.sh rather than installed per run, so a benchmark
+does not depend on the network mid-flight.
+"""
+setting_sources = "project"
+
+[[bootstrap]]
+kind = "shell"
+label = "install"
+command = "test -d ${FRAMEWORKS}/speckit && cp -R ${FRAMEWORKS}/speckit/. . || { echo 'spec-kit not staged; run bench/setup-frameworks.sh' >&2; exit 1; }"
+
+[[bootstrap]]
+kind = "session"
+label = "constitution"
+prompt = """/speckit-constitution Read README.md and CLAUDE.md. The conventions in CLAUDE.md are this project's non-negotiable principles — capture them as the constitution."""
+
+[[step]]
+label = "specify"
+prompt = """/speckit-specify Read {brief_path} in the repository root — that is the feature to specify."""
+
+[[step]]
+label = "plan"
+prompt = """/speckit-plan"""
+
+[[step]]
+label = "tasks"
+prompt = """/speckit-tasks"""
+
+[[step]]
+label = "implement"
+prompt = """/speckit-implement"""

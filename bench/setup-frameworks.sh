@@ -29,19 +29,41 @@ else
 fi
 
 # --- GitHub Spec Kit --------------------------------------------------------
-# Installed per-repo by its own CLI at bootstrap time rather than staged here,
-# because `specify init` writes into the target repo. This checks the tool exists.
+# Generated once into a scratch repo and staged, rather than run per benchmark
+# run: `specify init` reaches the network, and a benchmark should not depend on
+# that mid-flight. The generated tree carries no absolute paths (checked).
 if command -v uvx >/dev/null 2>&1; then
-  echo "  spec-kit   uvx present (arm installs per-run via 'specify init')"
+  SCRATCH="$(mktemp -d)"
+  ( cd "$SCRATCH" && git init -q . \
+    && uvx --from specify-cli specify init --here --integration claude \
+         --ignore-agent-tools --force >/dev/null 2>&1 )
+  if [ -d "$SCRATCH/.claude/skills" ]; then
+    rm -rf "$FRAMEWORKS/speckit"
+    mkdir -p "$FRAMEWORKS/speckit"
+    cp -R "$SCRATCH/.claude" "$FRAMEWORKS/speckit/.claude"
+    cp -R "$SCRATCH/.specify" "$FRAMEWORKS/speckit/.specify"
+    echo "  spec-kit   ok ($(du -sh "$FRAMEWORKS/speckit" | cut -f1))"
+  else
+    echo "  spec-kit   SKIPPED - 'specify init' produced nothing" >&2
+  fi
+  rm -rf "$SCRATCH"
 else
   echo "  spec-kit   SKIPPED - needs uv/uvx on PATH (https://docs.astral.sh/uv/)" >&2
 fi
 
 # --- Agent OS ---------------------------------------------------------------
-if [ -d "$HOME/.agent-os" ]; then
-  echo "  agent-os   base install present at ~/.agent-os"
+# Clone + project-install.sh, which is the documented path and avoids piping a
+# remote script into a shell.
+if git clone -q --depth 1 https://github.com/buildermethods/agent-os.git \
+     "$FRAMEWORKS/agent-os-base.new" 2>/dev/null; then
+  rm -rf "$FRAMEWORKS/agent-os-base"
+  mv "$FRAMEWORKS/agent-os-base.new" "$FRAMEWORKS/agent-os-base"
+  echo "  agent-os   ok (v$(grep '^version:' "$FRAMEWORKS/agent-os-base/config.yml" | cut -d' ' -f2))"
+elif [ -d "$FRAMEWORKS/agent-os-base" ]; then
+  echo "  agent-os   kept existing clone (refresh failed)" >&2
 else
-  echo "  agent-os   SKIPPED - base install missing; see bench/README.md" >&2
+  echo "  agent-os   SKIPPED - clone failed" >&2
 fi
+rm -rf "$FRAMEWORKS/agent-os-base.new"
 
 echo "done."

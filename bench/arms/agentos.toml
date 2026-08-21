@@ -1,0 +1,45 @@
+name = "agentos"
+title = "Agent OS v3 — standards capture and injection"
+notes = """
+Agent OS as far as it can be run unattended, which is not all of it, and the
+report must say so.
+
+v3 is built around an interviewer: every command is written to drive the work
+through AskUserQuestion, and `/shape-spec` refuses outright unless the session
+is in plan mode. AskUserQuestion is denied to *every* arm here (a headless run
+has no human to answer), so relying on it is a property of the framework, not a
+handicap imposed on it — but a command that hard-stops is different from one
+that degrades, so `/shape-spec` is excluded rather than burned on a refusal.
+
+What this arm therefore measures is Agent OS's standards layer: discover the
+codebase's conventions once, re-inject them into each fresh session, implement.
+That is a real and coherent use of the tool. It is not its full intended loop,
+and a reader comparing this row to flux's four-session lifecycle should hold
+that difference in mind.
+
+Staged by setup-frameworks.sh (git clone + project-install.sh; no piped
+installer).
+"""
+setting_sources = "project"
+
+[[bootstrap]]
+kind = "shell"
+label = "install"
+command = "test -x ${FRAMEWORKS}/agent-os-base/scripts/project-install.sh && bash ${FRAMEWORKS}/agent-os-base/scripts/project-install.sh || { echo 'agent-os not staged; run bench/setup-frameworks.sh' >&2; exit 1; }"
+
+[[bootstrap]]
+kind = "session"
+label = "discover-standards"
+prompt = """/discover-standards Read README.md, CLAUDE.md and the meridian package. CLAUDE.md states this project's conventions explicitly — capture those, plus the patterns you find in the code, as standards. Proceed without asking questions: there is no user available in this session, so choose sensible defaults and say what you chose."""
+
+[[step]]
+label = "inject"
+prompt = """/inject-standards Then read {brief_path} in the repository root and write `agent-os/current-task.md`: what is being built, which standards apply, and the steps you intend to take. Proceed without asking questions; choose sensible defaults."""
+
+[[step]]
+label = "implement"
+prompt = """Read `agent-os/current-task.md` and {brief_path} in the repository root, and implement the task completely, following the standards in `agent-os/standards/`.
+
+Verify your work by running: {gate}
+
+Do not stop until that command passes and the brief is fully satisfied."""

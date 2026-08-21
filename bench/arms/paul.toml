@@ -1,0 +1,38 @@
+name = "paul"
+title = "PAUL — the incumbent framework flux was distilled from"
+notes = """
+PAUL's own lifecycle: init the project, then plan -> audit -> apply -> verify per
+phase, each in its own session, with .paul/ carrying state between them. This is
+the arm flux has to beat on cost while matching on delivery, because the five flux
+lifecycle skills are distilled from these exact workflows.
+
+The framework payload is NOT vendored into this repo -- it is copied from
+$FRAMEWORKS/paul at bootstrap. Run bench/setup-frameworks.sh once to populate it.
+"""
+setting_sources = "project"
+
+[[bootstrap]]
+kind = "shell"
+label = "install"
+command = "test -d ${FRAMEWORKS}/paul && cp -R ${FRAMEWORKS}/paul/. . || { echo 'PAUL not staged; run bench/setup-frameworks.sh' >&2; exit 1; }"
+
+[[bootstrap]]
+kind = "session"
+label = "init"
+prompt = """/paul:init This is a new project. Read README.md and CLAUDE.md to understand it, then initialise PAUL state for it."""
+
+[[step]]
+label = "plan"
+prompt = """/paul:plan Read {brief_path} in the repository root — that is the phase to plan."""
+
+[[step]]
+label = "audit"
+prompt = """/paul:audit"""
+
+[[step]]
+label = "apply"
+prompt = """/paul:apply The plan is approved. Execute it."""
+
+[[step]]
+label = "verify"
+prompt = """/paul:verify"""

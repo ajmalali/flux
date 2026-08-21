@@ -1,0 +1,7 @@
+name = "smoke"
+title = "smoke — one tiny task, for validating the harness itself"
+gate = "python3 -m unittest discover -s tests"
+
+[[task]]
+id = "s1"
+title = "truncate option for slugify"

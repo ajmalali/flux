@@ -1,0 +1,24 @@
+name = "flux-lite"
+title = "flux v2 — machinery only (prime + apply, no plan/audit/wrap ceremony)"
+notes = """
+The control *within* flux. Same plugin, same SessionStart prime, same budgeted
+state -- but one session per task, like vanilla. Running this alongside the full
+arm separates two claims that are easy to confuse: how much the deterministic
+machinery (prime, state, filtered check) is worth, and how much the four-session
+lifecycle ceremony costs on top of it. If flux-lite beats flux, the ceremony is
+overhead and plan.md's falsifiability rule says it goes.
+"""
+plugin_dirs = ["${FLUX_REPO}"]
+
+[[bootstrap]]
+kind = "shell"
+label = "flux-init"
+command = "python3 ${FLUX_REPO}/bin/flux init"
+
+[[step]]
+label = "apply"
+prompt = """Read {brief_path} in the repository root. Implement everything it asks for, completely.
+
+Iterate with `flux run --filter failures -- <scoped test command>`; close with `flux check`.
+Do not stop until `flux check` passes and the brief is fully satisfied.
+Then record what changed with `flux state set` so the next session starts from it."""

@@ -1,0 +1,35 @@
+name = "flux"
+title = "flux v2 — full lifecycle (plan -> audit -> apply -> wrap)"
+notes = """
+flux as its own plan.md prescribes it: the SessionStart hook primes each fresh
+session from .flux/state.toml, and the phase runs through the four lifecycle
+skills, each in its own session. The plugin is loaded from the working repo
+(--plugin-dir), not from the installed cache copy, so the benchmark always
+measures the flux that is checked out right now.
+
+Four sessions per task against vanilla's one is the bet under test: that a
+primed, planned, audited, reconciled phase costs less context and fewer retries
+than one long session that has to rediscover the project every time.
+"""
+plugin_dirs = ["${FLUX_REPO}"]
+
+[[bootstrap]]
+kind = "shell"
+label = "flux-init"
+command = "python3 ${FLUX_REPO}/bin/flux init"
+
+[[step]]
+label = "plan"
+prompt = """/flux:plan Read {brief_path} in the repository root — that is the phase. Write the plan to .flux/plans/{task_id}.md"""
+
+[[step]]
+label = "audit"
+prompt = """/flux:audit .flux/plans/{task_id}.md"""
+
+[[step]]
+label = "apply"
+prompt = """/flux:apply .flux/plans/{task_id}.md — the plan is approved, execute it."""
+
+[[step]]
+label = "wrap"
+prompt = """/flux:wrap"""

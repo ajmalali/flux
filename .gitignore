@@ -5,3 +5,6 @@ __pycache__/
 .ruff_cache/
 dist/
 .claude/
+
+# benchmark run artifacts (also default to ~/.flux-bench)
+bench/runs/

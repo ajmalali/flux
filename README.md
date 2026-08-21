@@ -34,7 +34,10 @@ plugin is enabled.
 ## Skills
 
 Lifecycle (`/flux:plan` `audit` `apply` `wrap` `resume`) — judgment only; procedures
-live in the CLI. Vendored from [mattpocock-skills](skills/VENDORED.md) (MIT):
+live in the CLI. One phase runs plan → (audit) → apply → wrap; `resume` opens the next
+session from the primed pack. Iterate with `flux run --filter failures`, close with
+`flux check` — nothing else counts as done. Vendored from
+[mattpocock-skills](skills/VENDORED.md) (MIT):
 `/flux:wayfinder` `to-spec` `to-tickets` `ask-matt` `grill` `review`.
 
 ## Development

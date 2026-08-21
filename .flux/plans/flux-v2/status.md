@@ -1,6 +1,6 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-20 (later session: kiosk adopted; detector defect fixed and detection generalized to ~20 ecosystems — 49 tests green)
+Updated: 2026-08-20 (later session: the five lifecycle skills written — 55 tests green)
 
 ## Current state
 
@@ -105,11 +105,35 @@ Updated: 2026-08-20 (later session: kiosk adopted; detector defect fixed and det
       and fails if any candidate contains `affected`/`--base=`/`--changed`/
       `--onlyChanged`/`--since`. The invariant is now enforced by the suite, not
       by memory.
-- [ ] Phase 02 — write the five lifecycle skills. **Source needed:** PAUL originals
-      live in zaps/kiosk (not in ~/.claude); read them there before writing
-      plan/audit/apply/wrap; resume is thin and can be written from plan.md alone.
-      apply/wrap must state the convention: iterate with `flux run --filter failures`,
-      conclude with `flux check`; never report done on a subset.
+- [x] **Phase 02 — the five lifecycle skills are written.** Done 2026-08-20.
+      `skills/{plan,audit,apply,wrap,resume}/SKILL.md`, distilled from the PAUL
+      workflows in `zaps/kiosk/.claude/paul-framework/workflows/`
+      (plan-phase, audit-plan, apply-phase, transition-phase, resume-project).
+      **17.9 KB for all five vs PAUL's 62 KB** for the same five — and PAUL's number
+      excludes the references/ and templates/ each workflow `@`-included.
+      What was kept (judgment): apply's Execute/Qualify loop, the four escalation
+      statuses, the "if you're thinking..." self-check table, and the
+      intent/spec/code diagnosis before patching; plan's size classification and
+      falsifiable ACs; audit's no-rubber-stamp stance and severity classes;
+      wrap's reconcile-against-the-tree step; resume's exactly-one-next-action rule.
+      What was dropped (procedure the CLI or flux's design already owns): the
+      STATE/ROADMAP/PROJECT triple-file sync (now `flux state set`), paul.toml +
+      ledger.toml sync (the ledger CLI reads transcripts from outside), loop-position
+      ASCII diagrams and progress bars, milestone ceremony, handoff lifecycle
+      management (now `flux handoff` + prime), and the numbered `[1]/[2]/[3]` menu at
+      every step. Audit runs in a subagent and folds findings into the plan file
+      itself — no second AUDIT.md artifact.
+      Conventions the skills now bind: one plan file per phase at
+      `.flux/plans/<NN-slug>.md` (or `<effort>/<NN-slug>.md`), which wrap appends its
+      `## outcome` to rather than writing a separate SUMMARY; iterate with
+      `flux run --filter failures`, close only with `flux check`.
+      **Six new tests** guard it: all five exist, frontmatter name matches directory,
+      `disable-model-invocation: true` on all five, each file ≤ 6000 bytes (the
+      leanness is a budget, not a preference), apply/wrap name the gate and apply
+      names the scoped-iteration command, and no skill anywhere documents
+      `flux check` **with arguments** — the unmodifiable-gate decision, enforced by
+      the suite instead of by memory. 55 tests green.
+      **Not yet exercised end-to-end** — the kiosk phase below is their first real run.
 - [ ] Phase 02 — migrate kiosk PAUL state into `.flux/`, archive `.paul/`.
 - [ ] Phase 02 — one full real phase (plan → audit → apply → wrap) in kiosk.
 - [ ] Phase 03 — generalize (zaps/api), retire PAUL/mattpocock installs, first

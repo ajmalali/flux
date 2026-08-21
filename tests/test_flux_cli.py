@@ -2,6 +2,7 @@
 
 import importlib.machinery
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -428,6 +429,94 @@ class TestRun(FluxRepoCase):
         self.assertEqual(out.returncode, 0)
         self.assertIn("ignoring unknown [run].filter", out.stderr)
         self.assertIn("lines elided", out.stdout)
+
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SKILLS = os.path.join(REPO, "skills")
+LIFECYCLE = ("plan", "audit", "apply", "wrap", "resume")
+
+# A skill's whole file enters the context window when it is invoked, so leanness is a
+# budget, not a preference. PAUL's equivalent five workflows totalled ~62 KB before the
+# references they pulled in; the ceiling below keeps the distillation from creeping back.
+SKILL_BUDGET_BYTES = 6000
+
+
+def read_frontmatter(path):
+    """Minimal YAML-ish frontmatter reader — enough for `key: value` skill headers."""
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    if not text.startswith("---\n"):
+        return None, text
+    end = text.find("\n---\n", 3)
+    if end == -1:
+        return None, text
+    fields = {}
+    for line in text[4:end].splitlines():
+        if ":" in line and not line.startswith(" "):
+            key, value = line.split(":", 1)
+            fields[key.strip()] = value.strip()
+    return fields, text[end + 5:]
+
+
+class TestLifecycleSkills(unittest.TestCase):
+    """The five lifecycle skills are part of flux's contract with a session: they must
+    exist, be user-invoked only, and stay inside the context budget."""
+
+    def test_all_five_exist(self):
+        for name in LIFECYCLE:
+            self.assertTrue(
+                os.path.isfile(os.path.join(SKILLS, name, "SKILL.md")),
+                "missing lifecycle skill: %s" % name)
+
+    def test_frontmatter_is_wellformed(self):
+        for name in LIFECYCLE:
+            path = os.path.join(SKILLS, name, "SKILL.md")
+            fields, body = read_frontmatter(path)
+            self.assertIsNotNone(fields, "%s: no frontmatter block" % name)
+            self.assertEqual(fields.get("name"), name,
+                             "%s: frontmatter name must match its directory" % name)
+            self.assertTrue(fields.get("description"), "%s: empty description" % name)
+            self.assertTrue(body.strip(), "%s: no body" % name)
+
+    def test_lifecycle_skills_are_not_model_invocable(self):
+        # Lifecycle steps are ceremonies the user triggers; a model that invokes /wrap
+        # on its own closes phases nobody asked to close.
+        for name in LIFECYCLE:
+            fields, _ = read_frontmatter(os.path.join(SKILLS, name, "SKILL.md"))
+            self.assertEqual(fields.get("disable-model-invocation"), "true",
+                             "%s: lifecycle skills must be user-invoked only" % name)
+
+    def test_each_skill_stays_within_budget(self):
+        for name in LIFECYCLE:
+            path = os.path.join(SKILLS, name, "SKILL.md")
+            size = os.path.getsize(path)
+            self.assertLessEqual(size, SKILL_BUDGET_BYTES,
+                                 "%s: %d bytes exceeds the %d-byte skill budget"
+                                 % (name, size, SKILL_BUDGET_BYTES))
+
+    def test_apply_and_wrap_name_the_gate(self):
+        # "Done" means the full configured gate passed. Both skills that can claim it
+        # must point at `flux check`; apply must also name the scoped escape hatch it
+        # iterates with, or sessions invent their own narrowing.
+        for name in ("apply", "wrap"):
+            _, body = read_frontmatter(os.path.join(SKILLS, name, "SKILL.md"))
+            self.assertIn("flux check", body, "%s: must name the gate" % name)
+        _, apply_body = read_frontmatter(os.path.join(SKILLS, "apply", "SKILL.md"))
+        self.assertIn("flux run --filter failures", apply_body,
+                      "apply: must name the scoped-iteration command")
+
+    def test_no_skill_invokes_the_gate_with_arguments(self):
+        # `flux check` is unmodifiable by decision: no args, no agent-side narrowing,
+        # so that "check passed" always means the whole gate. A skill that documents
+        # `flux check <target>` would teach sessions otherwise — and the CLI would
+        # silently ignore the argument, which is worse.
+        invocation = re.compile(r"`(flux check[^`]*)`|^\s*(flux check.*)$", re.M)
+        for name in LIFECYCLE:
+            _, body = read_frontmatter(os.path.join(SKILLS, name, "SKILL.md"))
+            for match in invocation.finditer(body):
+                call = (match.group(1) or match.group(2)).strip()
+                self.assertEqual(call, "flux check",
+                                 "%s: the gate takes no arguments, got %r" % (name, call))
 
 
 class TestHelp(unittest.TestCase):

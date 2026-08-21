@@ -14,6 +14,11 @@ that keep the comparison honest:
   arm a warm conversation would erase it.
 * **Records are appended as they happen.** A run that dies at task 4 still leaves
   three tasks of usable evidence.
+* **A transport failure is never scored as a result.** If a session ends on an
+  API error status, the task is marked *void* and the arm abandoned rather than
+  graded. Run ``meridian-002`` is why: a rate-limit window took out 32 sessions,
+  and the report went on to state that ``flux`` delivered 2 of 4 and ``paul`` 0
+  of 4 -- when neither arm had been given the chance to try.
 """
 
 from __future__ import annotations
@@ -28,7 +33,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from . import metrics as M
-from .driver import run_session
+from .driver import DEFAULT_BACKOFF_S, run_session
 from .grade import grade
 from .spec import FRAMEWORKS_DIR, REPO_ROOT, Arm, Project, Task, render
 
@@ -44,6 +49,7 @@ class RunConfig:
     max_usd: float = 40.0
     max_usd_per_session: float = 4.0
     timeout_s: int = 1800
+    api_backoff_s: List[int] = field(default_factory=lambda: list(DEFAULT_BACKOFF_S))
     tasks: Optional[List[str]] = None
     runs_dir: Path = DEFAULT_RUNS_DIR
     run_id: str = ""
@@ -66,6 +72,7 @@ class TaskRecord:
     wall_ms: int = 0
     cost_usd: float = 0.0
     aborted: str = ""
+    void: str = ""
 
     def to_json(self) -> Dict[str, Any]:
         return {"type": "task", **self.__dict__}
@@ -155,6 +162,10 @@ class Runner:
         if cap <= 0:
             raise BudgetExhausted("run budget of $%.2f exhausted" % self.config.max_usd)
 
+        def _retrying(attempt: int, wait: int, out) -> None:
+            self._log("    ~ %s on %s (attempt %d) -- waiting %ds"
+                      % (out.api_error_status, label, attempt, wait))
+
         outcome = run_session(
             prompt,
             repo,
@@ -164,6 +175,8 @@ class Runner:
             setting_sources=arm.setting_sources,
             max_usd=cap,
             timeout_s=self.config.timeout_s,
+            backoff_s=self.config.api_backoff_s,
+            on_retry=_retrying,
         )
         sm = M.collect(
             outcome.payload,
@@ -185,8 +198,16 @@ class Runner:
                sm.num_turns, sm.context_percentile(50))
         )
         if not sm.ok:
-            self._log("    ! %s" % (sm.error or outcome.error))
-        self._append({"type": "session", **sm.to_json()})
+            self._log("    ! %s%s" % (sm.error or outcome.error,
+                                      "" if outcome.attempts == 1
+                                      else " (after %d attempts)" % outcome.attempts))
+        self._append({"type": "session", **sm.to_json(),
+                      "api_error_status": outcome.api_error_status,
+                      "attempts": outcome.attempts})
+        if outcome.api_error_status:
+            raise ArmVoided(
+                "%s could not reach the model (%s, %d attempts) -- the arm was not "
+                "given the chance to try" % (label, outcome.api_error_status, outcome.attempts))
         if sm.num_turns == 0 and sm.cost_usd == 0.0 and not step.optional:
             raise ArmMisconfigured(
                 "%s produced no turns -- check the prompt resolves (arm %s, step %s)"
@@ -194,6 +215,10 @@ class Runner:
         return sm
 
     # -- arms ---------------------------------------------------------------
+
+    def _tasks(self) -> List[Task]:
+        return [t for t in self.project.tasks
+                if not self.config.tasks or t.id in self.config.tasks]
 
     def run_arm(self, arm: Arm) -> List[TaskRecord]:
         self._log("\n=== arm: %s (%s) ===" % (arm.name, arm.title))
@@ -203,14 +228,16 @@ class Runner:
         try:
             for i, step in enumerate(arm.bootstrap):
                 self._run_step(arm, step, repo, None, i)
-        except ArmMisconfigured as exc:
+        except (ArmMisconfigured, ArmVoided) as exc:
             self._log("  ! %s -- abandoning arm %s before any task" % (exc, arm.name))
+            for task in self._tasks():
+                self._append(TaskRecord(arm=arm.name, task=task.id, title=task.title,
+                                        void=str(exc)).to_json())
             return records
         if arm.bootstrap:
             _commit_all(repo, "bootstrap: %s" % arm.name)
 
-        tasks = [t for t in self.project.tasks
-                 if not self.config.tasks or t.id in self.config.tasks]
+        tasks = self._tasks()
         for task in tasks:
             record = TaskRecord(arm=arm.name, task=task.id, title=task.title)
             (repo / self.project.brief_filename).write_text(task.brief, encoding="utf-8")
@@ -228,6 +255,18 @@ class Runner:
             except BudgetExhausted as exc:
                 record.aborted = str(exc)
                 self._log("  ! %s" % exc)
+            except ArmVoided as exc:
+                # Not a result. Grading here would publish a delivery rate for
+                # work the arm never got to attempt, so this task and every task
+                # after it are recorded as void and the arm stops.
+                record.void = str(exc)
+                self._log("  ! %s -- VOID, abandoning arm %s" % (exc, arm.name))
+                self._append(record.to_json())
+                records.append(record)
+                for later in tasks[tasks.index(task) + 1:]:
+                    self._append(TaskRecord(arm=arm.name, task=later.id, title=later.title,
+                                            void="arm abandoned after %s" % task.id).to_json())
+                return records
             except ArmMisconfigured as exc:
                 record.aborted = str(exc)
                 self._log("  ! %s -- abandoning arm %s" % (exc, arm.name))
@@ -281,7 +320,7 @@ class Runner:
             except BudgetExhausted as exc:
                 self._log("! %s -- stopping before remaining arms" % exc)
                 break
-            except ArmMisconfigured as exc:
+            except (ArmMisconfigured, ArmVoided) as exc:
                 self._log("! %s" % exc)
         self._log("\nspent $%.2f of $%.2f budget; records: %s"
                   % (self.spent, self.config.max_usd, self.records_path))
@@ -290,6 +329,16 @@ class Runner:
 
 class BudgetExhausted(RuntimeError):
     pass
+
+
+class ArmVoided(RuntimeError):
+    """The model could not be reached, so there is nothing to judge.
+
+    A rate limit or an upstream 5xx says something about the account or the API
+    on the day, and nothing whatsoever about the arm. Scoring it as a failure to
+    deliver is the worst available option: it reads exactly like a real result.
+    The arm is voided instead -- excluded from the tables rather than given a
+    zero -- and the run moves on to the next arm."""
 
 
 class ArmMisconfigured(RuntimeError):

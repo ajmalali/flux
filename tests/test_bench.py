@@ -378,3 +378,173 @@ class CorpusTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TransportFailureTests(unittest.TestCase):
+    """A rate limit is not a result. This one cost a whole run to learn.
+
+    In ``meridian-002`` the account hit its rate limit mid-run and 32 sessions
+    came back in under a second with ``api_error_status: 429``. Every one was
+    recorded as a session the arm had failed, and the report went on to state
+    that ``paul`` and ``flux-lite`` delivered 0 of 4 -- a sentence about the API,
+    printed as a sentence about the frameworks.
+    """
+
+    @staticmethod
+    def _envelope(status="", cost=0.0, ok=False):
+        return driver.SessionOutcome(
+            ok=ok, payload={"total_cost_usd": cost}, stdout="", stderr="",
+            wall_ms=1, argv=[], error=status, api_error_status=status)
+
+    def test_rate_limit_on_a_free_attempt_is_retryable(self):
+        self.assertTrue(driver.is_retryable(self._envelope("429")))
+
+    def test_a_billed_attempt_is_never_retried(self):
+        """It may already have written to the repo; a rerun would judge the arm
+        against a tree its own abandoned attempt had moved."""
+        self.assertFalse(driver.is_retryable(self._envelope("429", cost=0.52)))
+
+    def test_a_successful_session_is_not_retried(self):
+        self.assertFalse(driver.is_retryable(self._envelope(ok=True)))
+
+    def test_a_refusal_or_model_error_is_a_result_not_a_transport_failure(self):
+        self.assertFalse(driver.is_retryable(self._envelope("400")))
+
+    def test_run_session_waits_out_a_rate_limit_and_returns_the_success(self):
+        attempts = []
+        slept = []
+        envelopes = [
+            driver.SessionOutcome(ok=False, payload={"total_cost_usd": 0}, stdout="",
+                                  stderr="", wall_ms=1, argv=[], error="429",
+                                  api_error_status="429"),
+            driver.SessionOutcome(ok=True, payload={"total_cost_usd": 1.0}, stdout="",
+                                  stderr="", wall_ms=1, argv=[], error=""),
+        ]
+
+        def fake_attempt(*a, **kw):
+            attempts.append(1)
+            return envelopes[len(attempts) - 1]
+
+        original = driver._attempt
+        driver._attempt = fake_attempt
+        try:
+            out = driver.run_session("p", Path("."), model="sonnet",
+                                     backoff_s=[1, 2], sleep=slept.append)
+        finally:
+            driver._attempt = original
+        self.assertTrue(out.ok)
+        self.assertEqual(out.attempts, 2)
+        self.assertEqual(slept, [1], "it must have waited before trying again")
+
+    def test_run_session_gives_up_after_the_backoff_schedule(self):
+        slept = []
+        original = driver._attempt
+        driver._attempt = lambda *a, **kw: driver.SessionOutcome(
+            ok=False, payload={"total_cost_usd": 0}, stdout="", stderr="", wall_ms=1,
+            argv=[], error="429", api_error_status="429")
+        try:
+            out = driver.run_session("p", Path("."), model="sonnet",
+                                     backoff_s=[1, 2], sleep=slept.append)
+        finally:
+            driver._attempt = original
+        self.assertFalse(out.ok)
+        self.assertEqual(out.attempts, 3, "one attempt per wait, plus a final one")
+        self.assertEqual(slept, [1, 2])
+        self.assertEqual(out.api_error_status, "429")
+
+
+class VoidTaskTests(unittest.TestCase):
+    """A task nobody got to attempt must be excluded, never scored zero."""
+
+    @staticmethod
+    def _rows():
+        manifest = {"type": "manifest", "run_id": "t",
+                    "config": {"model": "sonnet", "max_usd": 10},
+                    "project": {"title": "p", "tasks": [{"id": "a"}, {"id": "b"}]},
+                    "arms": [{"name": "flux"}, {"name": "downed"}]}
+        rows = [
+            {"type": "session", "arm": "flux", "task": "a", "cost_usd": 2.0, "wall_ms": 60000,
+             "input_tokens": 10, "output_tokens": 10, "cache_read_tokens": 10,
+             "cache_creation_tokens": 10, "tool_calls": {"Read": 2},
+             "requests": [{"input_tokens": 50000, "cache_read_tokens": 0,
+                           "cache_creation_tokens": 0, "sidechain": False}]},
+            {"type": "task", "arm": "flux", "task": "a", "delivered": True,
+             "grade": {"accept_total": 5, "accept_passed": 5, "gate_ok": True}},
+            # task b never ran: the session died on a 429 and the task is void
+            {"type": "session", "arm": "flux", "task": "b", "cost_usd": 0.0, "wall_ms": 300,
+             "ok": False, "api_error_status": "429", "tool_calls": {},
+             "requests": []},
+            {"type": "task", "arm": "flux", "task": "b", "delivered": False,
+             "void": "429 -- the arm was not given the chance to try"},
+            {"type": "task", "arm": "downed", "task": "a", "void": "429"},
+            {"type": "task", "arm": "downed", "task": "b", "void": "arm abandoned after a"},
+        ]
+        return manifest, rows
+
+    def _arm(self, name):
+        manifest, rows = self._rows()
+        return [s for s in report.summarize(manifest, rows) if s.arm == name][0]
+
+    def test_a_void_task_is_not_a_failure_to_deliver(self):
+        flux = self._arm("flux")
+        self.assertEqual(flux.tasks, 1, "only the attempted task is scored")
+        self.assertEqual(flux.void_tasks, 1)
+        self.assertEqual(flux.delivered, "1/1 (+1 void)")
+
+    def test_a_void_session_does_not_drag_down_the_metrics(self):
+        """The 0.3s rate-limited session would otherwise halve $/task and
+        pull the median context toward zero -- flattering the arm for a
+        failure that was not its own."""
+        flux = self._arm("flux")
+        self.assertAlmostEqual(flux.cost_per_task, 2.0)
+        self.assertEqual(flux.median_context, 50000)
+
+    def test_an_arm_that_never_ran_is_void_not_zero(self):
+        downed = self._arm("downed")
+        self.assertFalse(downed.scored)
+        self.assertEqual(downed.delivered, "void")
+
+    def test_a_void_arm_is_not_ticked_against_every_target(self):
+        manifest, rows = self._rows()
+        text = report.render_markdown(manifest, report.summarize(manifest, rows))
+        targets = text.split("## against plan.md targets")[1].split("##")[0]
+        for line in targets.splitlines():
+            if line.startswith("| $/task") or line.startswith("| ctx p50"):
+                self.assertNotIn("$0.00 ✓", line)
+                self.assertIn("—", line, "an arm that never ran hits no target")
+
+    def test_the_report_says_the_run_is_incomplete(self):
+        manifest, rows = self._rows()
+        text = report.render_markdown(manifest, report.summarize(manifest, rows))
+        self.assertIn("This run is incomplete", text)
+        self.assertIn("| downed | 0 | 2 |", text)
+
+    def test_the_verdict_compares_on_shared_tasks_not_unequal_totals(self):
+        """`vanilla` scoring 4 tasks and `flux` 2 is not `flux` being
+        out-delivered -- it is two different experiments. The tasks they both
+        attempted are still a comparison, and the only one the run earned."""
+        manifest = {"type": "manifest", "run_id": "t",
+                    "config": {"model": "sonnet", "max_usd": 10},
+                    "project": {"title": "p", "tasks": [{"id": "a"}, {"id": "b"}]},
+                    "arms": [{"name": "flux"}, {"name": "vanilla"}]}
+        rows = [
+            {"type": "session", "arm": "flux", "task": "a", "cost_usd": 2.0,
+             "tool_calls": {}, "requests": []},
+            {"type": "task", "arm": "flux", "task": "a", "delivered": True,
+             "grade": {"accept_total": 1, "accept_passed": 1, "gate_ok": True}},
+            {"type": "task", "arm": "flux", "task": "b", "void": "429"},
+            {"type": "session", "arm": "vanilla", "task": "a", "cost_usd": 1.0,
+             "tool_calls": {}, "requests": []},
+            {"type": "task", "arm": "vanilla", "task": "a", "delivered": True,
+             "grade": {"accept_total": 1, "accept_passed": 1, "gate_ok": True}},
+            {"type": "session", "arm": "vanilla", "task": "b", "cost_usd": 1.0,
+             "tool_calls": {}, "requests": []},
+            {"type": "task", "arm": "vanilla", "task": "b", "delivered": True,
+             "grade": {"accept_total": 1, "accept_passed": 1, "gate_ok": True}},
+        ]
+        text = report.render_verdict(report.summarize(manifest, rows), focus="flux")
+        self.assertIn("Read this run as incomplete", text)
+        self.assertIn("scored different tasks", text)
+        self.assertIn("| `vanilla` | a | 1/1 | 1/1 |", text,
+                      "the shared task is the one honest comparison available")
+        self.assertNotIn("Out-delivered", text)

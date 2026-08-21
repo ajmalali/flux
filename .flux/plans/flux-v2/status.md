@@ -1,6 +1,6 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-21 (lifecycle run + the drift-base defect it surfaced, fixed — 73 tests green, plugin 2.3.0)
+Updated: 2026-08-21 (meridian-002 read; a rate limit had been scoring as arm failure — fixed, 114 tests green)
 
 ## Current state
 
@@ -131,16 +131,56 @@ least decision-relevant arm.
 **Read it with:** `./bench/run.py report meridian-002` — works on a partial run,
 and ends with a verdict naming every metric `flux` loses and to whom.
 
-**Results so far:** vanilla 4/4 delivered, $4.43, ~13 min total — a strong
-control. flux 2/4 so far (19/19 and 16/16), roughly $3.1 and 12.5 min per task
-against vanilla's $1.1 and 3.2 min. On this evidence the four-session lifecycle
-has to justify ~3x the cost against a control that is already delivering
-everything; `flux-lite` is in the run to say whether that is the machinery or
-the ceremony.
+**meridian-002 was spoiled by a rate limit, and the harness scored it as arm
+failure.** Read 2026-08-21. Mid-run the account hit its limit; 32 sessions came
+back in under a second with `api_error_status: 429`. The report then stated that
+`paul` and `flux-lite` delivered **0/4** — four of six arms graded on work that
+never ran, in a table indistinguishable from one where they had genuinely failed.
+This is the same class as the unresolved-slash-command lie (#2 above), and worse:
+that one made a broken arm look cheap, this one made an untried arm look broken.
 
-**Next session:** read the report, then decide per the falsifiability rule —
-if `flux` loses columns it does not win back on delivery, the verdict table is
-the work list.
+**Fixed in the harness (see `bench/README.md`, "Why a rate limit is void"):**
+- `driver.run_session` retries `RETRYABLE_API_STATUSES` (429/5xx/529) on a
+  60s/180s/600s backoff — but **only when the failed attempt cost nothing**. A
+  billed attempt may already have written to the repo, and re-running it would
+  judge the arm against a tree its own abandoned attempt had moved.
+- What survives the retries raises `ArmVoided`: the task is recorded `void` and
+  the arm abandoned rather than graded.
+- The report excludes void tasks from every denominator, renders an arm with no
+  scored tasks as `void` (not `0/4`), prints `—` instead of a ✓ in the targets
+  table for it, and states in the verdict that the run is incomplete. It applies
+  the rule to records written before it existed, so old runs re-read correctly.
+- Where arms scored different task sets, the verdict no longer claims
+  "out-delivered"; it compares them on the tasks each pair **both** attempted —
+  usually the only real evidence a spoiled run produced.
+- **12 new tests** (`TransportFailureTests`, `VoidTaskTests`). 114 green.
+
+**What meridian-002 actually established**, once re-read honestly — vanilla and
+flux both ran m1, m2, m3 clean, so this much is a like-for-like comparison:
+
+| | vanilla | flux |
+|---|---|---|
+| delivered (m1–m3) | **3/3** | 2/3 |
+| $/task | $1.11 | $2.83 |
+| wall/task | 198s | 509s |
+| sessions/task | 1.0 | 4.0 |
+| ctx p50 | 59,202 | **50,016** |
+| bash out/task | **15,518** | 49,672 |
+
+flux lost m3 **on merit** (20/28 acceptance, gate green — not a transport
+failure). It wins ctx p50 and nothing else that matters. Everything else in the
+run — flux-lite, paul, speckit, flux's m4 — is void and says nothing.
+
+**So the falsifiability rule has a real reading now, on 3 tasks:** the
+four-session lifecycle costs 2.6x the dollars, 2.6x the wall-clock and 4x the
+sessions of a single vanilla session, and delivered *less*. That is the finding
+to act on — but n=3 against one control, and `flux-lite` (the arm that separates
+machinery from ceremony) never ran. **The decisive missing evidence is
+flux vs flux-lite vs vanilla over the same four tasks.**
+
+**Next session:** relaunch as `meridian-003` on the fixed harness — the rerun is
+now safe, because a rate limit voids instead of lying. Then act on the verdict
+table.
 
 ## Task queue
 
@@ -325,6 +365,15 @@ the work list.
       as separate legs, `main` reports only `unpushed`, and behind-your-own-upstream
       renders. 73 tests green. Plugin **2.3.0**.
 
+- [x] **Fixed 2026-08-21 — a rate limit is void, not a zero.** Found by reading
+      meridian-002's report: it credited `paul` and `flux-lite` with 0/4 deliveries
+      when neither arm had reached a model. Retry-then-void in the driver/runner,
+      void-aware tables and verdict in the report, shared-task comparison when arms
+      scored different sets, and the rule applied retroactively to old records.
+      12 tests, 114 green. Full write-up in the benchmark section above.
+- [ ] **Relaunch the benchmark as `meridian-003`** on the fixed harness — 6 arms x
+      4 tasks, sonnet. meridian-002 answered only flux-vs-vanilla over 3 tasks, and
+      the arm that matters most (`flux-lite`, machinery vs ceremony) never ran.
 - [ ] Phase 03 — generalize (zaps/api), retire PAUL/mattpocock installs, first
       ledger before/after.
 

@@ -83,6 +83,38 @@ removed. An arm delivers a task only when its acceptance tests pass *and* the
 repo's pre-existing gate still passes. In the report, no arm with zero deliveries
 can win a column.
 
+## Why a rate limit is void, not a zero
+
+A benchmark's most expensive failure mode is a number that reads like a result
+and isn't. Run `meridian-002` produced one: the account hit its rate limit
+mid-run, 32 sessions came back in under a second with `api_error_status: 429`,
+and the report went on to state that `paul` and `flux-lite` delivered 0 of 4.
+Four of six arms were graded on work that never ran, in a table indistinguishable
+from one where the frameworks had genuinely failed.
+
+Two rules now stand between that and the report:
+
+- **A transport failure is waited out, not scored.** Statuses in
+  `driver.RETRYABLE_API_STATUSES` (429, 5xx, 529) are retried on a backoff of
+  60s / 180s / 600s — long enough to ride out a rate-limit window. A retry is
+  only ever attempted on an attempt that *cost nothing*: a session billed for
+  turns may already have written to the repo, and re-running it would judge the
+  arm against a tree its own abandoned attempt had moved.
+- **What survives the retries voids the task.** The arm is abandoned rather than
+  graded, and the task is recorded with a `void` reason. Void tasks are excluded
+  from every denominator in the report — not counted as failures to deliver — and
+  an arm with no scored tasks renders as `void` rather than as `0/4`. The targets
+  table shows `—` for it, because an arm that never ran hits every target by
+  doing nothing.
+
+When arms end up with different task sets, the verdict stops comparing their
+delivery columns and compares them on the tasks each pair **both** attempted.
+That intersection is usually the only real evidence a spoiled run produced, and
+throwing it away is its own kind of dishonesty.
+
+The report applies the void rule to session records written before it existed, so
+old runs re-read correctly instead of republishing the mistake.
+
 ## Why every task ships a reference implementation
 
 `run.py verify` asserts two things per task, cumulatively, in order:

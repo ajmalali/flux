@@ -8,6 +8,13 @@ One rule governs the whole report: **an arm's efficiency numbers are only
 reported next to its delivery rate.** Winning on tokens by not doing the work is
 the failure mode this benchmark exists to make impossible to hide, so 'cheapest'
 is never printed as a verdict on its own.
+
+A second rule was added after ``meridian-002``: **void tasks are not zeros.**
+When a task could not be attempted -- a rate limit, an upstream outage -- it is
+excluded from every denominator here and counted in its own column, and an arm
+with no scored tasks is rendered as ``void`` rather than as an arm that tried
+and delivered nothing. The distinction is the whole difference between "this
+framework does not work" and "the API was down".
 """
 
 from __future__ import annotations
@@ -59,12 +66,24 @@ class ArmSummary:
     bash_output_chars: int = 0
     files_changed: int = 0
     lines_added: int = 0
+    void_tasks: int = 0
+    void_reason: str = ""
+    scored_tasks: List[str] = field(default_factory=list)
+    delivered_tasks: List[str] = field(default_factory=list)
     contexts: List[int] = field(default_factory=list)
 
     # -- derived ------------------------------------------------------------
     @property
+    def scored(self) -> bool:
+        """Did this arm get to attempt anything? Nothing below means much if not."""
+        return self.tasks > 0
+
+    @property
     def delivered(self) -> str:
-        return "%d/%d" % (self.delivered_count, self.tasks)
+        if not self.scored:
+            return "void"
+        suffix = " (+%d void)" % self.void_tasks if self.void_tasks else ""
+        return "%d/%d%s" % (self.delivered_count, self.tasks, suffix)
 
     @property
     def accept_rate(self) -> float:
@@ -141,6 +160,22 @@ def load(records_path: Path) -> "tuple[Dict[str, Any], List[Dict[str, Any]]]":
     return manifest, rows
 
 
+API_ERROR_STATUSES = {"400", "401", "403", "404", "408", "429",
+                      "500", "502", "503", "504", "529"}
+
+
+def _api_status(row: Dict[str, Any]) -> str:
+    status = str(row.get("api_error_status") or "")
+    if status:
+        return status
+    error = str(row.get("error") or "").strip()
+    return error if error in API_ERROR_STATUSES else ""
+
+
+def _is_api_failure(row: Dict[str, Any]) -> bool:
+    return not row.get("ok", True) and bool(_api_status(row))
+
+
 def summarize(manifest: Dict[str, Any], rows: List[Dict[str, Any]]) -> List[ArmSummary]:
     titles = {a["name"]: a.get("title", a["name"]) for a in manifest.get("arms", [])}
     order = [a["name"] for a in manifest.get("arms", [])]
@@ -151,11 +186,36 @@ def summarize(manifest: Dict[str, Any], rows: List[Dict[str, Any]]) -> List[ArmS
             summaries[name] = ArmSummary(arm=name, title=titles.get(name, name))
         return summaries[name]
 
+    # First pass: which (arm, task) pairs never got the chance to run? Their
+    # sessions have to be excluded from the metrics as well as from the grades --
+    # a rate-limited session that returned in 0.3s would otherwise pull an arm's
+    # median context and cost per task toward zero.
+    void_pairs = {(r.get("arm"), r.get("task")) for r in rows
+                  if r.get("type") == "task" and r.get("void")}
+    # A task whose session ended on an API error status is void whether or not
+    # the runner said so -- runs recorded before that rule existed still hold the
+    # evidence in the session rows, and reading them any other way republishes
+    # the mistake.
+    void_pairs |= {(r.get("arm"), r.get("task")) for r in rows
+                   if r.get("type") == "session" and r.get("task") != "bootstrap"
+                   and _is_api_failure(r)}
+    void_reasons = {(r.get("arm"), r.get("task")): str(r.get("void") or "")
+                    for r in rows if r.get("type") == "task" and r.get("void")}
+
     for row in rows:
         arm = row.get("arm")
         if not arm:
             continue
         s = get(arm)
+        pair = (arm, row.get("task"))
+        if pair in void_pairs:
+            if row.get("type") == "task":
+                s.void_tasks += 1
+                s.void_reason = s.void_reason or void_reasons.get(pair, "")
+            elif row.get("type") == "session" and _is_api_failure(row):
+                s.void_reason = s.void_reason or ("could not reach the model (%s)"
+                                                  % _api_status(row))
+            continue
         if row.get("type") == "session":
             if row.get("task") == "bootstrap":
                 # Bootstrap is a one-off setup cost, counted in dollars and wall
@@ -185,6 +245,9 @@ def summarize(manifest: Dict[str, Any], rows: List[Dict[str, Any]]) -> List[ArmS
         elif row.get("type") == "task":
             s.tasks += 1
             g = row.get("grade") or {}
+            s.scored_tasks.append(str(row.get("task") or ""))
+            if row.get("delivered"):
+                s.delivered_tasks.append(str(row.get("task") or ""))
             s.delivered_count += 1 if row.get("delivered") else 0
             s.accept_total += int(g.get("accept_total") or 0)
             s.accept_passed += int(g.get("accept_passed") or 0)
@@ -249,6 +312,9 @@ def render_markdown(manifest: Dict[str, Any], summaries: List[ArmSummary]) -> st
     for s in summaries:
         cells = [s.arm]
         for key, _h, unit, _l, _t in COLUMNS:
+            if not s.scored:
+                cells.append("void" if key == "delivered" else "—")
+                continue
             text = _fmt(key, s.value(key), unit)
             if winners.get(key) == s.arm and s.delivered_count > 0:
                 text = "**%s**" % text
@@ -257,6 +323,17 @@ def render_markdown(manifest: Dict[str, Any], summaries: List[ArmSummary]) -> st
     lines.append("")
     lines.append("Bold = best among arms that delivered at least one task. "
                  "Efficiency without delivery is not a win.")
+    voided = [s for s in summaries if s.void_tasks]
+    if voided:
+        lines.append("")
+        lines.append("**This run is incomplete.** Tasks that could not be attempted are "
+                     "void — excluded from every column above, not scored as zero:")
+        lines.append("")
+        lines.append("| arm | tasks scored | void | why |")
+        lines.append("|---|---|---|---|")
+        for s in voided:
+            lines.append("| %s | %d | %d | %s |" % (s.arm, s.tasks, s.void_tasks,
+                                                    s.void_reason or "not attempted"))
     lines.append("")
 
     lines.append("## against plan.md targets")
@@ -268,6 +345,11 @@ def render_markdown(manifest: Dict[str, Any], summaries: List[ArmSummary]) -> st
             continue
         row = [header, _fmt(key, target, unit)]
         for s in summaries:
+            if not s.scored:
+                # An arm that never ran hits every target by doing nothing. A tick
+                # here would be the most misleading character in the report.
+                row.append("—")
+                continue
             value = s.value(key)
             mark = "✓" if value <= target else "✗"
             row.append("%s %s" % (_fmt(key, value, unit), mark))
@@ -279,6 +361,10 @@ def render_markdown(manifest: Dict[str, Any], summaries: List[ArmSummary]) -> st
     lines.append("| arm | tasks | delivered | acceptance tests | gate failures | failed sessions | total $ | $/delivered |")
     lines.append("|---|---|---|---|---|---|---|---|")
     for s in summaries:
+        if not s.scored:
+            lines.append("| %s | 0 | void | — | — | %d | $%.2f | — |"
+                         % (s.arm, s.failed_sessions, s.cost_usd))
+            continue
         lines.append("| %s | %d | %s | %d/%d | %d | %d | $%.2f | %s |"
                      % (s.arm, s.tasks, s.delivered, s.accept_passed, s.accept_total,
                         s.gate_failures, s.failed_sessions, s.cost_usd,
@@ -303,6 +389,22 @@ def render_verdict(summaries: List[ArmSummary], focus: str = FOCUS_ARM) -> str:
     if target is None:
         return "\n".join(lines + ["No `%s` arm in this run." % focus, ""])
 
+    incomplete = [s for s in summaries if s.void_tasks]
+    if incomplete:
+        lines.append("**Read this run as incomplete.** %s did not get to attempt every "
+                     "task (%s), so no column below is a like-for-like comparison unless "
+                     "the arms scored the same tasks. Void tasks are excluded, never "
+                     "counted as failures to deliver."
+                     % (", ".join("`%s` (%d void)" % (s.arm, s.void_tasks) for s in incomplete),
+                        incomplete[0].void_reason or "not attempted"))
+        lines.append("")
+
+    if not target.scored:
+        lines.append("`%s` was **voided** — %s. There is nothing to judge."
+                     % (focus, target.void_reason or "it never ran"))
+        lines.append("")
+        return "\n".join(lines)
+
     others = [s for s in summaries if s.arm != focus and s.delivered_count > 0]
     lines.append("`%s` delivered **%s** at **$%.2f/task**%s."
                  % (focus, target.delivered, target.cost_per_task,
@@ -316,13 +418,36 @@ def render_verdict(summaries: List[ArmSummary], focus: str = FOCUS_ARM) -> str:
         lines.append("")
         return "\n".join(lines)
 
-    best_delivery = max((s.delivered_count for s in summaries), default=0)
+    # Only arms that ran the same number of tasks can out-deliver this one. An
+    # arm that got four tasks to focus's two has a bigger numerator by default.
+    peers = [s for s in summaries if s.arm != focus and s.tasks == target.tasks]
+    best_delivery = max((s.delivered_count for s in peers), default=0)
     if target.delivered_count < best_delivery:
-        beaten_by = [s.arm for s in summaries if s.delivered_count == best_delivery]
+        beaten_by = [s.arm for s in peers if s.delivered_count == best_delivery]
         lines.append("**Out-delivered.** %s delivered %d of %d; `%s` delivered %d. "
                      "Cost comparisons are secondary to this."
                      % (", ".join("`%s`" % a for a in beaten_by), best_delivery,
                         target.tasks, focus, target.delivered_count))
+        lines.append("")
+    elif any(s.tasks != target.tasks for s in summaries if s.arm != focus and s.scored):
+        # Different arms scored different task sets, so the delivery column is
+        # not a comparison. The tasks they *both* attempted still are -- and
+        # throwing that away would waste the only real evidence the run produced.
+        lines.append("**The arms scored different tasks**, so the delivery column above "
+                     "is not a comparison. On the tasks each pair both attempted:")
+        lines.append("")
+        lines.append("| vs | shared tasks | `%s` | them |" % focus)
+        lines.append("|---|---|---|---|")
+        mine = set(target.scored_tasks)
+        for other in (s for s in summaries if s.arm != focus and s.scored):
+            shared = sorted(mine & set(other.scored_tasks))
+            if not shared:
+                lines.append("| `%s` | none | — | — |" % other.arm)
+                continue
+            lines.append("| `%s` | %s | %d/%d | %d/%d |"
+                         % (other.arm, ", ".join(shared),
+                            len(set(target.delivered_tasks) & set(shared)), len(shared),
+                            len(set(other.delivered_tasks) & set(shared)), len(shared)))
         lines.append("")
 
     losses = []

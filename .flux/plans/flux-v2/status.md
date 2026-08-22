@@ -1,6 +1,6 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-22 (meridian-003 read; the ceremony's loss is real but the corpus could not test its thesis — ADR 0001 written, 117 tests green)
+Updated: 2026-08-22 (ADR 0001's prerequisite measured: no decay knee — correctness is flat, re-orientation steps at ~100k. Rule 2 amended refuses→warns before any code. `./bench/run.py decay` shipped; `flux state set` flag-key defect fixed; 134 tests green, plugin 2.4.0)
 
 ## Current state
 
@@ -314,15 +314,81 @@ for context-at-request against tool error rate, redundant re-reads and file chur
 Proxies, not quality — but if no relationship appears there, the budget is a guess and
 ADR 0001's second rule is reconsidered before any code is written.
 
+## The decay premise, measured — 2026-08-22
+
+ADR 0001's rule 2 (refuse an oversized task) rested on "quality decays as context
+grows", asserted in plan.md's targets table and in `/flux:plan`'s wording and never
+measured here. It has now been measured on 414 transcripts / 16,909 main-chain tool
+calls / 344 sessions, and **the premise did not survive**. Full write-up and method:
+`.flux/analysis/2026-08-22-context-decay.md`.
+
+**There is no knee.** No context size at which anything falls off a cliff.
+
+- **Correctness is flat.** The only proxy that is about the model's picture of the
+  code being wrong — Edit/Write failing on *"String to replace not found"* or *"File
+  has not been read yet"* — runs 0.91% / 0.89% / 0.73% / 0.85% / 1.37% across the
+  75k → 300k+ bins inside one model family.
+- **The 2.9x that looked real is Simpson's paradox.** Pooled across all models it is
+  0.51% → 1.48% at Fisher p=0.0038. Sonnet and haiku sessions never exceed 200k and
+  sit near zero, so they drag the low cell down; within opus it is 1.38x at p=0.52.
+- **What does rise is re-orientation, and the step is at ~100k, not 200k.** Reading a
+  file already among the last five files read: 10.7% / 9.2% below 100k, then 26.6% /
+  28.9% / 32.6% above. Same direction within-session at every cut (sign-test p=0.09 at
+  200k, p=0.22 at 100k). Suggestive at the strength this data supports, not proven.
+- **Churn does not rise.** The naive metric (re-touch any already-touched file) climbs
+  26% → 76%, but that is arithmetic: the touched set only grows. Normalised to a fixed
+  window it is flat, and within-session it *falls*.
+- **57% of raw tool errors are permission friction**, clustered at session start.
+  Counted naively the tool-error rate falls fivefold with context and reads as proof
+  that context helps. This is also a live defect in `bench` — see the task queue.
+- **Everything reverses above 300k.** Only 26 sessions get that far. Survivorship plus
+  a shift in what those sessions do; not evidence of a ceiling.
+
+**So a long context costs re-reading, not correctness** — dollars and wall-clock, not
+failed acceptance tests. Which is exactly what `meridian-003` showed from the other
+end, where every arm scored 82/82 and only cost separated them.
+
+**Acted on, this session:**
+
+- ADR 0001 rule 2: **refuses → warns**, with the reasoning recorded inline. Its ledger
+  metric changes from held-out acceptance pass rate (unmeasurable on this corpus) to
+  **re-read rate above the threshold**. Rules 1, 3, 4 untouched — none depends on decay.
+- `plan.md`: the same amendment to the ledger metrics paragraph, the Prerequisite
+  section replaced with the result, and a footnote under the targets table warning
+  that Tool error rate is friction rather than quality as currently computed.
+- `bench/fluxbench/decay.py` + `./bench/run.py decay` + 15 tests (132 green). It exists
+  so the next reporting cycle re-runs the check instead of re-deriving it.
+
+**Defect found and fixed while doing it (2026-08-22).** `flux state set` takes bare
+key/value pairs, so `flux state set --phase "..."` wrote a key literally named
+`--phase` beside the real one, **printed "wrote 11 keys" as if it had succeeded**, and
+left `flux prime` rendering the previous session's phase/position/next. Silent
+corruption of the one file that carries a project across sessions, and it happened in
+this session. `bin/flux` now refuses any key starting with `-` (exit 2, whole write
+refused, old state untouched), guarded by two tests. **Plugin bumped 2.3.0 → 2.4.0** —
+a `bin/flux` change does not reach the installed cache without it.
+
+**What is still open, and cannot be closed by mining.** Detecting the observed
+correctness difference at 80% power needs ~18,700 Edit calls per side; there are
+~1,300 — underpowered by 14x, and only 65 sessions on this account ever pass 200k. The
+correctness question needs a **designed** run: the same task executed at deliberately
+different context loads, graded on acceptance. Until one exists, no document here may
+assert that quality decays with context.
+
+
 ## Task queue
 
-- [ ] **Mine transcripts for the context/quality decay knee.** Prerequisite to ADR
-      0001's size budget. Inputs: `~/.claude/projects/*/*.jsonl` (~83 here) and
-      `~/.flux-bench/runs/*`. Plot context-at-request vs tool error rate, redundant
-      re-reads, file churn. Reuse `bench/fluxbench/metrics.py` — it already parses
-      every field needed. Output: a knee (or its absence) and the number
-      `[task].budget_tokens` should enforce. **No knee ⇒ rethink ADR 0001 rule 2
-      before writing code.**
+- [x] **Mine transcripts for the context/quality decay knee. Done 2026-08-22 —
+      there is no knee, and ADR 0001 rule 2 was amended before any code.** Findings:
+      `.flux/analysis/2026-08-22-context-decay.md`. Re-runnable: `./bench/run.py decay`
+      (`bench/fluxbench/decay.py`, 15 tests). See the section below.
+- [ ] **`bench` reports permission friction as a quality column.** `metrics.tool_error_rate`
+      feeds the run table and the plan.md targets row, and 57% of what it counts is
+      approval prompts and blocks — which differ between arms mostly by how their
+      commands trip the operator's allowlist, and which cluster at session start.
+      Fix: classify with `fluxbench.decay.classify_error` and split the column into
+      model-error vs friction in `report.py`. Guard it with a test. Cheap, and every
+      published number depends on it.
 - [ ] **Then** `flux task` — local execution index + topological `next`, per ADR 0001.
       Ledger metric: cold-start ramp (tokens/tool-calls before a session's first
       Edit/Write).

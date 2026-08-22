@@ -12,9 +12,11 @@ unblocked task by topological order, in code, with no model in the loop.
 
 Three rules ride with it:
 
-1. **Task size is budget-enforced.** `flux task add` estimates the context a task will
-   cost and **refuses** one that exceeds `[task].budget_tokens`, exactly as
-   `flux state set` refuses an oversized write today.
+1. **Task size is budget-checked.** `flux task add` estimates the context a task will
+   cost and **warns** above `[task].budget_tokens`, recording the estimate.
+   *Amended 2026-08-22 — originally "refuses ... exactly as `flux state set` refuses
+   an oversized write". The prerequisite measurement came back without a knee, and a
+   refusal needs a cliff. See the Prerequisite section.*
 2. **Ceremony scales with size.** A single small task runs apply-only. Plan, audit and
    wrap attach to phase and feature boundaries, not to every unit of work.
 3. **Done is recorded, not asserted.** `flux task done` requires what verified it;
@@ -66,9 +68,12 @@ procedural operation in the entire system, and the one procedure that never move
 the CLI. Leaving it with the model costs a re-derivation every session and produces a
 different answer each time. Both are exactly what flux exists to eliminate.
 
-Task sizing gets the same treatment. `wayfinder` already names a session-sized budget
-and nothing checks it; an unenforced budget is a comment. Principle 2 says budgets are
-refused, not aspirational.
+Task sizing gets a weaker version of the same treatment. `wayfinder` already names a
+session-sized budget and nothing checks it; an unchecked budget is a comment.
+Principle 2 says budgets are refused rather than aspirational — but a refusal has to
+protect a real limit, and the prerequisite measurement (below) found a gradual cost
+curve rather than a limit. So this one warns and records instead of refusing, and the
+warning is falsifiable on the re-read metric it is meant to move.
 
 ## Why this is not a tracker
 
@@ -102,21 +107,48 @@ The exclusion was correct for the old scope and is wrong for the new one.
 | capability | metric it must move | falsifier |
 |---|---|---|
 | execution index + `task next` | cold-start ramp — tokens and tool calls before the first `Edit`/`Write` of a session | ramp does not shrink ⇒ the frontier was not where context went; delete it |
-| task-size budget | quality (held-out acceptance pass rate) as a function of context at execution | no decay knee in the data ⇒ the smart-zone premise is wrong; drop the budget |
+| task-size budget | re-read rate above the threshold (`./bench/run.py decay`) — *amended 2026-08-22 from "quality (held-out acceptance pass rate)", which the corpus cannot measure* | sizing tasks under the budget does not lower the re-read rate ⇒ drop the budget |
 | size-conditional ceremony | $ and sessions per delivered task on small work | does not converge to `flux-lite` on small tasks ⇒ ceremony still is not earning it |
 | verified-done | tasks marked done that fail their own `verify` when replayed | rate already ~0 ⇒ the bookkeeping is theatre |
 
 Two reporting cycles without movement deletes the capability, as with everything else.
 
-## Prerequisite: the premise has not been checked
+## Prerequisite: checked, 2026-08-22 — the premise did not survive
 
-The size budget assumes quality decays as context grows. That is asserted in
-`plan.md`'s targets table and in `plan`'s own wording, and it has never been measured
-on this account's data. Before the budget is built, mine the existing transcripts
-(~83 in this repo, several hundred across `~/.flux-bench/runs`) for context-at-request
-against tool error rate, redundant re-reads, and file churn. Those are proxies, not
-quality — but if no relationship appears in them, the budget is being built on a guess
-and this ADR's second rule should be reconsidered before any code is written.
+Full method and figures: `.flux/analysis/2026-08-22-context-decay.md`. Re-runnable as
+`./bench/run.py decay` (code in `bench/fluxbench/decay.py`, 15 tests).
+
+414 transcripts, 16,909 main-chain tool calls, 344 sessions. **There is no knee.**
+
+- **Correctness is flat.** Edit/Write failing on a stale string or an unread file —
+  the only proxy that is about the model's picture of the code being wrong — runs
+  0.91% / 0.89% / 0.73% / 0.85% / 1.37% across the 75k → 300k+ bins within one model
+  family. The pooled all-model version *does* show 2.92x at p=0.0038, and that is
+  Simpson's paradox: sonnet and haiku sessions never exceed 200k and sit near zero.
+- **Re-orientation cost rises, with a step at ~100k — not at 200k.** Reading a file
+  already among the last five files read: 10.7% / 9.2% below 100k, then 26.6% / 28.9%
+  / 32.6% above. Within-session, same direction at every cut, sign-test p=0.09 at
+  200k, p=0.22 at 100k. Suggestive, not proven.
+- **Churn does not rise.** The naive version (re-touching any already-touched file)
+  climbs 26% → 76%, but that is arithmetic — the touched set only grows. Normalised
+  to a fixed window it is flat, and within-session it *falls*.
+- **57% of raw tool errors are permission friction**, which clusters at session start.
+  Counted naively the tool-error rate falls fivefold with context and reads as proof
+  that context helps. (This is also a live defect in `bench`'s reported
+  `tool_error_rate` — a follow-up task.)
+
+**What this changes.** Rule 2 loses its refusal, above. What a long context is shown
+to cost here is *re-reading* — dollars and wall-clock — not correctness, which is
+consistent with `meridian-003`, where every arm scored 82/82 and only cost separated
+them. The threshold, if one is set, is ~100k.
+
+**What it does not settle.** Detecting the observed correctness difference at 80%
+power needs ~18,700 Edit calls per side; there are ~1,300 — underpowered by 14x. So
+"flat" means *an effect large enough to justify refusing work is absent*, not *there
+is no effect*. Only 65 sessions on this account ever pass 200k, so more mining will
+not close that gap. The correctness claim is **deferred to a designed run** — the same
+task executed at deliberately different context loads and graded on acceptance — and
+must not be asserted in `plan.md`'s targets table until one exists.
 
 ## What is explicitly not built
 
@@ -132,5 +164,7 @@ auto-advance to the next task without a session boundary.
 - `bench` must change shape to test any of this: hand the corpus over whole, let each
   arm decompose it, and grade continuously. A pre-decomposed corpus tests decomposition
   machinery not at all — the flaw that made `meridian-003` unable to speak to it.
+- `plan.md`'s targets table must stop asserting that quality decays with context
+  until a designed run establishes it (added 2026-08-22).
 - `.flux/state.toml` stays as it is. It carries the narrative; the index carries the
   road. Neither grows into the other.

@@ -17,6 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from fluxbench import decay as decay_mod  # noqa: E402
 from fluxbench import report as report_mod  # noqa: E402
 from fluxbench.verify import verify_project  # noqa: E402
 from fluxbench.runner import DEFAULT_RUNS_DIR, RunConfig, Runner  # noqa: E402
@@ -112,6 +113,22 @@ def cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_decay(args: argparse.Namespace) -> int:
+    """Answer ADR 0001's prerequisite: does anything get worse as context grows?"""
+    dirs = args.dirs or ["~/.claude/projects", "~/.flux-bench/runs"]
+    calls = decay_mod.scan_dirs(dirs)
+    if not calls:
+        print("no transcripts found under %s" % ", ".join(dirs), file=sys.stderr)
+        return 1
+    text = decay_mod.report(calls, family=args.family)
+    if args.out:
+        Path(args.out).expanduser().write_text(text, encoding="utf-8")
+        print("written to %s" % args.out)
+    else:
+        print(text)
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="fluxbench", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -136,6 +153,14 @@ def main(argv=None) -> int:
     ver = sub.add_parser("verify", help="check every task is red on the seed and green on its reference")
     ver.add_argument("--project", required=True)
     ver.set_defaults(func=cmd_verify)
+
+    dec = sub.add_parser("decay", help="context vs rework, mined from local transcripts")
+    dec.add_argument("--dirs", nargs="*", default=None,
+                     help="transcript roots (default: ~/.claude/projects ~/.flux-bench/runs)")
+    dec.add_argument("--family", default="opus",
+                     help="model family to report un-confounded (default: opus)")
+    dec.add_argument("--out", default=None, help="write markdown here instead of stdout")
+    dec.set_defaults(func=cmd_decay)
 
     rep = sub.add_parser("report", help="re-render the report for a run")
     rep.add_argument("run", help="run id, run directory, or path to records.jsonl")

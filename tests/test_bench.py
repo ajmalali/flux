@@ -19,7 +19,7 @@ REPO = Path(__file__).resolve().parents[1]
 BENCH = REPO / "bench"
 sys.path.insert(0, str(BENCH))
 
-from fluxbench import driver, metrics, report  # noqa: E402
+from fluxbench import decay, driver, metrics, report  # noqa: E402
 from fluxbench.grade import ACCEPT_DIRNAME, grade  # noqa: E402
 from fluxbench.spec import Arm, Project, available_arms, available_projects, render  # noqa: E402
 from fluxbench.verify import verify_project  # noqa: E402
@@ -169,6 +169,174 @@ class TranscriptParsingTests(unittest.TestCase):
             metrics.SessionMetrics())
         self.assertEqual(m.subagent_requests, 1)
         self.assertEqual(m.context_percentile(50), 1000)
+
+
+class ContextDecayTests(unittest.TestCase):
+    """ADR 0001 makes a task-size budget conditional on quality decaying with
+    context. These guard the three ways the measurement lies if done naively --
+    each one of which flips the sign of the answer."""
+
+    def _write(self, entries):
+        tmp = Path(tempfile.mkdtemp(prefix="fluxbench-d-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        path = tmp / "sess.jsonl"
+        path.write_text("\n".join(json.dumps(e) for e in entries), encoding="utf-8")
+        return path
+
+    @staticmethod
+    def _assistant(blocks, context=0, model="claude-opus-5", sidechain=False):
+        return {"type": "assistant", "isSidechain": sidechain,
+                "message": {"model": model, "content": blocks,
+                            "usage": {"input_tokens": context, "output_tokens": 1,
+                                      "cache_read_input_tokens": 0,
+                                      "cache_creation_input_tokens": 0}}}
+
+    @staticmethod
+    def _use(tid, name, path=None, **inp):
+        if path:
+            inp["file_path"] = path
+        return {"type": "tool_use", "id": tid, "name": name, "input": inp}
+
+    @staticmethod
+    def _result(tid, text, is_error=False):
+        block = {"type": "tool_result", "tool_use_id": tid, "content": text}
+        if is_error:
+            block["is_error"] = True
+        return {"type": "user", "message": {"role": "user", "content": [block]}}
+
+    def _call(self, tool="Edit", path="/a.py", session="s", context=0, flag=False):
+        return decay.Call(session=session, model="claude-opus-5", tool=tool,
+                          path=path, context=context)
+
+    # -- classification: sandbox friction is not model error -----------------
+
+    def test_a_permission_refusal_is_never_a_memory_error(self):
+        """57% of raw tool errors in the operator's own transcripts are approval
+        prompts. Counted as model error they make context look beneficial, because
+        they cluster where the allowlist is still cold -- at the start of a session."""
+        for text in ("This command requires approval",
+                     "Claude requested permissions to read from /x",
+                     "The user doesn't want to proceed with this tool use.",
+                     "Write on /x was blocked by flux"):
+            self.assertEqual(decay.classify_error(text, "Bash"), "permission", text)
+
+    def test_a_stale_edit_or_a_wrong_path_is_a_memory_error(self):
+        self.assertEqual(
+            decay.classify_error("<tool_use_error>String to replace not found in file.", "Edit"),
+            "memory")
+        self.assertEqual(
+            decay.classify_error("<tool_use_error>File has not been read yet.", "Edit"),
+            "memory")
+        self.assertEqual(decay.classify_error("File does not exist.", "Read"), "memory")
+
+    def test_a_permission_refusal_naming_a_file_stays_a_permission_error(self):
+        """Order of the tests matters: the refusal text also matches nothing in
+        MEMORY today, but it names a path, and a laxer memory pattern would catch it."""
+        self.assertEqual(
+            decay.classify_error("Claude requested permissions to write to /a.py, "
+                                 "but the file does not exist", "Write"),
+            "permission")
+
+    def test_an_oversized_file_is_a_limit_not_a_mistake(self):
+        self.assertEqual(
+            decay.classify_error("File content (31097 tokens) exceeds maximum allowed tokens", "Read"),
+            "limit")
+
+    # -- rework: the window must not grow with the session -------------------
+
+    def test_rework_is_measured_in_a_fixed_window_not_since_session_start(self):
+        """'Has this file been touched before?' must rise with context whatever the
+        model does, because the touched set only grows. A file edited once at the
+        very start and returned to 20 edits later is not rework."""
+        calls = [self._call(path="/a.py", context=10)]
+        calls += [self._call(path="/f%d.py" % i, context=1000 * i) for i in range(1, 9)]
+        calls += [self._call(path="/a.py", context=99999)]
+        flags = decay.rework_flags(calls, decay.EDIT_TOOLS, k=5)
+        self.assertTrue(flags, "window of 5 should leave observations")
+        self.assertFalse(flags[-1][1], "a return after 8 other files is outside the window")
+
+    def test_rework_window_counts_calls_of_the_same_kind_only(self):
+        """An Edit revisited across a run of Bash calls is still rework. Windowing
+        over raw tool calls would hide it behind whatever else happened in between."""
+        calls = [self._call(path="/a.py")]
+        calls += [self._call(tool="Bash", path="") for _ in range(30)]
+        calls += [self._call(path="/b.py") for _ in range(4)]
+        calls += [self._call(path="/a.py")]
+        flags = decay.rework_flags(calls, decay.EDIT_TOOLS, k=5)
+        self.assertTrue(flags[-1][1])
+
+    def test_rework_never_crosses_sessions(self):
+        a = self._call(path="/a.py", session="s1")
+        b = [self._call(path="/f%d.py" % i, session="s2") for i in range(6)]
+        again = self._call(path="/a.py", session="s2")
+        flags = decay.rework_flags([a] + b + [again], decay.EDIT_TOOLS, k=5)
+        self.assertFalse(dict((id(c), f) for c, f in flags)[id(again)])
+
+    def test_subagent_calls_are_excluded(self):
+        """A subagent carries its own small context. Folding its calls into the
+        parent's context bins would credit high-context work to a low-context bucket."""
+        path = self._write([
+            self._assistant([self._use("t1", "Read", "/a.py")], context=500000),
+            self._assistant([self._use("t2", "Read", "/b.py")], context=1000, sidechain=True),
+        ])
+        calls = decay.scan_transcript(path)
+        self.assertEqual([c.sidechain for c in calls], [False, True])
+        self.assertEqual(len(decay.rework_flags(calls, decay.READ_TOOLS, k=1)), 0)
+
+    def test_scan_attaches_the_error_class_to_the_call_that_caused_it(self):
+        path = self._write([
+            self._assistant([self._use("t1", "Edit", "/a.py")], context=250000),
+            self._result("t1", "<tool_use_error>String to replace not found in file.", is_error=True),
+            self._assistant([self._use("t2", "Bash", command="ls")], context=250000),
+            self._result("t2", "This command requires approval", is_error=True),
+        ])
+        calls = decay.scan_transcript(path)
+        self.assertEqual([(c.tool, c.error_class) for c in calls],
+                         [("Edit", "memory"), ("Bash", "permission")])
+        self.assertEqual(calls[0].context, 250000)
+
+    # -- statistics ----------------------------------------------------------
+
+    def test_wilson_lower_bound_never_goes_negative(self):
+        """Every interesting count here is single digits over thousands of calls.
+        The normal approximation would report a negative rate."""
+        lo, hi = decay.wilson(1, 900)
+        self.assertGreater(lo, 0.0)
+        self.assertLess(hi, 0.02)
+        self.assertEqual(decay.wilson(0, 0), (0.0, 0.0))
+
+    def test_sign_test_drops_ties_and_is_two_sided(self):
+        worse, better, tied, p = decay.sign_test([1.0, 1.0, 1.0, -1.0, 0.0, 0.0])
+        self.assertEqual((worse, better, tied), (3, 1, 2))
+        self.assertAlmostEqual(p, 0.625, places=3)
+        self.assertEqual(decay.sign_test([0.0, 0.0])[3], 1.0)
+
+    def test_fisher_matches_a_hand_checked_table(self):
+        self.assertAlmostEqual(decay.fisher_exact(1, 9, 8, 2), 0.0055, places=3)
+        self.assertAlmostEqual(decay.fisher_exact(5, 5, 5, 5), 1.0, places=6)
+
+    def test_samples_needed_says_how_underpowered_an_inconclusive_result_is(self):
+        """A flat result on 1,300 observations is only evidence if the sample could
+        have shown the effect. It could not, and the report has to be able to say so."""
+        self.assertGreater(decay.samples_needed(0.0074, 0.0101), 10000)
+        self.assertLess(decay.samples_needed(0.12, 0.27), 200)
+
+    def test_paired_sessions_need_observations_on_both_sides(self):
+        rows = [(self._call(session="lopsided", context=c), False) for c in range(0, 10)]
+        rows += [(self._call(session="spanning", context=c * 25000), c > 4) for c in range(8)]
+        pairs = decay.paired_sessions(rows, cut=100000, minimum=3)
+        self.assertEqual([p.session for p in pairs], ["spanning"])
+        self.assertEqual((pairs[0].n_low, pairs[0].n_high), (4, 4))
+        self.assertEqual((pairs[0].k_low, pairs[0].k_high), (0, 3))
+
+    def test_report_names_the_permission_share_it_excluded(self):
+        path = self._write([
+            self._assistant([self._use("t1", "Bash", command="ls")], context=250000),
+            self._result("t1", "This command requires approval", is_error=True),
+        ])
+        text = decay.report(decay.scan_transcript(path))
+        self.assertIn("permission", text)
+        self.assertIn("not model error", text)
 
 
 class FairnessTests(unittest.TestCase):

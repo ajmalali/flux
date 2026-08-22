@@ -650,6 +650,17 @@ def cmd_state(args):
         if not pairs or len(pairs) % 2 != 0:
             print("usage: flux state set <key> <value> [<key> <value>...]", file=sys.stderr)
             return 2
+        bad = [pairs[i] for i in range(0, len(pairs), 2) if pairs[i].startswith("-")]
+        if bad:
+            # `state set` takes bare key/value pairs, so a leading dash is always a
+            # mistyped flag. Accepting it writes a key named "--phase" beside the real
+            # one, the write reports success, and prime keeps rendering the stale
+            # value -- silent corruption of the one file that carries a project
+            # across sessions. Refuse instead.
+            print("flux state: %s looks like a flag, not a key. Usage: "
+                  "flux state set <key> <value> [<key> <value>...]"
+                  % ", ".join(bad), file=sys.stderr)
+            return 2
         for i in range(0, len(pairs), 2):
             state[pairs[i]] = pairs[i + 1]
         state["updated"] = now_stamp()

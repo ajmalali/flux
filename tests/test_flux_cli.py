@@ -346,6 +346,24 @@ class TestState(FluxRepoCase):
     def test_odd_args_usage_error(self):
         self.assertEqual(run_flux(["state", "set", "phase"], self.repo).returncode, 2)
 
+    def test_a_flag_shaped_key_is_refused_not_written(self):
+        """`set` takes bare key/value pairs, so `--phase` is always a typo. Writing it
+        creates a second key beside the real one, reports success, and leaves prime
+        rendering the stale value — silent corruption of the file that carries the
+        project between sessions. Cost one session's state before this guard existed."""
+        run_flux(["state", "set", "phase", "real"], self.repo)
+        out = run_flux(["state", "set", "--phase", "typo"], self.repo)
+        self.assertEqual(out.returncode, 2)
+        self.assertIn("looks like a flag", out.stderr)
+        after = run_flux(["state", "get"], self.repo).stdout
+        self.assertIn("phase = real", after)
+        self.assertNotIn("--phase", after)
+
+    def test_a_flag_shaped_key_anywhere_in_the_pairs_refuses_the_whole_write(self):
+        out = run_flux(["state", "set", "phase", "P2", "--next", "n"], self.repo)
+        self.assertEqual(out.returncode, 2)
+        self.assertNotIn("P2", run_flux(["state", "get"], self.repo).stdout)
+
     def test_set_confirms_the_write_against_the_budget(self):
         # a silent write leaves no way to see how close the pack is to its cap
         out = run_flux(["state", "set", "phase", "P2"], self.repo)

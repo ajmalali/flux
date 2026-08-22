@@ -111,6 +111,12 @@ Ledger metric it must move: all of them. This is the instrument, not a feature.
 | Est. $ / completed phase | ~$45 | < $25 |
 | Quality guard (PR pass-rate, audit findings, tests) | — | no regression |
 
+> **Tool error rate is not a quality metric as currently computed** (found 2026-08-22,
+> `.flux/analysis/2026-08-22-context-decay.md`): 57% of the errors it counts are
+> permission prompts and blocks — the operator's allowlist warming up, not the model
+> being wrong — and they cluster at session start. Until `bench` classifies them
+> (`fluxbench.decay.classify_error` does), read this row as friction, not quality.
+
 ## The execution index (`flux task`) *(amendment, 2026-08-22 — not in the original blueprint)*
 
 Recorded in `.flux/adr/0001-execution-frontier.md`, which opens the v2 ADR line.
@@ -146,18 +152,28 @@ in the system, and the only one never moved into the CLI.
 
 **Ledger metrics.** Execution index → cold-start ramp (tokens and tool calls before a
 session's first `Edit`/`Write`); if the ramp does not shrink, the frontier was not
-where context went and it goes. Size budget → held-out acceptance pass rate as a
-function of context at execution; no decay knee ⇒ the premise is wrong and the budget
-goes. Size-conditional ceremony → $ and sessions per delivered task on small work;
+where context went and it goes. Size budget → **re-read rate above the threshold**
+(`./bench/run.py decay`); if sizing tasks under the budget does not lower it, the
+budget goes. *(Amended 2026-08-22 from "held-out acceptance pass rate as a function of
+context at execution" — see the Prerequisite below: the corpus cannot measure that.)* Size-conditional ceremony → $ and sessions per delivered task on small work;
 must converge to `flux-lite` there. Verified-done → rate of tasks marked done that fail
 their own `verify` on replay.
 
-**Prerequisite.** The size budget assumes quality decays as context grows. That is
-asserted in the targets table and in `/flux:plan`'s own wording and has never been
-measured here. Before building it, mine the existing transcripts (~83 in this repo,
-several hundred under `~/.flux-bench/runs`) for context-at-request against tool error
-rate, redundant re-reads and file churn. If no relationship appears, the budget is
-built on a guess.
+**Prerequisite — done 2026-08-22, and the premise did not survive.**
+`.flux/analysis/2026-08-22-context-decay.md`; 414 transcripts, 16,909 tool calls.
+**There is no knee.** Correctness (Edit failing on a stale string or an unread file)
+is flat within a model family across 75k → 300k+; the pooled 2.9x that looks
+significant is Simpson's paradox, since sonnet/haiku sessions never exceed 200k. What
+does rise is **re-orientation**: re-reading a file already among the last five read
+roughly triples across ~100k, holding within-session at every cut (sign-test p=0.09 at
+200k). Naive file churn rises only because the touched set grows, and 57% of raw tool
+errors are permission friction that clusters at session start — both proxies are
+unusable as originally specified. So a long context costs **re-reading, not
+correctness**, the budget **warns rather than refuses** (ADR 0001 rule 2, amended),
+and the threshold if one is set is ~100k. The correctness question is deferred to a
+designed run: detecting the observed difference needs ~14x the data this account has,
+so no amount of further mining answers it. **This targets table must not assert that
+quality decays with context until such a run exists.**
 
 **Consequence for `bench/`.** A pre-decomposed corpus tests decomposition machinery not
 at all — the flaw that left `meridian-003` unable to speak to any of this. The corpus

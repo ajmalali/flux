@@ -1,6 +1,6 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-22 (bench no longer reports permission friction as quality: errors split model/friction/other, plan.md targets row amended, 142 tests green. Next: `flux task`.)
+Updated: 2026-08-22 (ADR 0001's ledger metric measured before building: the frontier is 5.7% of the cold-start ramp and 75% of it is one repo that prime already fixes. `flux task` SUSPENDED, not built. beads declined. 150 tests green.)
 
 ## Current state
 
@@ -408,9 +408,54 @@ assert that quality decays with context.
       target following model-err and never friction, and both directions of the
       pre-split warning. 142 green. No plugin bump — `bench/` is not on the plugin
       surface.
-- [ ] **Next.** `flux task` — local execution index + topological `next`, per ADR 0001.
-      Ledger metric: cold-start ramp (tokens/tool-calls before a session's first
-      Edit/Write).
+- [x] **`flux task` — measured before building, and NOT BUILT. 2026-08-22.**
+      Prompted by the user asking whether to adopt `beads` (`bd`) as a backend instead
+      of building an index. Both answers turned out to be premature: ADR 0001's own
+      ledger metric had never been measured, so neither build was justified yet.
+      Shipped `bench/fluxbench/ramp.py` + `./bench/run.py ramp` + 8 tests (150 green).
+      Write-up: `.flux/analysis/2026-08-22-cold-start-ramp.md`. **ADR 0001 is now
+      Status: Accepted, then suspended** — its falsifier fired in advance.
+      175 real interactive sessions, 129 reaching an edit. The ramp is real: median
+      **21 tool calls / ~48k tokens of context growth** before the first Edit. But
+      **60% of it is reading source code**, which no index removes, and the frontier
+      an index replaces is **15% of calls / 31% of result tokens — a median of 3 calls
+      and 2,715 tokens, i.e. 5.7% of the ramp**. Worse for the ADR: **75% of all
+      frontier tokens are one repo**, kiosk, whose PAUL `STATE.md` (299 KB) and phase
+      plans are read whole at 48–60 KB. Median kiosk session 6 calls / 14,083 tokens;
+      median everywhere else 1 call / 1,098 tokens. **`flux prime` already replaces
+      that exact read** (299 KB → 2k pack, adopted in kiosk 2026-08-20), so the
+      expensive frontier is a solved PAUL-shaped problem and `flux task` was left
+      competing for the 2,715-token remainder.
+      **The one case left**: the index also stores *declared files per task*, which
+      could shrink the 60% code bucket — invisible to mining, since no session ever
+      had that information. If revived, revive on that, with **code-bucket ramp** as
+      the metric. The frontier justification is spent.
+      **Two defects found while measuring**, both recorded in the write-up: the first
+      classifier read only `file_path`, so every ramp call made through Bash (`cat`,
+      `sed -n`, `grep` — which a global instruction tells this account to prefer) fell
+      into "other", 69% of the ramp, understating frontier and code threefold; and
+      counting calls alone said the frontier was 15% of the ramp while counting result
+      tokens said 31%, so both are now reported. `decay.Call` gained `arg` (Bash
+      command / Grep pattern) and `result_chars` to support it.
+- [ ] **Next: the cheapest experiment that closes ADR 0001.** kiosk has had **zero
+      sessions since adopting flux on 2026-08-20** — the repo carrying 75% of the
+      frontier cost and the capability meant to remove it have never met. Run one real
+      kiosk work session on flux, then `./bench/run.py ramp`. If kiosk's 14,083
+      frontier tokens collapse toward 1,098, prime took the prize and the index stays
+      suspended. Costs one session that needed doing anyway.
+- [ ] **Decided 2026-08-22: do not adopt `beads` (`bd`).** Investigated at the user's
+      request; `bd` 1.2.2 is installed on this machine and used in no repo. It is not
+      a backend for flux, it is a peer: `bd prime`, `bd remember/recall`, `bd hooks`,
+      `bd setup` and its own `claude-plugin/` overlap flux's session-boundary
+      ownership, and only `bd ready` maps to what ADR 0001 asked for. Depending on it
+      breaks the binding "no dependencies, no install step, ever" (Go binary + Dolt,
+      per machine, per repo) and makes the falsifiability rule expensive — deleting
+      300 lines of Python is an afternoon, migrating off a Dolt database is not.
+      **Two things worth stealing regardless**: JSONL-in-git rather than a rewritten
+      TOML file (which is the answer to the open `.flux/state.toml` conflict problem in
+      kiosk's 49-branch repo), and computing `blocked` on read rather than storing it
+      (`bd recompute-blocked` exists because stored blocked-flags go stale after a
+      pull). Revisit only if the user relaxes the zero-install constraint.
 - [ ] Decide whether `bench/realworld/` runs at all, and in which shape — see the
       supersession note above. Cheapest useful version is a one-milestone pilot on
       three arms (vanilla, flux, flux-lite), ~6 sessions, to check the corpus has

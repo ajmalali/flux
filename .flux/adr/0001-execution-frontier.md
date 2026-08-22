@@ -1,7 +1,7 @@
 # ADR 0001: the execution frontier is a procedure, not a judgment
 
 Date: 2026-08-22
-Status: Accepted
+Status: Accepted, then **suspended 2026-08-22** — its own ledger metric was measured before implementation and does not support the frontier case. See *Ledger metric: measured* below. Nothing has been built.
 Line: opens the v2 ADR line (the v1 line was closed by `.flux/archive/v1/adr/0012-plugin-pivot.md`)
 
 ## Decision
@@ -106,12 +106,53 @@ The exclusion was correct for the old scope and is wrong for the new one.
 
 | capability | metric it must move | falsifier |
 |---|---|---|
-| execution index + `task next` | cold-start ramp — tokens and tool calls before the first `Edit`/`Write` of a session | ramp does not shrink ⇒ the frontier was not where context went; delete it |
+| execution index + `task next` | cold-start ramp — tokens and tool calls before the first `Edit`/`Write` of a session | ramp does not shrink ⇒ the frontier was not where context went; delete it — **fired, see below** |
 | task-size budget | re-read rate above the threshold (`./bench/run.py decay`) — *amended 2026-08-22 from "quality (held-out acceptance pass rate)", which the corpus cannot measure* | sizing tasks under the budget does not lower the re-read rate ⇒ drop the budget |
 | size-conditional ceremony | $ and sessions per delivered task on small work | does not converge to `flux-lite` on small tasks ⇒ ceremony still is not earning it |
 | verified-done | tasks marked done that fail their own `verify` when replayed | rate already ~0 ⇒ the bookkeeping is theatre |
 
 Two reporting cycles without movement deletes the capability, as with everything else.
+
+## Ledger metric: measured, 2026-08-22 — the frontier is not where the context goes
+
+Full method and figures: `.flux/analysis/2026-08-22-cold-start-ramp.md`. Re-runnable as
+`./bench/run.py ramp` (code in `bench/fluxbench/ramp.py`, 8 tests).
+
+175 real interactive sessions, 129 of which reach an edit. The ramp this ADR was
+written to attack is **21 tool calls and ~48,000 tokens of context growth** at the
+median — real, and large. It does not decompose the way this ADR assumed.
+
+- **60% of the ramp is reading source code.** No execution index removes that.
+- **The frontier — status, plans, queues, handoffs, `git log`, everything `task next`
+  replaces — is 15% of ramp calls and 31% of ramp result tokens.** Per session that is
+  a median of **3 calls and 2,715 tokens**, against 47,727 tokens of growth: **5.7%**.
+  That is the ceiling on a *perfect* index, not a target.
+- **75% of all frontier tokens in the corpus are one repo**: zaps/kiosk, whose PAUL
+  `STATE.md` (299 KB) and phase plans are read whole at 48–60 KB a time. Median kiosk
+  session: 6 frontier calls, 14,083 tokens. Median everywhere else: 1 call, 1,098
+  tokens.
+- **`flux prime` already replaces exactly that read** — a 299 KB state file against a
+  2,000-token pack — and was adopted in kiosk on 2026-08-20. The expensive frontier is
+  a PAUL-shaped problem that a shipped capability addresses. `flux task` would compete
+  for the 2,715 tokens left over.
+
+**So the falsifier in the table above fires, in advance of the build.** The frontier
+was not where the context went, so the execution index is **suspended, not
+implemented**. Rules 1–3 are suspended with it; nothing in this ADR has been built.
+
+**What is not falsified, and is the only case left.** This measurement bounds what an
+index could save by *removing frontier reads*. It cannot see the second mechanism this
+ADR describes: the index stores **declared files per task**, so a session that starts
+knowing which four files its task touches might read four instead of fifteen — an
+effect on the 60% bucket that no transcript can reveal, because no session in the
+corpus ever had that information. If this ADR is revived, it must be revived on that
+mechanism, with **code-bucket ramp** as its ledger metric. The frontier justification
+is spent and may not be re-used.
+
+**The cheap experiment that would close it.** kiosk has had **zero sessions since it
+adopted flux** — the repo carrying 75% of the frontier cost and the capability meant to
+remove it have never met. One real kiosk session on flux, then `./bench/run.py ramp`,
+decides whether prime already took the prize.
 
 ## Prerequisite: checked, 2026-08-22 — the premise did not survive
 

@@ -18,6 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fluxbench import decay as decay_mod  # noqa: E402
+from fluxbench import ramp as ramp_mod  # noqa: E402
 from fluxbench import report as report_mod  # noqa: E402
 from fluxbench.verify import verify_project  # noqa: E402
 from fluxbench.runner import DEFAULT_RUNS_DIR, RunConfig, Runner  # noqa: E402
@@ -129,6 +130,22 @@ def cmd_decay(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ramp(args: argparse.Namespace) -> int:
+    """Measure ADR 0001's ledger metric: the cold-start ramp, and what it is made of."""
+    dirs = args.dirs or ["~/.claude/projects"]
+    sessions = ramp_mod.scan_sessions(dirs, include_bench=args.all)
+    if not sessions:
+        print("no transcripts found under %s" % ", ".join(dirs), file=sys.stderr)
+        return 1
+    text = ramp_mod.report(sessions)
+    if args.out:
+        Path(args.out).expanduser().write_text(text, encoding="utf-8")
+        print("written to %s" % args.out)
+    else:
+        print(text)
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="fluxbench", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -161,6 +178,15 @@ def main(argv=None) -> int:
                      help="model family to report un-confounded (default: opus)")
     dec.add_argument("--out", default=None, help="write markdown here instead of stdout")
     dec.set_defaults(func=cmd_decay)
+
+    ram = sub.add_parser("ramp", help="cold-start ramp: what a session spends before its first edit")
+    ram.add_argument("--dirs", nargs="*", default=None,
+                     help="transcript roots (default: ~/.claude/projects)")
+    ram.add_argument("--all", action="store_true",
+                     help="include bench/scratchpad sessions, which are handed their "
+                          "task and have no frontier to derive")
+    ram.add_argument("--out", default=None, help="write markdown here instead of stdout")
+    ram.set_defaults(func=cmd_ramp)
 
     rep = sub.add_parser("report", help="re-render the report for a run")
     rep.add_argument("run", help="run id, run directory, or path to records.jsonl")

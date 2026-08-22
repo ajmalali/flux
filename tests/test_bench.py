@@ -19,7 +19,7 @@ REPO = Path(__file__).resolve().parents[1]
 BENCH = REPO / "bench"
 sys.path.insert(0, str(BENCH))
 
-from fluxbench import decay, driver, metrics, report  # noqa: E402
+from fluxbench import decay, driver, metrics, ramp, report  # noqa: E402
 from fluxbench.grade import ACCEPT_DIRNAME, grade  # noqa: E402
 from fluxbench.spec import Arm, Project, available_arms, available_projects, render  # noqa: E402
 from fluxbench.verify import verify_project  # noqa: E402
@@ -477,6 +477,104 @@ class ErrorClassificationTests(unittest.TestCase):
         self.assertEqual(summaries[0].unclassified_errors, 0)
         self.assertNotIn("Recorded before the split",
                          report.render_markdown(manifest, summaries))
+
+
+class ColdStartRampTests(unittest.TestCase):
+    """ADR 0001's ledger metric, and the two ways of counting it that disagree.
+
+    The first version of this classifier read only ``file_path``, so the ~3,000
+    ramp calls made through Bash (`cat`, `sed -n`, `grep` -- what a global
+    instruction tells this account to prefer) all fell into "other" and both the
+    frontier and code buckets were understated by a factor of three.
+    """
+
+    @staticmethod
+    def _call(tool, path="", arg="", context=0, chars=0):
+        return decay.Call(session="s", model="claude-opus-5", tool=tool, path=path,
+                          arg=arg, context=context, result_chars=chars)
+
+    def test_bash_reading_a_state_file_is_frontier_not_other(self):
+        cases = [
+            (self._call("Bash", arg="cd /r && cat .flux/plans/flux-v2/status.md"), "frontier"),
+            (self._call("Bash", arg="git log --oneline -8"), "frontier"),
+            (self._call("Bash", arg="sed -n '1,40p' .paul/STATE.md"), "frontier"),
+            (self._call("Bash", arg="grep -n 'def load' bin/flux"), "code"),
+            (self._call("Bash", arg="python3 -m unittest discover -s tests"), "other"),
+            (self._call("Bash", arg="mkdir -p /tmp/scratch"), "other"),
+            (self._call("Read", path="/r/.flux/plans/flux-v2/status.md"), "frontier"),
+            (self._call("Read", path="/r/ROADMAP.md"), "frontier"),
+            (self._call("Read", path="/r/CLAUDE.md"), "docs"),
+            (self._call("Read", path="/r/.flux/adr/0001-execution-frontier.md"), "frontier"),
+            (self._call("Read", path="/r/src/app/main.ts"), "code"),
+            (self._call("TodoWrite"), "other"),
+        ]
+        for call, expected in cases:
+            self.assertEqual(ramp.classify_ramp_call(call), expected,
+                             "%s %r" % (call.tool, call.path or call.arg))
+
+    def test_a_test_run_is_not_a_read_even_when_it_mentions_grep(self):
+        """A heredoc script can contain the word grep; the leading token decides."""
+        call = self._call("Bash", arg="python3 - <<'PY'\nimport re  # grep\nPY")
+        self.assertEqual(ramp.classify_ramp_call(call), "other")
+
+    def test_conventions_and_rationale_are_not_counted_for_the_index(self):
+        """CLAUDE.md and an ADR are orientation, but no execution index removes
+        them. Scoring them as frontier would manufacture the ADR's own result."""
+        for path in ("/r/CLAUDE.md", "/r/AGENTS.md", "/r/README.md", "/r/docs/design.md"):
+            self.assertEqual(ramp.classify_ramp_call(self._call("Read", path=path)),
+                             "docs", path)
+
+    def test_the_ramp_stops_at_the_first_edit(self):
+        calls = [
+            self._call("Read", path="/r/.flux/state.toml", context=100, chars=400),
+            self._call("Read", path="/r/src/a.ts", context=200, chars=800),
+            self._call("Edit", path="/r/src/a.ts", context=500),
+            self._call("Read", path="/r/src/b.ts", context=600, chars=4000),
+        ]
+        s = ramp.sessions_from_calls(calls, project="p", date="2026-08-01")
+        self.assertTrue(s.edited)
+        self.assertEqual(s.ramp_calls, 2, "the two calls before the edit, and no more")
+        self.assertEqual(s.ramp_kinds, {"frontier": 1, "code": 1})
+        self.assertEqual(s.frontier_calls, 1)
+        self.assertEqual(s.ramp_growth, 400, "500 at the edit minus 100 at the first call")
+
+    def test_a_session_that_never_edits_has_no_ramp(self):
+        """It was never approaching anything. Zero and full-length are both lies."""
+        s = ramp.sessions_from_calls([self._call("Read", path="/r/src/a.ts", chars=99)])
+        self.assertFalse(s.edited)
+        self.assertEqual(s.ramp_calls, 0)
+        self.assertEqual(s.ramp_kinds, {})
+        self.assertEqual(s.ramp_chars, {})
+
+    def test_calls_and_tokens_are_counted_separately(self):
+        """One 40 KB status read against ten cheap greps: a call count says the
+        frontier is 9% of the ramp, tokens say it is 80%. Reporting only calls
+        pointed the opposite way, so both are kept."""
+        calls = [self._call("Read", path="/r/status.md", chars=40000)]
+        calls += [self._call("Grep", arg="src/**", chars=1000) for _ in range(10)]
+        calls.append(self._call("Edit", path="/r/src/a.ts"))
+        s = ramp.sessions_from_calls(calls)
+        self.assertAlmostEqual(s.frontier_share, 1 / 11)
+        self.assertAlmostEqual(s.frontier_char_share, 40000 / 50000)
+
+    def test_bench_sessions_are_excluded_by_default(self):
+        """A `claude -p` arm is handed its task and has no frontier to derive."""
+        for project in ("-Users-ajmalali--flux-bench-runs-meridian-003-flux-repo",
+                        "-private-tmp-claude-501--Users-ajmalali-Dev-flux-x-scratchpad-wt"):
+            self.assertTrue(ramp.is_bench(project), project)
+        self.assertFalse(ramp.is_bench("-Users-ajmalali-Dev-zaps-kiosk"))
+
+    def test_report_names_the_ceiling_and_excludes_non_editing_sessions(self):
+        edited = ramp.sessions_from_calls(
+            [self._call("Read", path="/r/status.md", chars=8000),
+             self._call("Read", path="/r/src/a.ts", chars=2000),
+             self._call("Edit", path="/r/src/a.ts", context=1)], project="p", date="2026-08-01")
+        idle = ramp.sessions_from_calls([self._call("Read", path="/r/src/b.ts")],
+                                        project="p", date="2026-08-01")
+        text = ramp.report([edited, idle])
+        self.assertIn("1 sessions never edited", text)
+        self.assertIn("ceiling on what `flux task` can save", text)
+        self.assertIn("frontier", text)
 
 
 class FairnessTests(unittest.TestCase):

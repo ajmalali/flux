@@ -115,6 +115,14 @@ class Call:
     context: int = 0        # input + cache read + cache write, i.e. what it had in front of it
     tool: str = ""
     path: str = ""
+    # The secondary input that says what the call was *about* when there is no
+    # file_path: a Bash command line, a Grep/Glob pattern. Unused by the decay
+    # figures; ``ramp`` needs it to tell "git log" apart from "pytest".
+    arg: str = ""
+    # Characters the tool result put back into context. Tokens ~= chars/4, and the
+    # ramp analysis needs it: 3 calls that read a 40 KB status file cost more than
+    # 20 greps, so a ramp counted in calls alone can point the opposite way.
+    result_chars: int = 0
     is_error: bool = False
     error_class: str = ""
 
@@ -178,6 +186,8 @@ def scan_transcript(path: Path) -> List[Call]:
                         session=session, model=model, sidechain=sidechain,
                         index=index, context=context, tool=str(block.get("name", "?")),
                         path=str(inp.get("file_path") or inp.get("notebook_path") or ""),
+                        arg=str(inp.get("command") or inp.get("pattern")
+                                or inp.get("query") or "")[:400],
                     )
                     calls.append(call)
                     pending[str(block.get("id", ""))] = call
@@ -186,10 +196,14 @@ def scan_transcript(path: Path) -> List[Call]:
                     if block.get("type") != "tool_result":
                         continue
                     call = pending.get(str(block.get("tool_use_id", "")))
-                    if call is None or not block.get("is_error"):
+                    if call is None:
+                        continue
+                    text = _result_text(block)
+                    call.result_chars = len(text)
+                    if not block.get("is_error"):
                         continue
                     call.is_error = True
-                    call.error_class = classify_error(_result_text(block), call.tool)
+                    call.error_class = classify_error(text, call.tool)
     return calls
 
 

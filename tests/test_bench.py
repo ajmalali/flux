@@ -548,3 +548,55 @@ class VoidTaskTests(unittest.TestCase):
         self.assertIn("| `vanilla` | a | 1/1 | 1/1 |", text,
                       "the shared task is the one honest comparison available")
         self.assertNotIn("Out-delivered", text)
+
+
+class StalledArmTests(unittest.TestCase):
+    """Every session ok, and the tree never moved. That is not a result either.
+
+    meridian-003 scored PAUL 1/4 this way. Its arm ended each phase with
+    `/paul:verify` ("guide manual user acceptance testing") instead of
+    `/paul:unify` ("close the loop"), so PAUL's state never closed a phase and
+    every later plan session hit its own precondition check, asked which way to
+    go, and ended -- four billed sessions and a zero-line diff, three times over.
+    The driver denies AskUserQuestion, so a headless arm that needs an answer
+    simply stops. The report cannot tell that apart from a framework that does
+    nothing, so it flags it instead of guessing.
+    """
+
+    @staticmethod
+    def _rows():
+        manifest = {"type": "manifest", "run_id": "t",
+                    "config": {"model": "sonnet", "max_usd": 10},
+                    "project": {"title": "p", "tasks": [{"id": "a"}, {"id": "b"}]},
+                    "arms": [{"name": "stalled"}]}
+        rows = [
+            {"type": "session", "arm": "stalled", "task": "a", "cost_usd": 1.0,
+             "tool_calls": {}, "requests": []},
+            {"type": "task", "arm": "stalled", "task": "a", "delivered": True,
+             "grade": {"accept_total": 4, "accept_passed": 4, "gate_ok": True,
+                       "files_changed": 9}},
+            {"type": "session", "arm": "stalled", "task": "b", "cost_usd": 0.8,
+             "tool_calls": {}, "requests": []},
+            {"type": "task", "arm": "stalled", "task": "b", "delivered": False,
+             "grade": {"accept_total": 4, "accept_passed": 0, "gate_ok": True,
+                       "files_changed": 0}},
+        ]
+        return manifest, rows
+
+    def test_an_empty_diff_on_an_undelivered_task_is_counted(self):
+        manifest, rows = self._rows()
+        arm = report.summarize(manifest, rows)[0]
+        self.assertEqual(arm.no_diff_tasks, 1)
+        self.assertEqual(arm.tasks, 2, "it is still a scored task, not a void one")
+
+    def test_a_delivered_task_is_never_counted_as_stalled(self):
+        manifest, rows = self._rows()
+        rows[1]["grade"]["files_changed"] = 0  # delivered without touching files
+        arm = report.summarize(manifest, rows)[0]
+        self.assertEqual(arm.no_diff_tasks, 1, "only the undelivered one counts")
+
+    def test_the_report_says_to_check_before_publishing(self):
+        manifest, rows = self._rows()
+        text = report.render_markdown(manifest, report.summarize(manifest, rows))
+        self.assertIn("Check before publishing", text)
+        self.assertIn("| stalled | 1 of 2 |", text)

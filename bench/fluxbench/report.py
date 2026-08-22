@@ -68,6 +68,7 @@ class ArmSummary:
     lines_added: int = 0
     void_tasks: int = 0
     void_reason: str = ""
+    no_diff_tasks: int = 0
     scored_tasks: List[str] = field(default_factory=list)
     delivered_tasks: List[str] = field(default_factory=list)
     contexts: List[int] = field(default_factory=list)
@@ -254,6 +255,8 @@ def summarize(manifest: Dict[str, Any], rows: List[Dict[str, Any]]) -> List[ArmS
             s.gate_failures += 0 if g.get("gate_ok", True) else 1
             s.files_changed += int(g.get("files_changed") or 0)
             s.lines_added += int(g.get("lines_added") or 0)
+            if not row.get("delivered") and int(g.get("files_changed") or 0) == 0:
+                s.no_diff_tasks += 1
 
     ordered = [summaries[n] for n in order if n in summaries]
     ordered += [s for n, s in sorted(summaries.items()) if n not in order]
@@ -335,6 +338,27 @@ def render_markdown(manifest: Dict[str, Any], summaries: List[ArmSummary]) -> st
             lines.append("| %s | %d | %d | %s |" % (s.arm, s.tasks, s.void_tasks,
                                                     s.void_reason or "not attempted"))
     lines.append("")
+
+    stalled = [s for s in summaries if s.no_diff_tasks]
+    if stalled:
+        # A task where every session succeeded and the tree did not move is the
+        # signature of an arm that stalled -- typically on a question it could not
+        # ask, because the driver denies AskUserQuestion. It may also be a
+        # framework that genuinely does nothing, and the harness cannot tell the
+        # two apart, so it says so rather than guessing. meridian-003 scored PAUL
+        # 1/4 this way: its arm ended each phase with `/paul:verify` instead of
+        # `/paul:unify`, so the loop never closed and later plan sessions refused
+        # to start.
+        lines.append("**Check before publishing.** These arms produced tasks where "
+                     "every session succeeded and the tree did not change — usually a "
+                     "misconfigured arm stalling on a question it cannot ask, not a "
+                     "framework that failed:")
+        lines.append("")
+        lines.append("| arm | undelivered tasks with an empty diff |")
+        lines.append("|---|---|")
+        for s in stalled:
+            lines.append("| %s | %d of %d |" % (s.arm, s.no_diff_tasks, s.tasks))
+        lines.append("")
 
     lines.append("## against plan.md targets")
     lines.append("")

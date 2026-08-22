@@ -33,6 +33,15 @@ prompt = """/paul:audit"""
 label = "apply"
 prompt = """/paul:apply The plan is approved. Execute it."""
 
+# PAUL's loop is plan -> audit -> apply -> UNIFY. `/paul:unify` is "reconcile plan
+# vs actual and close the loop"; `/paul:verify` is "guide manual user acceptance
+# testing" -- an interactive command, and the wrong one to end a headless phase
+# with. meridian-003 ran `verify` here and PAUL scored 1/4: it delivered m1, then
+# every later plan session hit its own precondition check ("the previous loop
+# isn't closed -- UNIFY has not run"), asked which way to go, and ended. Four
+# sessions of real cost and a zero-line diff, three times over. That is this
+# arm's bug, not PAUL's result. It also makes the arm a true mirror of flux's
+# plan -> audit -> apply -> wrap, which is the comparison the bench exists for.
 [[step]]
-label = "verify"
-prompt = """/paul:verify"""
+label = "unify"
+prompt = """/paul:unify"""

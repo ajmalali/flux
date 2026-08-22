@@ -189,7 +189,42 @@ again the run now waits it out, and anything it still cannot reach comes back as
 `void` rather than as an arm that failed to deliver — so a partial report is
 safe to read at face value.
 
-**Next session:** read the report and act on the verdict table. The question it
+**meridian-003 partial result (2026-08-21, run still in flight at checkpoint) —
+the ceremony is the cost, and it buys nothing on delivery:**
+
+| arm | delivered | total $ | sessions |
+|---|---|---|---|
+| vanilla | 4/4 | $4.20 | 4 |
+| flux (full lifecycle) | 4/4 | $11.68 | 16 |
+| flux-lite (prime + apply) | 4/4 | $4.19 | 4 |
+| paul (incumbent) | 1/3 so far | ~$6.5 | 12 |
+
+Two things this settles that meridian-002 could not:
+1. **meridian-002's "flux lost m3 on merit" does not reproduce.** flux scored
+   28/28 on m3 here against 20/28 there. That was run-to-run variance, not a
+   capability gap. Do not carry the old headline forward.
+2. **flux-lite delivers 4/4 at vanilla's cost to the cent** ($4.19 vs $4.20),
+   while the full plan→audit→apply→wrap lifecycle costs **2.8x** for identical
+   delivery. The answer to "machinery or ceremony" is *ceremony*.
+
+**Caveat that must be checked before this becomes a verdict:** delivery no longer
+discriminates — vanilla, flux and flux-lite are all 4/4 — so the corpus may be
+too easy to separate arms on that axis, and any remaining case for the full
+lifecycle has to live in the context/efficiency columns. Read them off the
+report, not off this table.
+
+**Open question left mid-investigation:** paul delivered m1 (plan 31 turns, apply
+44) then collapsed to 2-3 turn sessions with **zero diff** on m2 and m3. All
+sessions returned ok with real cost, so it is not a transport failure and the
+harness scored it correctly — but it is unproven whether PAUL genuinely does
+nothing when its `.paul/STATE.md` says the phase is complete, or whether the arm
+is misconfigured (its steps do pass the brief path to `/paul:plan`). **Do not
+publish a PAUL number until this is resolved** — an arm misconfigured into
+failure is the exact sin meridian-001 was killed for. Next step was reading
+`paul/m2/plan`'s transcript (path in `records.jsonl`).
+
+**Next session:** read `./bench/run.py report meridian-003`, resolve the PAUL
+question above, then act on the verdict table. The question it
 has to answer is the one meridian-002 could not: **flux vs flux-lite vs vanilla
 over the same four tasks** — whether the 2.6x cost is the machinery or the
 ceremony.

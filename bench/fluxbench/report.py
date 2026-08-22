@@ -34,7 +34,8 @@ COLUMNS = [
     ("median_context", "ctx p50", "tok", True, 80000),
     ("p90_context", "ctx p90", "tok", True, None),
     ("cache_write_share", "cache-write", "%", True, 0.15),
-    ("tool_error_rate", "tool err", "%", True, 0.015),
+    ("model_error_rate", "model err", "%", True, 0.015),
+    ("friction_rate", "friction", "%", True, None),
     ("redundant_reads_per_task", "re-reads", "n", True, 1.0),
     ("bash_chars_per_task", "bash out", "chars", True, 25000),
     ("wall_per_task", "wall/task", "s", True, None),
@@ -62,6 +63,7 @@ class ArmSummary:
     cache_creation_tokens: int = 0
     tool_calls: int = 0
     tool_errors: int = 0
+    tool_error_buckets: Dict[str, int] = field(default_factory=dict)
     redundant_reads: int = 0
     bash_output_chars: int = 0
     files_changed: int = 0
@@ -115,7 +117,34 @@ class ArmSummary:
 
     @property
     def tool_error_rate(self) -> float:
+        """Raw failed-tool-result rate. Not published: most of it is friction."""
         return self.tool_errors / self.tool_calls if self.tool_calls else 0.0
+
+    @property
+    def model_errors(self) -> int:
+        return self.tool_error_buckets.get("model", 0)
+
+    @property
+    def friction_errors(self) -> int:
+        return self.tool_error_buckets.get("friction", 0)
+
+    @property
+    def unclassified_errors(self) -> int:
+        """Errors recorded before the split existed, so neither column can see them.
+
+        Runs written by an older ``fluxbench`` carry a total and no buckets. Their
+        model and friction columns would read as zero, which is a stronger claim
+        than the data supports -- so the count is surfaced and the table says so.
+        """
+        return max(0, self.tool_errors - sum(self.tool_error_buckets.values()))
+
+    @property
+    def model_error_rate(self) -> float:
+        return self.model_errors / self.tool_calls if self.tool_calls else 0.0
+
+    @property
+    def friction_rate(self) -> float:
+        return self.friction_errors / self.tool_calls if self.tool_calls else 0.0
 
     @property
     def redundant_reads_per_task(self) -> float:
@@ -237,6 +266,8 @@ def summarize(manifest: Dict[str, Any], rows: List[Dict[str, Any]]) -> List[ArmS
             s.cache_creation_tokens += int(row.get("cache_creation_tokens") or 0)
             s.tool_calls += sum((row.get("tool_calls") or {}).values())
             s.tool_errors += int(row.get("tool_errors") or 0)
+            for bucket, n in (row.get("tool_error_buckets") or {}).items():
+                s.tool_error_buckets[bucket] = s.tool_error_buckets.get(bucket, 0) + int(n)
             s.redundant_reads += int(row.get("redundant_reads") or 0)
             s.bash_output_chars += int(row.get("bash_output_chars") or 0)
             s.contexts.extend(
@@ -326,6 +357,19 @@ def render_markdown(manifest: Dict[str, Any], summaries: List[ArmSummary]) -> st
     lines.append("")
     lines.append("Bold = best among arms that delivered at least one task. "
                  "Efficiency without delivery is not a win.")
+    lines.append("")
+    lines.append("`model err` counts only the failures that are evidence the model's "
+                 "picture of the code was wrong (a stale edit string, an unread file); "
+                 "`friction` counts approval prompts and blocks, which measure the "
+                 "operator's allowlist, not the arm. Failing commands — a test that "
+                 "exits 1 — are in neither.")
+    stale = [s for s in summaries if s.unclassified_errors]
+    if stale:
+        lines.append("")
+        lines.append("**Recorded before the split.** These arms carry tool errors with "
+                     "no classification, so both columns above understate them: "
+                     + ", ".join("%s (%d)" % (s.arm, s.unclassified_errors) for s in stale)
+                     + ". Re-run to classify.")
     voided = [s for s in summaries if s.void_tasks]
     if voided:
         lines.append("")
@@ -375,6 +419,12 @@ def render_markdown(manifest: Dict[str, Any], summaries: List[ArmSummary]) -> st
                 row.append("—")
                 continue
             value = s.value(key)
+            if key == "model_error_rate" and s.unclassified_errors:
+                # A tick here would be earned by missing data: the run predates the
+                # friction split, so every one of its errors is invisible to this
+                # column. Same failure as ticking an arm that never ran.
+                row.append("%s ?" % _fmt(key, value, unit))
+                continue
             mark = "✓" if value <= target else "✗"
             row.append("%s %s" % (_fmt(key, value, unit), mark))
         lines.append("| " + " | ".join(row) + " |")

@@ -105,17 +105,23 @@ Ledger metric it must move: all of them. This is the instrument, not a feature.
 | Median context / request | 148k tok | < 80k |
 | Cache-write share of spend | 29% | < 15% |
 | Sessions > 150 requests | 19 (62% of $) | 0 |
-| Tool error rate | 3.2% | < 1.5% |
+| Model error rate (stale edit / unread file) | — | < 1.5% |
 | Redundant re-reads / session | 3.4 | < 1 |
 | Bash output volume / session | ~74k chars | < 25k |
 | Est. $ / completed phase | ~$45 | < $25 |
 | Quality guard (PR pass-rate, audit findings, tests) | — | no regression |
 
-> **Tool error rate is not a quality metric as currently computed** (found 2026-08-22,
-> `.flux/analysis/2026-08-22-context-decay.md`): 57% of the errors it counts are
+> **The tool-error row used to be friction, not quality** (found 2026-08-22,
+> `.flux/analysis/2026-08-22-context-decay.md`): 57% of the errors it counted were
 > permission prompts and blocks — the operator's allowlist warming up, not the model
-> being wrong — and they cluster at session start. Until `bench` classifies them
-> (`fluxbench.decay.classify_error` does), read this row as friction, not quality.
+> being wrong — and they cluster at session start. `bench` now classifies every failed
+> tool result (`fluxbench.decay.classify_error` → `error_bucket`) and reports two
+> columns: **model err**, the failures that are evidence the model's picture of the
+> code was wrong (a stale edit string, an unread file), which is the row above and
+> carries the target; and **friction**, approval prompts and blocks, which is reported
+> without a target because it measures the operator, not the arm. Failing commands (a
+> test exiting 1) are in neither. The 3.2% baseline was the old pooled number and is
+> withdrawn — the first classified run sets the new one.
 
 ## The execution index (`flux task`) *(amendment, 2026-08-22 — not in the original blueprint)*
 

@@ -1,6 +1,6 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-22 (ADR 0001's prerequisite measured: no decay knee — correctness is flat, re-orientation steps at ~100k. Rule 2 amended refuses→warns before any code. `./bench/run.py decay` shipped; `flux state set` flag-key defect fixed; 134 tests green, plugin 2.4.0)
+Updated: 2026-08-22 (bench no longer reports permission friction as quality: errors split model/friction/other, plan.md targets row amended, 142 tests green. Next: `flux task`.)
 
 ## Current state
 
@@ -382,14 +382,33 @@ assert that quality decays with context.
       there is no knee, and ADR 0001 rule 2 was amended before any code.** Findings:
       `.flux/analysis/2026-08-22-context-decay.md`. Re-runnable: `./bench/run.py decay`
       (`bench/fluxbench/decay.py`, 15 tests). See the section below.
-- [ ] **`bench` reports permission friction as a quality column.** `metrics.tool_error_rate`
-      feeds the run table and the plan.md targets row, and 57% of what it counts is
-      approval prompts and blocks — which differ between arms mostly by how their
-      commands trip the operator's allowlist, and which cluster at session start.
-      Fix: classify with `fluxbench.decay.classify_error` and split the column into
-      model-error vs friction in `report.py`. Guard it with a test. Cheap, and every
-      published number depends on it.
-- [ ] **Then** `flux task` — local execution index + topological `next`, per ADR 0001.
+- [x] **`bench` reported permission friction as a quality column. Fixed 2026-08-22.**
+      Every failed tool result is now classified at collection time
+      (`decay.classify_error` → new `decay.error_bucket`) into three buckets, stored
+      per session as `tool_error_buckets` beside the unchanged raw `tool_errors`:
+      **model** (`memory` — a stale edit string, an unread file: the only class that is
+      evidence about the model's picture of the code), **friction** (`permission` —
+      approval prompts and blocks, the operator's allowlist), **other** (everything
+      else: a test exiting 1, a missing binary, an oversized output — the work itself,
+      and never quality either way). `report.py`'s single `tool err` column is replaced
+      by `model err` (carries the < 1.5% plan.md target) and `friction` (reported, never
+      targeted — it measures the operator, not the arm), with a paragraph under the
+      table saying which is which. plan.md's targets row and footnote amended to match;
+      the 3.2% baseline is **withdrawn** as the old pooled number.
+      **Two honesty guards, because old runs have totals and no buckets:** the table
+      names the arms whose errors predate the split and by how many, and the targets
+      table renders their model-err cell `0.0% ?` rather than `✓` — a tick there would
+      be earned by missing data, the same defect as ticking an arm that never ran.
+      Verified live on `meridian-003`: flux (7), flux-lite (1), paul (10) unclassified,
+      all three now `?`; vanilla's genuine 0 still ticks. **Eight tests** guard it
+      (`ErrorClassificationTests`): the bucket mapping, the three-way split of one
+      session, a permission refusal on an *Edit* landing in friction rather than memory
+      (classification order), an arm whose only errors are approval prompts winning the
+      quality column, `COLUMNS` publishing the split keys and never the raw rate, the
+      target following model-err and never friction, and both directions of the
+      pre-split warning. 142 green. No plugin bump — `bench/` is not on the plugin
+      surface.
+- [ ] **Next.** `flux task` — local execution index + topological `next`, per ADR 0001.
       Ledger metric: cold-start ramp (tokens/tool-calls before a session's first
       Edit/Write).
 - [ ] Decide whether `bench/realworld/` runs at all, and in which shape — see the

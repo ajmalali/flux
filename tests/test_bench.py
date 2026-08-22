@@ -339,6 +339,146 @@ class ContextDecayTests(unittest.TestCase):
         self.assertIn("not model error", text)
 
 
+class ErrorClassificationTests(unittest.TestCase):
+    """A failed tool result is three different things, and only one is quality.
+
+    Before this split the bench summed them into one ``tool err`` column that fed
+    the plan.md targets row, and 57% of what it counted on this account was the
+    operator's allowlist warming up (`.flux/analysis/2026-08-22-context-decay.md`).
+    An arm was therefore punished for tripping permission prompts and credited for
+    running commands that never needed approval.
+    """
+
+    def _transcript(self, results):
+        """``results`` is a list of (tool, error_text) -- each one call that failed."""
+        entries = []
+        for i, (tool, text) in enumerate(results):
+            tid = "t%d" % i
+            entries.append({"type": "assistant", "isSidechain": False, "message": {
+                "model": "m", "content": [{"type": "tool_use", "id": tid, "name": tool,
+                                           "input": {}}],
+                "usage": {"input_tokens": 1, "output_tokens": 1,
+                          "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}}})
+            entries.append({"type": "user", "message": {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": tid, "content": text,
+                 "is_error": True}]}})
+        tmp = Path(tempfile.mkdtemp(prefix="fluxbench-e-"))
+        self.addCleanup(shutil.rmtree, tmp, True)
+        path = tmp / "t.jsonl"
+        path.write_text("\n".join(json.dumps(e) for e in entries), encoding="utf-8")
+        return path
+
+    def test_bucketing_follows_classification(self):
+        self.assertEqual(decay.error_bucket("memory"), "model")
+        self.assertEqual(decay.error_bucket("permission"), "friction")
+        for cls in ("limit", "notfound", "exit", "other", "unknown"):
+            self.assertEqual(decay.error_bucket(cls), "other",
+                             "%s is neither the model being wrong nor the sandbox "
+                             "saying no; counting it as either overstates one" % cls)
+
+    def test_a_session_splits_its_errors_three_ways(self):
+        path = self._transcript([
+            ("Bash", "Claude requested permissions to use Bash, but the user "
+                     "hasn't granted it yet."),
+            ("Edit", "String to replace not found in file."),
+            ("Bash", "Exit code 1\n2 tests failed"),
+        ])
+        m = metrics.parse_transcript(path, metrics.SessionMetrics())
+        self.assertEqual(m.tool_errors, 3, "the raw total is unchanged")
+        self.assertEqual(m.tool_error_buckets,
+                         {"friction": 1, "model": 1, "other": 1})
+        self.assertEqual(m.model_errors, 1)
+        self.assertEqual(m.friction_errors, 1)
+        self.assertAlmostEqual(m.model_error_rate, 1 / 3)
+        self.assertAlmostEqual(m.friction_rate, 1 / 3)
+        payload = m.to_json()
+        self.assertIn("tool_error_buckets", payload)
+        self.assertAlmostEqual(payload["model_error_rate"], 0.3333, places=3)
+
+    def test_permission_denials_are_classified_even_on_an_edit(self):
+        """A refusal on an Edit also names the file, so classification order
+        decides whether it lands in friction or in the memory bucket."""
+        path = self._transcript([
+            ("Edit", "Claude requested permissions to write to /a.py, but the user "
+                     "hasn't granted it yet."),
+        ])
+        m = metrics.parse_transcript(path, metrics.SessionMetrics())
+        self.assertEqual(m.model_errors, 0)
+        self.assertEqual(m.friction_errors, 1)
+
+    def _report_rows(self, buckets_by_arm, errors_by_arm):
+        manifest = {"run_id": "t", "config": {},
+                    "project": {"title": "p", "tasks": [{"id": "a"}]},
+                    "arms": [{"name": n} for n in sorted(buckets_by_arm)]}
+        rows = []
+        for arm in sorted(buckets_by_arm):
+            session = {"type": "session", "arm": arm, "task": "a", "cost_usd": 1.0,
+                       "wall_ms": 10, "input_tokens": 1, "output_tokens": 1,
+                       "cache_read_tokens": 1, "cache_creation_tokens": 1,
+                       "tool_calls": {"Bash": 100},
+                       "tool_errors": errors_by_arm[arm],
+                       "requests": [{"input_tokens": 10, "cache_read_tokens": 0,
+                                     "cache_creation_tokens": 0, "sidechain": False}]}
+            if buckets_by_arm[arm] is not None:
+                session["tool_error_buckets"] = buckets_by_arm[arm]
+            rows.append(session)
+            rows.append({"type": "task", "arm": arm, "task": "a", "delivered": True,
+                         "grade": {"accept_total": 1, "accept_passed": 1, "gate_ok": True}})
+        return manifest, rows
+
+    def test_an_arm_is_not_punished_for_tripping_the_allowlist(self):
+        manifest, rows = self._report_rows(
+            {"blocked": {"friction": 10}, "wrong": {"model": 5}},
+            {"blocked": 10, "wrong": 5})
+        by_arm = {s.arm: s for s in report.summarize(manifest, rows)}
+        self.assertAlmostEqual(by_arm["blocked"].model_error_rate, 0.0)
+        self.assertAlmostEqual(by_arm["blocked"].friction_rate, 0.10)
+        self.assertAlmostEqual(by_arm["wrong"].model_error_rate, 0.05)
+        winners = report._winners(list(by_arm.values()))
+        self.assertEqual(winners["model_error_rate"], "blocked",
+                         "the arm whose only errors were approval prompts has the "
+                         "clean quality column")
+
+    def test_the_published_columns_are_the_split_ones(self):
+        keys = [k for k, _h, _u, _l, _t in report.COLUMNS]
+        self.assertIn("model_error_rate", keys)
+        self.assertIn("friction_rate", keys)
+        self.assertNotIn("tool_error_rate", keys,
+                         "the raw rate is 57% friction; publishing it as quality is "
+                         "the defect this split exists to remove")
+        targeted = {k: t for k, _h, _u, _l, t in report.COLUMNS if t is not None}
+        self.assertIn("model_error_rate", targeted,
+                      "the plan.md targets row must follow the quality half")
+        self.assertNotIn("friction_rate", targeted,
+                         "friction is the operator's allowlist, not a target the arm "
+                         "can be held to")
+
+    def test_a_run_recorded_before_the_split_says_so_instead_of_reading_zero(self):
+        manifest, rows = self._report_rows({"old": None}, {"old": 7})
+        summaries = report.summarize(manifest, rows)
+        self.assertEqual(summaries[0].unclassified_errors, 7)
+        text = report.render_markdown(manifest, summaries)
+        self.assertIn("Recorded before the split", text)
+        self.assertIn("old (7)", text)
+
+    def test_an_unclassified_run_does_not_tick_the_quality_target(self):
+        manifest, rows = self._report_rows({"old": None}, {"old": 7})
+        text = report.render_markdown(manifest, report.summarize(manifest, rows))
+        target_row = [l for l in text.splitlines() if l.startswith("| model err |")]
+        self.assertEqual(len(target_row), 1)
+        self.assertIn("0.0% ?", target_row[0],
+                      "a tick would be earned by missing data, not by being right")
+        self.assertNotIn("✓", target_row[0])
+
+    def test_a_classified_run_carries_no_such_warning(self):
+        manifest, rows = self._report_rows({"new": {"model": 1, "friction": 2, "other": 4}},
+                                           {"new": 7})
+        summaries = report.summarize(manifest, rows)
+        self.assertEqual(summaries[0].unclassified_errors, 0)
+        self.assertNotIn("Recorded before the split",
+                         report.render_markdown(manifest, summaries))
+
+
 class FairnessTests(unittest.TestCase):
     """The driver, not the arm, owns everything that could hand someone an edge."""
 

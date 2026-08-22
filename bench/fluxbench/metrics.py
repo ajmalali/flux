@@ -22,6 +22,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+from .decay import classify_error, error_bucket
+
 # Relative token prices, identical in shape across the Claude family: output is
 # 5x input, a cache write 1.25x, a cache read 0.1x. Absolute dollars come from
 # the result envelope; these weights exist only to answer "what share of the
@@ -85,6 +87,10 @@ class SessionMetrics:
     requests: List[Request] = field(default_factory=list)
     tool_calls: Dict[str, int] = field(default_factory=dict)
     tool_errors: int = 0
+    # Raw tool errors split by what they are evidence about -- see decay.error_bucket.
+    # ``tool_errors`` stays the raw total so nothing that already reads it changes
+    # meaning; the buckets are what the report is allowed to call quality.
+    tool_error_buckets: Dict[str, int] = field(default_factory=dict)
     redundant_reads: int = 0
     bash_output_chars: int = 0
     tool_result_chars: int = 0
@@ -98,7 +104,32 @@ class SessionMetrics:
 
     @property
     def tool_error_rate(self) -> float:
+        """Every failed tool result over every tool call.
+
+        Kept for continuity, but it is **not** a quality number: 57% of what it
+        counts on this account is permission friction, which clusters at session
+        start and measures the operator's allowlist rather than the model. Report
+        :attr:`model_error_rate` and :attr:`friction_rate` instead.
+        """
         return self.tool_errors / self.total_tool_calls if self.total_tool_calls else 0.0
+
+    @property
+    def model_errors(self) -> int:
+        """Errors that are evidence the model's picture of the code was wrong."""
+        return self.tool_error_buckets.get("model", 0)
+
+    @property
+    def friction_errors(self) -> int:
+        """Errors that are the sandbox saying no -- approval prompts, blocks."""
+        return self.tool_error_buckets.get("friction", 0)
+
+    @property
+    def model_error_rate(self) -> float:
+        return self.model_errors / self.total_tool_calls if self.total_tool_calls else 0.0
+
+    @property
+    def friction_rate(self) -> float:
+        return self.friction_errors / self.total_tool_calls if self.total_tool_calls else 0.0
 
     @property
     def total_tokens(self) -> int:
@@ -138,6 +169,8 @@ class SessionMetrics:
         payload["p90_context"] = self.context_percentile(90)
         payload["cache_write_share"] = round(self.cache_write_share, 4)
         payload["tool_error_rate"] = round(self.tool_error_rate, 4)
+        payload["model_error_rate"] = round(self.model_error_rate, 4)
+        payload["friction_rate"] = round(self.friction_rate, 4)
         return payload
 
     @classmethod
@@ -286,11 +319,15 @@ def parse_transcript(path: Path, into: SessionMetrics) -> SessionMetrics:
                 for block in _blocks(entry):
                     if block.get("type") != "tool_result":
                         continue
+                    text = _result_text(block)
+                    tool = tool_names.get(str(block.get("tool_use_id", "")), "")
                     if block.get("is_error"):
                         into.tool_errors += 1
-                    text = _result_text(block)
+                        bucket = error_bucket(classify_error(text, tool))
+                        into.tool_error_buckets[bucket] = (
+                            into.tool_error_buckets.get(bucket, 0) + 1)
                     into.tool_result_chars += len(text)
-                    if tool_names.get(str(block.get("tool_use_id", ""))) == "Bash":
+                    if tool == "Bash":
                         into.bash_output_chars += len(text)
 
     into.redundant_reads = sum(n - 1 for n in read_paths.values() if n > 1)

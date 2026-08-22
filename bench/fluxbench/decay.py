@@ -78,6 +78,25 @@ def classify_error(text: str, tool: str = "") -> str:
     return "other"
 
 
+# Which classes are evidence about the *model*, and which about the sandbox it
+# was run in. Only ``memory`` is about the model's picture of the code being
+# wrong; only ``permission`` is the operator's allowlist warming up. Everything
+# else -- a test that exited 1, a missing binary, an oversized output -- is the
+# work itself, and counting it as either would republish the mistake this
+# module was written to catch.
+MODEL_ERROR_CLASSES = ("memory",)
+FRICTION_CLASSES = ("permission",)
+
+
+def error_bucket(error_class: str) -> str:
+    """``model``, ``friction`` or ``other`` for a class from :func:`classify_error`."""
+    if error_class in MODEL_ERROR_CLASSES:
+        return "model"
+    if error_class in FRICTION_CLASSES:
+        return "friction"
+    return "other"
+
+
 def model_family(model: str) -> str:
     for fam in ("opus", "sonnet", "haiku", "fable"):
         if fam in model:

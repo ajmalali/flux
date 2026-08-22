@@ -111,6 +111,59 @@ Ledger metric it must move: all of them. This is the instrument, not a feature.
 | Est. $ / completed phase | ~$45 | < $25 |
 | Quality guard (PR pass-rate, audit findings, tests) | — | no regression |
 
+## The execution index (`flux task`) *(amendment, 2026-08-22 — not in the original blueprint)*
+
+Recorded in `.flux/adr/0001-execution-frontier.md`, which opens the v2 ADR line.
+
+The big-feature altitude above (wayfinder → to-spec → to-tickets → `/flux:plan` per
+ticket) is declared but has no spine. `/flux:plan` writes the *first* phase and says to
+split the rest into sequential plans — so the decomposition of everything after it
+lived in the planning session's context and died with it. What crosses the boundary is
+`state.toml`: five prose fields and a 2000-token budget, with no ledger of what is
+done, no edges, and no remainder. Every cold session therefore **re-derives the
+frontier by reading**, which is both where the context goes and the opposite of
+deterministic. `bin/flux` cannot read a single ticket file `to-tickets` writes.
+
+Principle 1 resolves it. *What the tasks are* is judgment and stays in the skills.
+*Which task is next* is a topological sort over a DAG — the most procedural operation
+in the system, and the only one never moved into the CLI.
+
+- **CLI surface**: `flux task add|start|done|block|next|list`, over a local store
+  under `.flux/`. The model calls verbs; it never hand-edits the file, exactly as with
+  `flux state set`. `flux task next` returns the next unblocked task deterministically.
+  `flux prime` surfaces the current task and counts — never the graph.
+- **Task size is refused, not advised.** `wayfinder` already sizes tickets to "one
+  100K token agent session" and nothing checks it; an unenforced budget is a comment.
+  `flux task add` estimates context from declared files plus fixed overhead and refuses
+  over `[task].budget_tokens` (principle 2).
+- **Ceremony scales with size.** A single small task runs apply-only; plan / audit /
+  wrap attach to phase and feature boundaries. This is the honest reading of
+  `meridian-003`, where `flux-lite` matched `flux` 4/4 at 2.8x less cost **on a corpus
+  whose every task fits one session** — the regime where decomposition machinery has
+  nothing to decompose and can only appear as overhead.
+- **Done is recorded, not asserted.** `flux task done` requires what verified it;
+  `/flux:wrap` reconciles claims against records.
+
+**Ledger metrics.** Execution index → cold-start ramp (tokens and tool calls before a
+session's first `Edit`/`Write`); if the ramp does not shrink, the frontier was not
+where context went and it goes. Size budget → held-out acceptance pass rate as a
+function of context at execution; no decay knee ⇒ the premise is wrong and the budget
+goes. Size-conditional ceremony → $ and sessions per delivered task on small work;
+must converge to `flux-lite` there. Verified-done → rate of tasks marked done that fail
+their own `verify` on replay.
+
+**Prerequisite.** The size budget assumes quality decays as context grows. That is
+asserted in the targets table and in `/flux:plan`'s own wording and has never been
+measured here. Before building it, mine the existing transcripts (~83 in this repo,
+several hundred under `~/.flux-bench/runs`) for context-at-request against tool error
+rate, redundant re-reads and file churn. If no relationship appears, the budget is
+built on a guess.
+
+**Consequence for `bench/`.** A pre-decomposed corpus tests decomposition machinery not
+at all — the flaw that left `meridian-003` unable to speak to any of this. The corpus
+must be handed over whole, each arm left to decompose it, and graded continuously so
+the result is a quality-per-context curve rather than a single cell.
+
 ## Phases
 
 - **00 — baseline & decks** *(user-side, outside this repo)*: freeze the Aug 19
@@ -129,5 +182,12 @@ Ledger metric it must move: all of them. This is the instrument, not a feature.
 
 ## Out of scope
 
-Observability (separate ledger CLI) · MCP server · ticket store · decision log ·
+Observability (separate ledger CLI) · MCP server · ticket store\* · decision log ·
 auto-commit/auto-fix · per-project plugin forks.
+
+\* **Qualified 2026-08-22 by ADR 0001.** What stays out is a *tracker*: an artifact
+humans plan against, synced to GitHub or Linear, curated by the model, holding
+discussion and history. What is now in is a local **execution index** — id, status,
+blocking edges, files, verification — that only the CLI and a cold session read, never
+synced, written through CLI verbs rather than edited. Tickets for people keep living in
+the tracker `to-tickets` and `wayfinder` publish to.

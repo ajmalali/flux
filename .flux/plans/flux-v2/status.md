@@ -1,6 +1,6 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-21 (meridian-002 read; a rate limit had been scoring as arm failure — fixed, 114 tests green)
+Updated: 2026-08-22 (meridian-003 read; the ceremony's loss is real but the corpus could not test its thesis — ADR 0001 written, 117 tests green)
 
 ## Current state
 
@@ -255,7 +255,81 @@ has to answer is the one meridian-002 could not: **flux vs flux-lite vs vanilla
 over the same four tasks** — whether the 2.6x cost is the machinery or the
 ceremony.
 
+## meridian-003 and the regime problem — 2026-08-22
+
+**The run.** `flux` 4/4 at $2.92/task over 4 sessions · `flux-lite` 4/4 at $1.05 in 1 ·
+`vanilla` 4/4 at $1.05 in 1 · `paul` 1/4 · `speckit`/`agentos` void (429, never
+attempted). `flux` lost every efficiency column to `flux-lite` and won only ctx p50.
+Read at face value the falsifiability rule deletes the four-session lifecycle.
+
+**Why that reading is incomplete — and why this is not a rescue.** Every arm that ran
+scored **82/82 acceptance tests**. A corpus on which everyone is perfect cannot
+discriminate on quality; it can only rank cost, and on cost ceremony always loses.
+Every meridian task also fits comfortably inside one session — the regime where
+decomposition machinery has nothing to decompose and can only appear as overhead. The
+benchmark measured the regime flux's thesis is inert in and correctly reported flux
+cost more there. It has never measured the regime flux exists for.
+
+This is exactly what someone would say to save a feature the evidence killed, so ADR
+0001 pins four falsifiers with explicit delete conditions instead of leaving it
+unfalsifiable.
+
+**The structural finding (independent of the above).** `plan.md` declares the
+big-feature altitude — wayfinder → to-spec → to-tickets → `/flux:plan` per ticket —
+and it has no spine:
+
+- `/flux:plan` writes the **first** phase and says split the rest into sequential
+  plans; the decomposition of everything after it lived in the planning session's
+  context and died with it.
+- `state.toml` carries five prose fields under a 2000-token cap — no ledger of done,
+  no edges, no remainder. A sentence cannot express thirty tasks and their order.
+- `bin/flux` **cannot read a single ticket file** `to-tickets` writes.
+
+So every cold session re-derives the frontier by reading. That is where the context
+goes, and it is the opposite of deterministic. Choosing *what* the tasks are is
+judgment and belongs to skills; choosing *which is next* is a topological sort — the
+most procedural operation in the system, and the only one never moved into the CLI.
+
+**Written this session (design only — nothing built):**
+
+- `.flux/adr/0001-execution-frontier.md` — opens the v2 ADR line. Local execution
+  index + `flux task add|start|done|block|next|list`; task size **refused** not advised;
+  ceremony scales with size (small task ⇒ apply-only, converging on `flux-lite` where
+  it wins); done recorded, not asserted. Four ledger metrics with delete conditions.
+- `.flux/plans/flux-v2/plan.md` — amendment before Phases; "ticket store" in Out of
+  scope **qualified, not deleted** (tracker still out; local execution index in).
+- `bench/realworld/` — design + 30-metric spec for a human-driven, five-arm run
+  (`DESIGN.md`), and a corpus (`corpus/plan.md`, `corpus/AMENDMENT-M3.md`) for a
+  full-stack app. **Superseded in shape by the finding above**: that corpus
+  pre-decomposes the work into four milestones, which hands every arm the
+  decomposition for free and tests decomposition machinery not at all. If it is used,
+  the plan must be handed over whole, each arm left to decompose it, and grading run
+  continuously so the output is a quality-per-context curve rather than one cell.
+
+**The prerequisite, and it is binding.** The size budget assumes quality decays as
+context grows. That is asserted in the targets table and in `/flux:plan`'s own wording
+and has **never been measured on this account's data**. Before building it, mine the
+existing transcripts (~83 in this repo, several hundred under `~/.flux-bench/runs`)
+for context-at-request against tool error rate, redundant re-reads and file churn.
+Proxies, not quality — but if no relationship appears there, the budget is a guess and
+ADR 0001's second rule is reconsidered before any code is written.
+
 ## Task queue
+
+- [ ] **Mine transcripts for the context/quality decay knee.** Prerequisite to ADR
+      0001's size budget. Inputs: `~/.claude/projects/*/*.jsonl` (~83 here) and
+      `~/.flux-bench/runs/*`. Plot context-at-request vs tool error rate, redundant
+      re-reads, file churn. Reuse `bench/fluxbench/metrics.py` — it already parses
+      every field needed. Output: a knee (or its absence) and the number
+      `[task].budget_tokens` should enforce. **No knee ⇒ rethink ADR 0001 rule 2
+      before writing code.**
+- [ ] **Then** `flux task` — local execution index + topological `next`, per ADR 0001.
+      Ledger metric: cold-start ramp (tokens/tool-calls before a session's first
+      Edit/Write).
+- [ ] Decide whether `bench/realworld/` runs at all, and in which shape — see the
+      supersession note above. Cheapest useful version is a one-milestone pilot on
+      three arms (vanilla, flux, flux-lite), ~6 sessions, to check the corpus has
+      teeth and the analyser works before committing 25–50 operator hours.
 
 - [x] Install the plugin from this repo (`/plugin marketplace add ~/Dev/flux`),
       restart, confirm SessionStart prime fires here and fast-no-ops in a non-flux

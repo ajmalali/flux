@@ -19,3 +19,14 @@ title = "Recurring weekly bookings"
 [[task]]
 id = "m4"
 title = "Fix the utilisation report and break it down by space"
+
+# m5 is not a feature request; it is the discriminator. m1-m4 are well-specified
+# work that every arm delivered at 100% acceptance in meridian-003, which means
+# that run could not see a difference in quality even in principle. This one is
+# written so that the obvious single-pass implementation is wrong in ways the
+# repo's own gate cannot catch: the ticket carries a false claim about the code,
+# the rule has to land in two places that already disagree with each other, and
+# the expiry boundary is stated but easy to read past.
+[[task]]
+id = "m5"
+title = "Holds: a slot reserved for fifteen minutes before it is paid for"

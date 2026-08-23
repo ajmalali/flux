@@ -46,6 +46,24 @@ transcripts.
   (execute; delegate exploration; verify via `flux check` only), `/flux:wrap`
   (reconcile plan vs actual, state set, handoff, PR — one exit ceremony),
   `/flux:resume` (thin: read the primed pack, state next action, go).
+
+  **Amendment, 2026-08-22 — the default path is `prime → apply → check`, one
+  session.** Principle 5 fired on the four-session lifecycle: two reporting cycles,
+  no movement. meridian-003 (4 tasks) and meridian-004 (m5, written specifically so
+  a single pass would get it wrong) both ended with every arm delivering identical
+  results, the lifecycle costing 2.8x and 2.9x, and its audit correctly catching a
+  planted false claim that changed no outcome. `/flux:plan`, `/flux:audit` and
+  `/flux:wrap` are **not deleted and not deprecated** — they become deliberate, for
+  work that spans sessions, takes an irreversible step, or is still being argued
+  about. `/flux:apply` no longer requires a plan path; `/flux:resume` routes to
+  apply by default and to plan only on those three conditions.
+
+  Two things this amendment does not claim. The ceremony's only real-work datapoint
+  is positive (kiosk Phase 02's audit: three blocking findings on a plan that looked
+  fine), and the benchmark **cannot** represent that case — its fairness rule forces
+  complete briefs, and a complete brief is exactly where planning has nothing to
+  recover. Full argument and the one experiment still available:
+  `.flux/analysis/2026-08-22-ceremony-two-cycles.md`.
 - **Adoption skill** `/flux:adopt` *(amendment, 2026-08-20 — not in the original
   blueprint)*: migrate whatever project knowledge a repo already carries (PAUL,
   agent-os, a hand-kept STATE/ROADMAP, or just a CLAUDE.md) into `.flux/`, then

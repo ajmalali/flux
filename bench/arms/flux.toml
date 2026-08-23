@@ -1,15 +1,17 @@
 name = "flux"
-title = "flux v2 — full lifecycle (plan -> audit -> apply -> wrap)"
+title = "flux v2 — the default path (prime + apply, one session)"
 notes = """
-flux as its own plan.md prescribes it: the SessionStart hook primes each fresh
-session from .flux/state.toml, and the phase runs through the four lifecycle
-skills, each in its own session. The plugin is loaded from the working repo
-(--plugin-dir), not from the installed cache copy, so the benchmark always
-measures the flux that is checked out right now.
+What flux does by default as of 2026-08-22: the SessionStart hook primes the
+session from .flux/state.toml, one session applies the work, `flux check` closes
+it. Same plugin and same budgeted state as the full lifecycle, one session per
+task like vanilla.
 
-Four sessions per task against vanilla's one is the bet under test: that a
-primed, planned, audited, reconciled phase costs less context and fewer retries
-than one long session that has to rediscover the project every time.
+It was `flux-lite` until it won. Run as the control *within* flux, it separated
+two claims that are easy to conflate -- what the deterministic machinery is worth
+against what the four-session ceremony costs on top of it -- and it matched the
+full arm's delivery at a third of the price in both meridian-003 and
+meridian-004. plan.md's falsifiability rule made that the default; the ceremony
+survives as `flux-full`, invoked deliberately rather than by procedure.
 """
 plugin_dirs = ["${FLUX_REPO}"]
 
@@ -19,17 +21,9 @@ label = "flux-init"
 command = "python3 ${FLUX_REPO}/bin/flux init"
 
 [[step]]
-label = "plan"
-prompt = """/flux:plan Read {brief_path} in the repository root — that is the phase. Write the plan to .flux/plans/{task_id}.md"""
-
-[[step]]
-label = "audit"
-prompt = """/flux:audit .flux/plans/{task_id}.md"""
-
-[[step]]
 label = "apply"
-prompt = """/flux:apply .flux/plans/{task_id}.md — the plan is approved, execute it."""
+prompt = """Read {brief_path} in the repository root. Implement everything it asks for, completely.
 
-[[step]]
-label = "wrap"
-prompt = """/flux:wrap"""
+Iterate with `flux run --filter failures -- <scoped test command>`; close with `flux check`.
+Do not stop until `flux check` passes and the brief is fully satisfied.
+Then record what changed with `flux state set` so the next session starts from it."""

@@ -1,0 +1,43 @@
+name = "flux-full"
+title = "flux v2 — the full lifecycle (plan -> audit -> apply -> wrap), kept as the opt-in path"
+notes = """
+flux as its own plan.md prescribes it: the SessionStart hook primes each fresh
+session from .flux/state.toml, and the phase runs through the four lifecycle
+skills, each in its own session. The plugin is loaded from the working repo
+(--plugin-dir), not from the installed cache copy, so the benchmark always
+measures the flux that is checked out right now.
+
+Four sessions per task against vanilla's one was the bet, and it lost twice:
+meridian-003 (4 tasks, every arm 100% acceptance, this arm 2.8x the cost) and
+meridian-004 (m5, written to punish a single pass; every arm 27/27, 2.9x). As of
+2026-08-22 this is no longer flux's default path -- `flux` is prime + apply, and
+plan/audit/wrap are invoked deliberately for work that spans sessions, cannot be
+undone, or is still being argued about.
+
+It stays an arm because the case it claims -- an incomplete brief whose premises
+about the tree are wrong -- is one this corpus cannot represent (see
+.flux/analysis/2026-08-22-ceremony-two-cycles.md). If that experiment is ever
+built, this is what it runs against.
+"""
+plugin_dirs = ["${FLUX_REPO}"]
+
+[[bootstrap]]
+kind = "shell"
+label = "flux-init"
+command = "python3 ${FLUX_REPO}/bin/flux init"
+
+[[step]]
+label = "plan"
+prompt = """/flux:plan Read {brief_path} in the repository root — that is the phase. Write the plan to .flux/plans/{task_id}.md"""
+
+[[step]]
+label = "audit"
+prompt = """/flux:audit .flux/plans/{task_id}.md"""
+
+[[step]]
+label = "apply"
+prompt = """/flux:apply .flux/plans/{task_id}.md — the plan is approved, execute it."""
+
+[[step]]
+label = "wrap"
+prompt = """/flux:wrap"""

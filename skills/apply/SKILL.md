@@ -1,23 +1,35 @@
 ---
 name: apply
-description: Execute an approved phase plan task by task — execute, report status honestly, then qualify against the spec before moving on. Iterates with `flux run --filter failures`, concludes with `flux check`. Use after /flux:plan (and /flux:audit, if run).
+description: Execute the work — from the task as stated, or from a phase plan when one exists. Execute, report status honestly, then qualify against the spec before moving on. Iterates with `flux run --filter failures`, concludes with `flux check`. The default path after `flux prime`; /flux:plan first only when the work earns it.
 disable-model-invocation: true
 ---
 
 # flux apply
 
-Execute the plan. The plan is the spec; your memory of executing it is not evidence.
+Execute the work. Whatever specifies it — a phase plan, or the task as the user
+stated it — is the spec; your memory of executing it is not evidence.
 
-Start only on explicit approval and a plan path. "Looks good" is approval; silence
-isn't. Read the plan once, in full — its boundaries bind you as much as its tasks.
+**Most work arrives without a plan, and that is the normal path**: prime, apply,
+`flux check`. Reach for `/flux:plan` first only when the work earns it — it spans
+sessions, it takes a step that cannot be undone, or its shape is still being argued
+about. Measured twice on the benchmark, planning ahead of ordinary well-specified
+work cost roughly 3x and delivered the same result
+(`.flux/analysis/2026-08-22-ceremony-two-cycles.md`).
+
+Start on explicit approval. "Looks good" is approval; silence isn't. With a plan,
+that means an approved plan path, read once, in full — its boundaries bind you as
+much as its tasks. Without one, it means the task said back in one line, with the
+files you expect to touch, and the user not redirecting you.
 
 ## Per task: execute → report → qualify
 
 ### 1. Execute
 
-Do the task's `do`, to the files in its `files`. Respect `boundaries`. When a change
-you want to make falls outside them, stop and say so — do not make it "just this
-once"; untracked edits are what makes the next plan wrong.
+Do the task's `do`, to the files in its `files`. Respect `boundaries`. Working
+without a plan, the task is what the user asked for and the boundary is the files
+that answer it. Either way: when a change you want to make falls outside, stop and
+say so — do not make it "just this once"; untracked edits are what makes the next
+plan wrong, and unasked-for edits are what makes a review long.
 
 ### 2. Report a status, honestly
 
@@ -39,7 +51,8 @@ Your report of your own work is optimistic. Check the artifact, not the memory.
 1. **Re-read what you actually wrote.** Open the files. Not a diff from memory.
 2. **Run `verify` fresh.** Full command, full output, exit code. A remembered pass is
    not a pass.
-3. **Compare against both** the task's `do` and its linked AC, line by line.
+3. **Compare against both** the task's `do` and its linked AC, line by line —
+   or, with no plan, against the request as the user worded it.
 4. **Score it:** `PASS` — matches. `GAP` — something specified is missing. `DRIFT` —
    it does something other than what was specified.
 5. `GAP`/`DRIFT`: name what doesn't match, concretely. Fix. Re-qualify. Three
@@ -88,8 +101,8 @@ large file or a long log into your own context.
 
 Three different problems look identical at the moment of failure:
 
-- **Intent** — the plan built the wrong thing. Don't patch. Re-plan the phase; mark
-  the current plan superseded.
+- **Intent** — the wrong thing got built. Don't patch. Re-decide what the work is;
+  with a plan, mark it superseded and re-plan the phase.
 - **Spec** — the plan was right in aim, wrong or silent in detail. Fix the *plan*
   first — the AC or the task — then the code to match. Patching only the code leaves
   wrap reconciling against a lie.
@@ -103,4 +116,6 @@ turns into four fragile patches.
 Report: tasks completed of total; any non-`DONE` statuses and how they resolved; every
 deviation from the plan, however small; `flux check` verdict.
 
-Then `/flux:wrap`. Do not close the phase yourself — apply executes, wrap closes.
+Working from a plan, close with `/flux:wrap` — apply executes, wrap closes, and it
+is wrap that reconciles the plan against the tree. Working without one, there is no
+phase to close: record what moved with `flux state set` and stop.

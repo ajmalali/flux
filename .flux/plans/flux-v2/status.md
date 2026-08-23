@@ -721,8 +721,21 @@ assert that quality decays with context.
       body claim the branch contradicted). n=1, unblinded, same model as author.
       And flux's one consistent win in both cycles is **21% lower ctx p50**.
 
-      **Decision pending with the user:** trim to prime+apply with audit opt-in, or
-      keep paying 2.9x. Principle 5 says trim.
+      **Decided and executed 2026-08-22 (user's call): trim to prime+apply, with
+      plan/audit/wrap opt-in.** What changed:
+      - `skills/apply` no longer requires a plan path — the task as stated is a
+        valid spec, and the no-plan path is named as the normal one. It closes with
+        `flux state set` rather than `/flux:wrap` when there is no phase to close.
+      - `skills/resume`'s routing table leads with `/flux:apply`; `/flux:plan` is
+        reached only when work spans sessions, cannot be undone, or is unsettled.
+      - `skills/plan` opens by asking whether to plan at all, and routes to apply
+        when none of the three conditions holds.
+      - Bench arms swapped to match: **`flux` is now prime+apply** (what `flux-lite`
+        was) and the lifecycle survives as **`flux-full`**, kept because the case it
+        claims is one this corpus cannot represent.
+      - `plan.md` amended in place (not contradicted) with the reasoning and the two
+        things the amendment does not claim.
+      - Plugin **2.5.0** — skills changed, so the cache needs the bump to see them.
 - [ ] Phase 03 — generalize (zaps/api), retire PAUL/mattpocock installs, first
       ledger before/after. **PAUL's retirement is now evidence-backed**: 1/4
       delivered at 31% acceptance in meridian-003, the worst arm that reached a

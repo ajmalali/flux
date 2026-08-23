@@ -42,11 +42,16 @@ One. Not a menu, not three options with tradeoffs — the position determines th
 
 | Position | Action |
 |---|---|
-| No plan for the current phase | `/flux:plan` |
+| `next` names ordinary work, no plan in flight | `/flux:apply` — straight at it |
+| The work spans sessions, is irreversible, or its shape is unsettled | `/flux:plan` first |
 | Plan written, not executed | `/flux:apply <path>` (or `/flux:audit` first, if the plan says it's risky) |
 | Applied, not closed | `/flux:wrap` |
-| Phase closed | `/flux:plan` for the next one |
 | `open` names a blocker | Clear the blocker — it outranks the queue |
+
+Planning is the exception, not the entry point. A plan earns its session when
+something about the work is genuinely unsettled; for everything else it is a
+re-statement of what `next` already says, and the benchmark priced that at ~3x for
+the same delivery.
 
 Say the action in one line with its path, and go. If the user wants something else
 they'll redirect; asking first spends a turn to learn what a redirect would have told

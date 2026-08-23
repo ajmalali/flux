@@ -1,10 +1,17 @@
 ---
 name: plan
-description: Write a self-contained phase plan into .flux/plans/ — objective, acceptance criteria, 2-3 tasks, boundaries, verification, routing stamp. Use when starting a new phase of work.
+description: Write a self-contained phase plan into .flux/plans/ — objective, acceptance criteria, 2-3 tasks, boundaries, verification, routing stamp. Use for work that spans sessions, cannot be undone, or whose shape is still unsettled; ordinary work goes straight to /flux:apply.
 disable-model-invocation: true
 ---
 
 # flux plan
+
+**First, whether to plan at all.** A plan pays for itself when the work outlives the
+session, takes a step that cannot be undone, or is still being argued about. Ordinary
+well-specified work does not need one: measured twice on the benchmark, the
+plan→audit→apply→wrap path cost ~3x a single primed apply session and delivered
+identical results (`.flux/analysis/2026-08-22-ceremony-two-cycles.md`). If none of
+the three conditions holds, say so in one line and route to `/flux:apply`.
 
 Produce ONE file a cold session can execute without re-deriving anything. It is the
 contract `/flux:apply` executes and `/flux:wrap` reconciles against. Everything the

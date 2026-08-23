@@ -34,17 +34,22 @@ gains one — otherwise a "win" might only ever mean a bigger model.
 | arm | per-task procedure | what it is |
 |---|---|---|
 | `vanilla` | implement | the control: one session, the brief, the gate |
-| `flux` | plan → audit → apply → wrap | flux as plan.md prescribes it |
-| `flux-lite` | apply | flux's machinery without the ceremony — the control *within* flux |
+| `flux` | apply | flux as plan.md prescribes it: primed, one session, `flux check` |
+| `flux-full` | plan → audit → apply → wrap | the opt-in lifecycle, for work that earns it |
 | `paul` | plan → audit → apply → verify | the incumbent flux was distilled from |
 | `speckit` | specify → plan → tasks → implement | GitHub Spec Kit |
 | `agentos` | inject → implement | Agent OS v3's standards layer (see caveat) |
 
-`flux-lite` exists to keep flux honest against itself. It separates two claims
-that are easy to conflate: what the deterministic machinery (prime, budgeted
-state, filtered check) is worth, and what the four-session lifecycle costs on top
-of it. If `flux-lite` beats `flux`, plan.md's falsifiability rule says the
-ceremony goes.
+These two exist to keep flux honest against itself. They separate two claims that
+are easy to conflate: what the deterministic machinery (prime, budgeted state,
+filtered check) is worth, and what the four-session lifecycle costs on top of it.
+The rule was stated in advance — if the lean arm beats the full one, plan.md's
+falsifiability rule says the ceremony goes — and it did, twice: meridian-003
+(4 tasks, every arm at 100% acceptance, full lifecycle 2.8x the cost) and
+meridian-004 (m5, written specifically to punish a single pass; every arm 27/27,
+2.9x). So the names swapped on 2026-08-22: `flux` is the lean path, `flux-full`
+is the ceremony, kept for the one experiment this corpus cannot yet run
+(`.flux/analysis/2026-08-22-ceremony-two-cycles.md`).
 
 **Agent OS caveat.** v3 is built to interview the user: every command drives the
 work through `AskUserQuestion`, and `/shape-spec` refuses outright unless the

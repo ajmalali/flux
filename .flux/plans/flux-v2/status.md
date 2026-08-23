@@ -8,7 +8,16 @@ failed. `research` and `writing-for-agents` were vendored with
 `disable-model-invocation: true` so the retirement costs no capability; plugin 2.7.0.
 The rule it settles: **carrying a skill is nearly free; listing it is not.** It leaves
 one thing open by design — the same bar points at **flux's own uncapped skill
-listing**, unmeasured.)
+listing**, unmeasured. Measured the same day, and it fails harder: **`flux:review`,
+flux's only listed skill, has 0 invocations in 520 transcripts** while costing 109
+tok in every session, so utilisation is exactly zero on both denominators and the
+pre-registered trim empties the listing. `review` now carries
+`disable-model-invocation: true` — in `sync-vendored.sh`, not just the file, since
+upstream has no such key — so **no flux skill is model-visible any more**; a session
+hears about flux once, from the capped `prime` hook. Capability cost measured at 0
+autonomous calls. Plugin 2.8.0. Also corrected: the mattpocock bar failed by 6.3x,
+not 10.6x — `/mattpocock-skills:ask-matt` was missed by the earlier scan. Still open:
+the **agent** roster, 118 tok/session, 0 post-install uses, no dmi equivalent.)
 
 ## Current state
 
@@ -934,6 +943,82 @@ assert that quality decays with context.
       skill reads from the plugin cache at 18.7k/14.0k/9.7k chars, three of the
       fifteen largest Bash results. Get that number for a session with both plugins
       installed before uninstalling anything.
+
+- [x] **Measure flux's OWN skill listing against the same bar. Done 2026-08-23 —
+      it fails by division by zero, and `flux:review` is delisted.** Write-up:
+      `.flux/analysis/2026-08-23-flux-listing-utilisation.md`. The bar was not
+      re-derived (that would be the tuning the pre-registration forbids); it is
+      `ecfcffb`'s, applied verbatim.
+      **The numerator is now measured, not projected.** Transcripts record the rendered
+      roster directly as an `attachment` of `{"type":"skill_listing","content":…}`. In
+      all 52 post-install real sessions flux contributes **exactly one line, 436 B =
+      109 tok** (`- flux:review: …`) — 3.1% of a median 12,063 B listing. Under v1 it
+      was 5 lines / 1,061 B. The other 13 skills appear in **no** listing in any of the
+      520 transcripts: `disable-model-invocation` really does cost zero.
+      **`flux:review` has never been invoked — 0 times in 520 transcripts**, by the
+      model or the user, and it is the only skill flux advertises. Post-install: 79
+      real-interactive sessions, 52 billed, **0** flux skill invocations of any kind.
+      Of 54 sessions with any flux invocation, **exactly one** invoked a skill its own
+      listing contained (a v1-era `flux:plan`, when the listing was 5 lines). The rest
+      are 41 bench sessions (`apply`/`audit`/`plan`/`wrap`, all dmi:true, typed by the
+      fluxbench arms) and 12 real v1-era sessions (`build`, `flux-init`, `show-work`,
+      `pause`, `sync`) — commands of a retired product.
+      **The bar turned out to be ambiguous here in a way it was not for mattpocock, and
+      the ambiguity decides the verdict — read the write-up before reusing this.** "Per
+      session in which one of its skills is invoked" reads two ways, and mattpocock
+      never had to choose because all five of its used skills were also listed. flux
+      breaks them apart. **Reading A (any skill in the namespace): post-install
+      all-corpus 276 = PASS, real-interactive ∞ = FAILS — which trips the
+      pre-registered "if the denominators disagree the bar does not fire" escape, and a
+      reader who takes that off-ramp should re-list review (a one-line revert).**
+      **Reading B (only the skills it lists) governs and fails everywhere**: 0% both
+      denominators post-install, 1.00%/0.65% (9.1x/12.0x) all-time. The tie-break is
+      quoted from the pre-registration, not invented after the fact — *"a budget is a
+      price for a thing, not a number floating free of what it buys"* (109 tok buys the
+      model seeing `flux:review`, nothing else), plus the same *proves-too-much* test
+      that killed the raw-cost reading (under A, fifty dead listed skills pass on one
+      live unlisted one). Reading A's passing cells are also carried entirely by bench
+      self-dealing and by v1 commands that no longer exist.
+      **Escalation step 1 (trim to skills with ≥1 invocation) yields the empty set**,
+      i.e. `disable-model-invocation: true` on `review`: 109 → **0 tok/session**, bar
+      cleared, step 2 (uninstall) not reached and wrong anyway — what flux sells is the
+      capped `prime` hook and a CLI on PATH, neither of which is a listing.
+      **Capability cost is zero and this time it is measured**: retiring mattpocock
+      cost 4 autonomous calls; this costs **0**. `/flux:review` is unchanged.
+      Two things checked before accepting non-use as dead rather than benign:
+      it was **not substituted** (the built-in `/code-review` ran in 1 real session
+      ever, 0 post-install — nobody reviews with a review skill here), and its
+      visibility was **never chosen** — upstream `code-review` has no dmi key and
+      `sync-vendored.sh` only hid `research`/`writing-for-agents`, so the fix lands in
+      the **script** (`hide_skill review`) as well as the file, or the next re-sync
+      silently re-lists it. Plugin **2.8.0**, 153 tests green.
+      **Reverses on one datapoint**: a single model-initiated `flux:review` call that
+      happened *because the line was there*. 109 tok/session buys a slot at 5.45%
+      utilisation — one use per 18 sessions. It had 52 and delivered none.
+      **The rule this sharpens:** flux passed "carrying is free, listing is not" 13
+      times out of 14 and failed on the one skill whose visibility it inherited instead
+      of choosing. A listing slot is not a default; it is a falsifiable claim that the
+      model needs to see the thing. flux's answer for all 14 is now no — a session
+      hears about flux exactly once, from `flux prime`, which is capped and
+      load-bearing every time.
+      **Re-runnable, unlike last time**: `scripts/skill-utilisation.py <prefix>
+      [--since]`, stdlib-only, prints **both readings side by side** so the crux is
+      visible to whoever runs it next instead of being resolved silently.
+      **Three corrections to the mattpocock entry above, all found by building that
+      tool, none changing its verdict.** (1) Count **both** invocation paths — the old
+      scan missed `/mattpocock-skills:ask-matt`, 7 calls / 6 sessions, all user-typed:
+      15 sessions, not 9. (2) Only sessions that **carried** the listing are a
+      denominator — 213 real-interactive, not 287 (and the measured listing is 630
+      tok/session, confirming the 662 read off one roster). (3) Reading B applied back
+      to it removes ask-matt, to-spec, to-tickets, wayfinder, implement, handoff —
+      invoked but never listed. **So that bar was missed by 6.7x (13,421), not 10.6x.**
+      Note the governing reading is the *harsher* of the corrected ones, so this is not
+      a retreat from the retirement. Appended to the write-up rather than patched in.
+      **Left open, same bar, deliberately not settled here:** the **agent** roster —
+      `flux:flux-explorer` + `flux:flux-verifier`, **473 B = 118 tok/session**,
+      uncapped, **0** real invocations post-install. Bigger than the skill listing was,
+      and agents have no `disable-model-invocation` equivalent, so the trim step may
+      not exist. Measuring it is its own task.
 
 ## Session-close checklist (execute at the end of EVERY working session)
 

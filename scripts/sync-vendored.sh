@@ -27,16 +27,21 @@ copy_skill engineering/code-review    review
 copy_skill engineering/research       research
 copy_skill productivity/writing-for-agents writing-for-agents
 
-# Vendored to preserve the capability after the mattpocock install was retired
-# (2026-08-23 utilisation bar). They are kept OUT of the model-visible skill
-# listing: the bar that retired the upstream plugin applies to flux's copies too,
-# and at their measured utilisation a listing slot does not clear it. Reachable
-# as /flux:research and /flux:writing-for-agents.
+# Kept OUT of the model-visible skill listing. The 2026-08-23 utilisation bar that
+# retired the upstream plugin applies to flux's own copies too, and none of them
+# clears it: research/writing-for-agents at their measured utilisation, and review
+# at zero -- it had never been invoked once in 520 transcripts while costing 109
+# tok/session as flux's only listed skill (see
+# .flux/analysis/2026-08-23-flux-listing-utilisation.md). review's visibility was
+# never chosen: it was inherited from upstream's frontmatter, which is why hiding it
+# has to happen HERE and not only in the file, or the next re-sync re-lists it.
+# All three stay reachable as /flux:review, /flux:research, /flux:writing-for-agents.
 hide_skill() { # vendored-name — add disable-model-invocation to the frontmatter
   local f="$DST/$1/SKILL.md"
   grep -q '^disable-model-invocation:' "$f" ||
     perl -0pi -e 's{\A(---\n.*?)(\n---\n)}{$1\ndisable-model-invocation: true$2}s' "$f"
 }
+hide_skill review
 hide_skill research
 hide_skill writing-for-agents
 

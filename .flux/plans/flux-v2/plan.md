@@ -89,8 +89,26 @@ transcripts.
   `disable-model-invocation: true`. The rule this settles, and the one to reuse:
   **carrying a skill is nearly free; listing it is not** — so the case for keeping a
   capability is not the case for advertising it, and vendoring is what separates them.
-  Open consequence: the bar was derived from flux's own 2,000-token prime budget, so it
-  applies to **flux's own skill listing**, which is uncapped and unmeasured.
+  *(Amendment, 2026-08-23, later the same day.)* That open consequence is now closed by
+  measurement (`.flux/analysis/2026-08-23-flux-listing-utilisation.md`). flux's listing
+  was **one line, `flux:review`, 436 B = 109 tok/session**, and `flux:review` had been
+  invoked **0 times in 520 transcripts**. Utilisation zero on both denominators, and the
+  pre-registered trim empties the listing. **Caveat that must travel with this**: the bar
+  is ambiguous for flux in a way it was not for mattpocock — read on a "any skill in the
+  namespace" reading it would pass on the bench-inclusive denominator and trip the
+  disagreement escape. The governing reading is "the skills it lists", tie-broken on the
+  pre-registration's own words; the write-up names the off-ramp and the one-line revert. So `review` now carries
+  `disable-model-invocation: true` too — applied in `sync-vendored.sh`, since upstream
+  has no such key and a re-sync would otherwise re-list it. **Binding consequence:
+  flux ships no model-visible skills.** All 14 are user-invocable only, and the only
+  always-on context flux buys is `flux prime`, which is capped at 2,000 and pays off
+  every session. A future skill gets a listing slot only with a written, falsifiable
+  claim that the model must see it — the slot is not a default.
+  Re-runnable at `scripts/skill-utilisation.py <namespace-prefix>`, which prints both
+  readings; it also corrected the mattpocock figure to 6.7x (from 10.6x).
+  Still open, same bar: the **agent** roster (flux-explorer + flux-verifier,
+  473 B = 118 tok/session, 0 real invocations since the install) — larger than the
+  skill listing was, and with no `disable-model-invocation` equivalent to trim to.
 - **Agents**: flux-explorer (haiku/low), flux-verifier (sonnet/low).
 - **Model routing** only at session boundaries (prime surfaces the plan's routing
   stamp) and subagent boundaries. Never `/model` or skill `model:` mid-session.

@@ -290,3 +290,36 @@ the mistake this file was written to avoid.
 
 Third bar declined in advance, per the pre-registration: **the mattpocock line is
 closed.**
+
+---
+
+## Correction, appended 2026-08-23 (from the flux-listing measurement)
+
+Measuring flux's own listing needed a scanner good enough to be trusted, and building it
+(`scripts/skill-utilisation.py`) found three errors in the arithmetic above. **The
+verdict, the trim analysis and the capability ledger are all unchanged**; the number is
+not.
+
+1. **Both invocation paths.** A skill is reached by a `Skill` tool-use **or** a
+   user-typed `<command-name>`. The scan above saw only what it looked for and missed
+   `/mattpocock-skills:ask-matt` — 7 calls across 6 sessions, all user-typed. Sessions
+   with an invocation: **15**, not 9.
+2. **Only billed sessions are a denominator.** You cannot be charged in a session where
+   the plugin was not installed. **213** real-interactive transcripts actually carried
+   the listing, not 287 — and the measured listing is 630 tok/session, close enough to
+   the 662 read off one roster to confirm it.
+3. **"One of its skills" means the skills it lists.** flux forced this distinction (see
+   `2026-08-23-flux-listing-utilisation.md`); applied back here it *removes* credit for
+   ask-matt, to-spec, to-tickets, wayfinder, implement and handoff — all invoked, none
+   ever listed. Sessions of listed-skill use: **10**.
+
+| reading | billed | used | util | tok per session-of-use | verdict |
+|---|---:|---:|---:|---:|---|
+| as published | 287 | 9 | 3.14% | 21,110 | fails 10.6x |
+| both paths, billed denominator | 213 | 15 | 7.04% | 8,947 | fails 4.5x |
+| **+ listed skills only (governs)** | 213 | **10** | **4.69%** | **13,421** | **fails 6.7x** |
+
+So the bar was missed by **6.7x**, not 10.6x. It is the same corpus, and a bar that gets
+to keep its most favourable misprint is not a bar — but note the governing reading is the
+*harsher* of the two corrected ones, so the correction is not a retreat from the verdict.
+Re-runnable: `python3 scripts/skill-utilisation.py mattpocock-skills:`.

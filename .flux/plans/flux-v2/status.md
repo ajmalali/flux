@@ -1014,11 +1014,55 @@ assert that quality decays with context.
       invoked but never listed. **So that bar was missed by 6.7x (13,421), not 10.6x.**
       Note the governing reading is the *harsher* of the corrected ones, so this is not
       a retreat from the retirement. Appended to the write-up rather than patched in.
-      **Left open, same bar, deliberately not settled here:** the **agent** roster —
+      **Left open, same bar, deliberately not settled here — now queued as the next
+      task, see the entry below:** the **agent** roster —
       `flux:flux-explorer` + `flux:flux-verifier`, **473 B = 118 tok/session**,
       uncapped, **0** real invocations post-install. Bigger than the skill listing was,
       and agents have no `disable-model-invocation` equivalent, so the trim step may
       not exist. Measuring it is its own task.
+
+- [ ] **Next task: measure the AGENT roster against the same bar** — the last uncapped
+      always-on path flux has, and the one the skill-listing measurement handed on
+      (`.flux/analysis/2026-08-23-flux-listing-utilisation.md`). Do not re-derive the
+      bar: it is `ecfcffb`'s, 2,000 tok per session-of-use, both denominators, applied
+      verbatim. What a fresh session must not spend time rediscovering:
+      **The numerator cannot be corpus-measured, and that is the whole methodological
+      difference from last time.** Transcripts carry 493 `skill_listing` attachments and
+      **zero** agent equivalents; the string `Available agent types` appears in **no**
+      transcript. The roster goes into the system prompt, which is not logged. So the
+      numerator is either computed from `agents/*.md` or read off one live session —
+      i.e. a projection or an n=1 observation, which is **the same weakness this repo
+      just used to dismiss `claude plugin details`**. Say so in the write-up rather than
+      presenting it as measured. Current computed figure: **473 B = 118 tok/session**
+      (flux-explorer 267 B + flux-verifier 206 B), assuming a `(Tools: …)` tail — the
+      live rendering names the actual tools, so read the exact line off a live session
+      before trusting the byte count.
+      **The denominator is solid**: `Task`/`Agent` tool calls whose `subagent_type`
+      starts `flux:` are logged and countable. Post-install real-interactive: **0**.
+      v1 era: 3 (`chore`, `build`, `deep`) — v1 agent names, a retired product, and
+      disqualified for the same reason v1 skill commands were.
+      **No ambiguity this time, unlike the skill listing.** Both flux agents are listed,
+      so Reading A and Reading B coincide; the crux that decided the skill verdict does
+      not arise here. Do not import the argument, just note it does not apply.
+      **Pre-register the escalation before writing any fresh number**, reusing
+      `ecfcffb`'s ladder verbatim — *the cheapest change that clears the bar, in order* —
+      because agents have **no `disable-model-invocation` equivalent**, so the "carry it
+      but don't list it" move that saved every skill is unavailable and the ladder has to
+      be respecified: plausibly (1) merge flux-explorer + flux-verifier into one agent,
+      (2) delete. Honesty caveat that must be stated: this session already published
+      118 tok and 0 invocations, so the *direction* of the verdict is visible in advance
+      — the pre-registration's value is in fixing **what action follows**, not whether,
+      and a bar tuned after the fact would be worthless here.
+      **Enumerate the capability cost before acting**, as the bar requires: flux-verifier
+      overlaps `flux check` / `flux run --filter` (which already keep raw output out of
+      context) and flux-explorer overlaps the built-in `Explore` agent. If the overlap is
+      total the deletion is capability-neutral; if not, the loss gets reported as a loss.
+      **Tooling**: `scripts/skill-utilisation.py` does skills only. It needs either an
+      agent mode or a sibling; its `scan()` already parses `Task`/`Agent` subagent_type.
+      **Then stop auditing context.** Two sessions running have been context accounting;
+      the falsifiability rule applies to measurement machinery too. The standing build
+      item is the append-only JSONL-in-git state format (see the `bd` entry above), which
+      is the answer to the `.flux/state.toml` conflict problem and is UNBUILT.
 
 ## Session-close checklist (execute at the end of EVERY working session)
 

@@ -1,6 +1,6 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-22 (ADR 0001's ledger metric measured before building: the frontier is 5.7% of the cold-start ramp and 75% of it is one repo that prime already fixes. `flux task` SUSPENDED, not built. beads declined. 150 tests green.)
+Updated: 2026-08-22 (ADR 0001's ledger metric measured, then its experiment run: one kiosk session on prime spent 1 frontier call / 51 tokens against a pre-prime median of 6 / 15,770. `flux task` stays SUSPENDED; the frontier case is closed by its own falsifier. beads declined. 151 tests green.)
 
 ## Current state
 
@@ -437,12 +437,44 @@ assert that quality decays with context.
       counting calls alone said the frontier was 15% of the ramp while counting result
       tokens said 31%, so both are now reported. `decay.Call` gained `arg` (Bash
       command / Grep pattern) and `result_chars` to support it.
-- [ ] **Next: the cheapest experiment that closes ADR 0001.** kiosk has had **zero
-      sessions since adopting flux on 2026-08-20** — the repo carrying 75% of the
-      frontier cost and the capability meant to remove it have never met. Run one real
-      kiosk work session on flux, then `./bench/run.py ramp`. If kiosk's 14,083
-      frontier tokens collapse toward 1,098, prime took the prize and the index stays
-      suspended. Costs one session that needed doing anyway.
+- [x] **Done 2026-08-22 — the kiosk experiment ran, and ADR 0001's frontier case is
+      closed.** One real session in `zaps/kiosk` with the plugin live (prime pack in
+      its transcript), given one of kiosk's own open bugs and no other context: the
+      unguarded `codegraph prompt-hook`, a 127 on every prompt for contributors
+      without the binary.
+
+      | kiosk | n | ramp calls | frontier calls | frontier tokens | growth |
+      |---|---:|---:|---:|---:|---:|
+      | before prime (median) | 40 | 27 | 6 | 15,770 | 86,967 |
+      | the session on prime | 1 | **6** | **1** | **51** | **5,356** |
+
+      The one frontier call was `git status && git log -3`. **`.paul/STATE.md` was
+      never opened** — and kiosk's `CLAUDE.md` still names it as where phase and
+      position live, unchanged. The instruction stands; the pack made it unnecessary.
+
+      Three honest limits, all in `.flux/analysis/2026-08-22-cold-start-ramp.md`:
+      **n=1** (an existence proof, not a moved median); it was a **`claude -p`**
+      session whose prompt named the task, so the claim is "prime plus a specific
+      prompt" (against which: 40 pre-prime kiosk sessions also had specific prompts
+      and still paid 15,770); and **the corpus decays** — launching a fresh `claude`
+      fires the CLI's 30-day transcript cleanup, kiosk went 50 → 46 transcripts and
+      the corpus 175/129 → 170/123 editing *during the experiment*, which is why the
+      same pre-prime median read 14,083 this morning and 15,770 this evening. The
+      pre-prime baseline cannot be re-measured later.
+
+      Also recorded rather than smoothed: **this repo's on/after cell went the wrong
+      way** (4,146 vs 1,898 frontier tokens, n=2). In flux, `status.md`/`plan.md`/ADRs
+      *are* the work product, so those reads are the session working, not orienting.
+
+      `ramp.report()` no longer hardcodes a flux-only block: the before/after split now
+      follows the three repos that actually carry frontier tokens, and the by-project
+      table reports median frontier **tokens** alongside calls. +1 test, **151 green**.
+
+      Side effect, in kiosk's tree and uncommitted: the session was denied writes to
+      `.claude/settings.json` (three attempts), so its verified one-liner was applied
+      from here — `command -v codegraph >/dev/null 2>&1 || exit 0; codegraph
+      prompt-hook || exit 0`, checked to exit 0 with the binary off PATH. Not
+      committed and not pushed: PR #66 is open and awaiting the user's sign-off.
 - [ ] **Decided 2026-08-22: do not adopt `beads` (`bd`).** Investigated at the user's
       request; `bd` 1.2.2 is installed on this machine and used in no repo. It is not
       a backend for flux, it is a peer: `bd prime`, `bd remember/recall`, `bd hooks`,

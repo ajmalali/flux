@@ -576,6 +576,24 @@ class ColdStartRampTests(unittest.TestCase):
         self.assertIn("ceiling on what `flux task` can save", text)
         self.assertIn("frontier", text)
 
+    def test_the_prime_split_follows_the_frontier_not_this_repo(self):
+        """A whole-corpus median hides the result; prime shows where the cost was."""
+        def session(project, date, frontier_chars):
+            return ramp.sessions_from_calls(
+                [self._call("Read", path="/r/status.md", chars=frontier_chars),
+                 self._call("Edit", path="/r/src/a.ts", context=1)],
+                project=project, date=date)
+
+        text = ramp.report(
+            [session("expensive-repo", "2026-08-01", 60000),
+             session("expensive-repo", "2026-08-21", 200),
+             session("cheap-repo", "2026-08-01", 400)],
+            prime_date="2026-08-20")
+        self.assertIn("| expensive-repo | before | 1 | 1 | 1 | 15,000 |", text)
+        self.assertIn("| expensive-repo | on/after | 1 | 1 | 1 | 50 |", text)
+        # The repo with nothing to remove is still listed, and still says so.
+        self.assertIn("| cheap-repo | on/after | 0 | — | — | — |", text)
+
 
 class FairnessTests(unittest.TestCase):
     """The driver, not the arm, owns everything that could hand someone an edge."""

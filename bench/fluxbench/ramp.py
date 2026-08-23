@@ -374,38 +374,51 @@ def report(sessions: Sequence[Session], prime_date: str = PRIME_DATE) -> str:
                         percentile([s.ramp_growth for s in subset], 50)))
     lines.append("")
 
-    flux_only = [s for s in editing if s.project.endswith("Dev-flux")]
-    if flux_only:
-        lines += ["Restricted to this repo, where prime is known to have fired "
-                  "(%d sessions):" % len(flux_only), "",
-                  "| corpus | sessions | median ramp calls | median frontier calls |",
-                  "|---|---:|---:|---:|"]
-        for label, subset in (
-            ("before", [s for s in flux_only if s.date and s.date < prime_date]),
-            ("on/after", [s for s in flux_only if s.date and s.date >= prime_date]),
-        ):
-            if not subset:
-                lines.append("| %s | 0 | — | — |" % label)
-                continue
-            lines.append("| %s | %d | %.0f | %.0f |"
-                         % (label, len(subset),
-                            percentile([s.ramp_calls for s in subset], 50),
-                            percentile([s.frontier_calls for s in subset], 50)))
+    # A whole-corpus median hides the result: the frontier cost is concentrated in a
+    # couple of repos, and prime can only be seen where there was something to remove.
+    by_frontier: Dict[str, List[Session]] = {}
+    for s_ in editing:
+        by_frontier.setdefault(s_.project, []).append(s_)
+    ranked = sorted(by_frontier.items(),
+                    key=lambda kv: -sum(x.ramp_chars.get("frontier", 0) for x in kv[1]))[:3]
+    if ranked:
+        lines += ["In the repos that carry the frontier — ranked by the frontier tokens "
+                  "their ramps spend, since prime is only observable where there was "
+                  "something to remove:", "",
+                  "| project | corpus | sessions | median ramp calls | median frontier calls | median frontier tokens |",
+                  "|---|---|---:|---:|---:|---:|"]
+        for project, subset in ranked:
+            for label, part in (
+                ("before", [x for x in subset if x.date and x.date < prime_date]),
+                ("on/after", [x for x in subset if x.date and x.date >= prime_date]),
+            ):
+                if not part:
+                    lines.append("| %s | %s | 0 | — | — | — |" % (project, label))
+                    continue
+                lines.append("| %s | %s | %d | %.0f | %.0f | %s |"
+                             % (project, label, len(part),
+                                percentile([x.ramp_calls for x in part], 50),
+                                percentile([x.frontier_calls for x in part], 50),
+                                "{:,.0f}".format(
+                                    percentile([x.ramp_chars.get("frontier", 0) / 4
+                                                for x in part], 50))))
         lines.append("")
 
     lines += ["## by project", "",
-              "| project | sessions | median ramp | median frontier | frontier share |",
-              "|---|---:|---:|---:|---:|"]
+              "| project | sessions | median ramp | median frontier | median frontier tokens | frontier share |",
+              "|---|---:|---:|---:|---:|---:|"]
     by_project: Dict[str, List[Session]] = {}
     for s in editing:
         by_project.setdefault(s.project, []).append(s)
     for project, subset in sorted(by_project.items(), key=lambda kv: -len(kv[1]))[:12]:
         ramp_total = sum(x.ramp_calls for x in subset)
         front_total = sum(x.frontier_calls for x in subset)
-        lines.append("| %s | %d | %.0f | %.0f | %.0f%% |"
+        lines.append("| %s | %d | %.0f | %.0f | %s | %.0f%% |"
                      % (project, len(subset),
                         percentile([x.ramp_calls for x in subset], 50),
                         percentile([x.frontier_calls for x in subset], 50),
+                        "{:,.0f}".format(percentile(
+                            [x.ramp_chars.get("frontier", 0) / 4 for x in subset], 50)),
                         front_total / ramp_total * 100 if ramp_total else 0))
     lines.append("")
     return "\n".join(lines)

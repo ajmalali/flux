@@ -14,7 +14,8 @@ delete it.* That number had never been measured. It was the same position the de
 premise was in the day before, and that one did not survive contact with the data.
 
 Corpus: **175 real interactive sessions, 129 of which reach an edit**, across 16
-repos. Bench sessions are excluded — a `claude -p` arm is handed its task in the
+repos (as measured on the morning of 2026-08-22; the corpus decays — see the kiosk
+experiment below). Bench sessions are excluded — a `claude -p` arm is handed its task in the
 prompt and has no frontier to derive, so including ~100 of them would have halved
 every median and flattered the metric. Sessions that never edit are excluded rather
 than imputed: they had no first edit to approach.
@@ -90,21 +91,61 @@ information. If `flux task` is built, **this is the mechanism it should be built
 and the ledger metric should be code-bucket ramp, not frontier ramp.** The frontier
 justification is spent.
 
-**2. The prime before/after comparison is underpowered and proves nothing yet.**
+**2. The prime before/after comparison is underpowered** — and the one experiment
+that could speak to it has now been run. See the next section.
 
-| corpus | n | median ramp calls | median frontier calls |
-|---|---:|---:|---:|
-| before 2026-08-20 | 112 | 21 | 3 |
-| on/after | 17 | 16 | 0–3 (unstable at this n) |
+## The kiosk experiment (run 2026-08-22)
 
-Worse: **kiosk has had zero sessions since it adopted flux.** The one repo carrying
-75% of the frontier cost, and the adoption that was supposed to remove it, have never
-met. Until one real kiosk session runs on flux, prime's effect on the number it was
-built to move is unmeasured.
+The prediction this document made, in its own words: *run one real kiosk session on
+flux, then re-run `./bench/run.py ramp`; if the 14,083 collapses toward 1,098, prime
+captured the prize.* One session was run in `zaps/kiosk` with the flux plugin live —
+the SessionStart pack is in its transcript — on a real open bug from kiosk's own
+`open` field (the unguarded `codegraph prompt-hook`, a 127 on every prompt for anyone
+without the binary). The prompt named the bug and nothing else: no phase, no plan, no
+pointer to any file.
 
-That is also the cheapest possible experiment available: **run one real kiosk session
-on flux, then re-run `./bench/run.py ramp`.** If the 14,083 collapses toward 1,098,
-prime captured the prize and `flux task`'s frontier case is closed by its own metric.
+| kiosk | sessions | ramp calls | frontier calls | frontier tokens | ramp growth |
+|---|---:|---:|---:|---:|---:|
+| before prime (median) | 40 | 27 | 6 | 15,770 | 86,967 |
+| the session on prime | 1 | **6** | **1** | **51** | **5,356** |
+
+The one frontier call was `git status && git log --oneline -3` — 51 tokens. **`.paul/
+STATE.md` was never opened**, and kiosk's `CLAUDE.md` still names it, unchanged, as
+where "current phase, loop position, accumulated context" live. The standing
+instruction to read the 299 KB file is still there; the session did not need it.
+
+**What this is worth, stated honestly.**
+
+- **n=1.** One session cannot move a 41-session median and is not asked to. It is an
+  existence proof: a kiosk session can now start work without paying the 15,000.
+- **It was a `claude -p` session** — the very kind this module excludes from the
+  corpus, and the exclusion is by directory marker, so this one *is* counted (in
+  kiosk's project dir, which is not a bench dir). Its prompt named the task, which
+  removes some of the frontier a session would otherwise derive. So the attribution
+  is "prime plus a specific prompt", not "prime alone". Against that: the 40
+  pre-prime kiosk sessions had specific prompts of their own and still paid 6 calls
+  and 15,770 tokens, because the framework told them where state lived and the state
+  was 299 KB.
+- **The corpus shrank while the experiment ran.** Launching a fresh `claude` process
+  triggers the CLI's 30-day transcript cleanup: kiosk went from 50 transcripts to 46
+  (oldest survivor now 2026-07-24) and the whole corpus from 175 sessions / 129
+  editing to 170 / 123, while gaining this one. Every median in this document is
+  therefore a moving target — kiosk's pre-prime frontier median read 14,083 this
+  morning and 15,770 this evening off a smaller set. **The pre-prime baseline erodes
+  daily and cannot be re-measured later.**
+
+**Verdict.** ADR 0001's frontier justification is closed by its own falsifier. The
+frontier was 5.7% of the ramp corpus-wide, 75% of it was one repo, and in that repo a
+session on prime spent 0.3% of the frontier tokens its predecessors did. `flux task`
+stays suspended; if it is ever built, it is built for the code bucket (point 1 above)
+and measured there.
+
+**One counter-signal, recorded rather than smoothed.** In *this* repo the on/after
+cell went the wrong way — 4,146 median frontier tokens against 1,898 before (n=2).
+That is not prime failing; in flux, `status.md`, `plan.md` and the ADRs *are* the work
+product, so reads the classifier scores as frontier are the session doing its job. It
+is a reminder that the bucket measures file shape, not intent, and that the corpus-wide
+before/after row is the weakest table here.
 
 ## Method notes
 

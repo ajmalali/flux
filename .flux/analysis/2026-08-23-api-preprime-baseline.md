@@ -79,3 +79,76 @@ tokens**; p90 **25,844**.
   — and a `bd init` commit at HEAD whose `.beads/` files are deleted-but-uncommitted.
   Adding a fifth is a real cost, and the retirement half of Phase 03 is not optional
   garnish here; it is the part with an argument behind it.
+
+---
+
+## The gate measurement, against the bar set before it — 2026-08-23
+
+`flux check`'s filtered gate was the one flux surface with a plausible unmeasured
+claim in api (in kiosk it turns ~950 raw lines into one). The bar was fixed in
+`plan.md` **before** the number was looked at: *median > 5,000 tokens of
+lint/test/build output per session ⇒ install for `flux check` alone.*
+
+Scanned all 19 api transcripts for Bash calls matching the repo's verification.
+No `bench` subcommand was added for this — it is a one-off against a fixed bar, and
+a CLI surface that no ledger metric depends on would be the sort of feature this
+project deletes. Reproduce with `fluxbench.decay.scan_transcript`, summing
+`result_chars` over non-sidechain `Bash` calls whose `arg` matches:
+
+```
+\b(npm\s+(run\s+)?(test|lint|build|format)|npx\s+(jest|eslint|tsc|nest\s+build)
+ |jest|eslint|tsc\b|nest\s+build|npm\s+run\s+test:e2e)\b
+```
+
+
+| | value |
+|---|---:|
+| sessions that ran the gate at all | **8 of 19** |
+| gate calls per running session | median 10 (max 44) |
+| gate output per running session | **median 2,166 tok**, p90 7,023, max 7,023 |
+| gate output over all 19 sessions | **median 0**, p90 4,410 |
+| total gate output, whole corpus | 21,920 tok |
+
+**Below the bar on both readings — 2,166 against 5,000, and 0 if the eleven sessions
+that never ran the gate are counted. api stays clean; flux is not installed.**
+
+### Why the gate is cheap here and expensive in kiosk
+
+api's verification is already quiet: jest and eslint report failures tersely, and no
+gate run appears anywhere in the corpus's fifteen largest Bash results. kiosk's
+`npx nx run-many -t lint,typecheck,test` fans out across 31 projects / 83 tasks and
+emits ~950 lines whether or not anything failed. The filter is worth a lot against a
+fan-out runner and almost nothing against a plain `npm test` — the same repo-shaped
+story as the frontier, with a different artifact.
+
+### What api's context is actually spent on, recorded but not acted on
+
+Total Bash result volume: **1,192,518 chars / ~298k tokens across 19 sessions**, about
+**62.8k chars per session** — near `plan.md`'s ~74k baseline and well over its <25k
+target. But the top of that distribution is neither the gate nor the frontier:
+
+- `gh issue view` / `gh issue comment` — four of the fifteen largest results
+  (15,267 / 11,303 / 8,733 / 8,411 chars). api's project state lives in **GitHub
+  Issues**, not in a file, which is the structural reason its file-frontier is only
+  1,111 tokens. These are already classified as frontier by `ramp.FRONTIER_SHELL`,
+  and they land *after* the first edit — they are the work, not the orientation.
+- **mattpocock skill files read whole out of the plugin cache** — three of the
+  fifteen largest (18,719 / 14,013 / 9,724 chars). That is instruction loading, and
+  it is the second-largest line item in the repo's Bash volume.
+
+Neither is a `flux prime` problem and neither justifies an install. Recorded here
+because the Bash-volume target is real and unmet, and this says where it actually
+went — a claim for a later cycle, not this one.
+
+## Conclusion
+
+**flux does not generalize to zaps/api, and the reason is specific rather than a
+shrug.** Both of its measurable surfaces are repo-shaped and api has the wrong shape
+for both: no bloated state artifact to replace (1,111 tok frontier vs kiosk's 15,770),
+and no fan-out gate to filter (2,166 tok vs kiosk's ~950 lines). api's state is in
+GitHub Issues and its gate is quiet.
+
+The value of the result is the boundary it draws: **flux is for repos with a heavy
+resume read and a noisy gate.** Adoption is a measurement, not a rollout. api keeps
+the clean tree it just paid 193 files and 32,927 lines for
+(`zaps/api@chore/retire-competing-frameworks`) and gains no fifth framework.

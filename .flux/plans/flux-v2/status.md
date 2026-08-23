@@ -1,6 +1,6 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-22 (ADR 0001's ledger metric measured, then its experiment run: one kiosk session on prime spent 1 frontier call / 51 tokens against a pre-prime median of 6 / 15,770. `flux task` stays SUSPENDED; the frontier case is closed by its own falsifier. beads declined. 151 tests green.)
+Updated: 2026-08-23 (Phase 03's api line closed as a **pre-registered null**: prime's ceiling in zaps/api is ~1.1k tokens of a ~50k ramp, and the gate bar — written down before the number — was missed at 2,166 vs 5,000. api is NOT adopted. Five competing frameworks retired there instead: 193 files / −32,927 lines on a branch. Binding finding: **flux's value is repo-shaped** — it needs a bloated state artifact read whole and a fan-out gate; adoption is a measurement, not a rollout. Phase 03 rescoped to "establish where flux pays". 153 tests green.)
 
 ## Current state
 
@@ -760,10 +760,67 @@ assert that quality decays with context.
       (`TestPluginManifest`): the manifest may not reference the auto-loaded
       `hooks/hooks.json`, and `hooks/hooks.json` must still register `flux prime` on
       SessionStart. **153 green.**
-- [ ] Phase 03 — generalize (zaps/api), retire PAUL/mattpocock installs, first
-      ledger before/after. **PAUL's retirement is now evidence-backed**: 1/4
-      delivered at 31% acceptance in meridian-003, the worst arm that reached a
-      model.
+- [x] **Phase 03's api line — CLOSED AS A NULL, 2026-08-23. api is not adopted, and
+      the boundary is the finding.** Measured before installing anything, because the
+      pre-prime corpus cannot be re-measured later. Write-up:
+      `.flux/analysis/2026-08-23-api-preprime-baseline.md`.
+
+      Baseline, 19 sessions / 15 reaching an edit, 2026-06-30 → 2026-08-12: median
+      ramp **28 calls / 49,769 tok**; per session **frontier 2 calls / 1,111 tok**,
+      **code 14 / 16,926**, other 7 / 941, docs 0 / 0.
+
+      **api is not kiosk.** The kiosk win (6 frontier calls / 15,770 tok → 1 / 51)
+      came from a 299 KB `.paul/STATE.md` read whole. api's is **33 KB and mostly
+      unread**: of 19 transcripts, 2 mention it heavily (both Jul 24–25, the oldest),
+      6 mention it once, 11 never. Prime's ceiling in api is ~1.1k of a ~50k ramp — 2%.
+      The null was **pre-registered in plan.md before the install**, so it could not
+      drift into a claimed win.
+
+      **The gate got the same discipline, with the bar written down first**
+      (*median > 5,000 tok of lint/test output per session ⇒ install for `flux check`
+      alone*), because reaching for a fresh justification the moment the old one dies
+      is the failure mode ADR 0001 already fell into. Result: **median 2,166 tok**
+      among the 8 of 19 sessions that ran the gate, **median 0** over all 19. **Not
+      cleared.** api's jest/eslint are terse — no gate run is in the corpus's fifteen
+      largest Bash results — while kiosk's `nx run-many` emits ~950 lines over 31
+      projects regardless. The filter pays against a fan-out runner, not `npm test`.
+
+      **Structural finding, now binding in plan.md ("Where flux pays"): flux's value
+      is repo-shaped.** Both measurable surfaces need a specific shape — a bloated
+      state artifact read whole, and a fan-out gate. api has neither: its project
+      state lives in **GitHub Issues** (`gh issue view`, already frontier-classified,
+      and landing after the first edit as work), and its gate is quiet. **Adoption is
+      a measurement, not a rollout.** Phase 03 rescoped from "package & generalize"
+      to "establish where flux pays".
+
+      Recorded but not acted on: api's Bash volume is **~62.8k chars/session** against
+      plan.md's <25k target, and the top of it is `gh issue view` plus **mattpocock
+      skill files read whole from the plugin cache** (3 of the 15 largest results,
+      18.7k/14.0k/9.7k chars). Instruction loading is the second-largest line item in
+      the repo. Neither is a prime problem; both are a claim for a later cycle.
+- [x] **Retired the competing frameworks in zaps/api, 2026-08-23** — branch
+      `chore/retire-competing-frameworks`, commit `ea3ae6b`, **193 files /
+      −32,927 lines, no source touched. Not pushed; `main` untouched.** api had been
+      carrying five overlapping context systems: **PAUL** (`.paul/`, 170 files,
+      1.8 MB — retirement evidence-backed at 1/4 delivered, 31% acceptance in
+      meridian-003), **GitNexus** (`AGENTS.md` was wholly its generated block, the
+      same block duplicated atop `CLAUDE.md`, 6 skill files, nav rules in
+      `.claude/CLAUDE.md`, plus a 74.8 MB derived `.gitnexus/` index deleted locally —
+      no hook regenerates it, `npx gitnexus analyze` rebuilds if ever wanted),
+      **CARL** (one orphaned session file), **beads** (`bd init` was at HEAD and had
+      been reverted in the working tree without being committed — this completes it),
+      and **flux v1 remnants** (a `<!-- flux -->` block naming dead commands
+      `/flux:plan`, `/flux:tickets`, `/flux:build`, plus its statusline and gitignore
+      entries). Kept `CONTEXT.md` (the domain glossary — the only context doc with
+      content nothing else carries), `docs/adr/`, `docs/agents/`, and the stack /
+      commands / file-structure / entry-point tables in `.claude/CLAUDE.md`; fixed
+      three references the deletions would have orphaned (`docs/agents/domain.md`,
+      `.dockerignore`, `.gitignore`). **api was already flux-installed once (v1)** —
+      Phase 03 there was a re-install after an abandoned removal, not a fresh one.
+- [ ] Phase 03 — remaining: retire the mattpocock install; **first ledger
+      before/after, taken in kiosk**, where a measured delta exists (api cannot
+      supply one). Close kiosk PR #66 and find a home for the uncommitted
+      `.claude/settings.json` codegraph guard.
 
 ## Session-close checklist (execute at the end of EVERY working session)
 

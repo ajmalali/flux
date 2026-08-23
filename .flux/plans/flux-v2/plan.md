@@ -204,6 +204,57 @@ at all — the flaw that left `meridian-003` unable to speak to any of this. The
 must be handed over whole, each arm left to decompose it, and graded continuously so
 the result is a quality-per-context curve rather than a single cell.
 
+## Where flux pays *(amendment, 2026-08-23 — not in the original blueprint)*
+
+The blueprint assumed flux was a general win and that adoption was a packaging
+problem. Two measured repos say otherwise: **flux's value is repo-shaped.**
+
+| repo | `STATE.md` | median frontier / session | prime's ceiling |
+|---|---:|---:|---:|
+| zaps/kiosk | 299 KB, read whole | 6 calls / 15,770 tok | large — measured 1 / 51 |
+| zaps/api | 33 KB, mostly unread | 2 calls / **1,111 tok** | ~2% of a 49,769-tok ramp |
+
+`flux prime` pays where a repo has **a bloated state artifact that sessions read
+whole**. kiosk had one; api did not. Installing into api to capture 2% and then
+reporting it as generalization would be the same defect as ticking a target on
+missing data — so api gets a clean tree and no install
+(`.flux/analysis/2026-08-23-api-preprime-baseline.md`).
+
+**This bounds the product claim**, which is more useful than a forced install: flux
+is for repos with a heavy resume read and a noisy gate, not for every repo on the
+machine. Adoption is a measurement, not a rollout.
+
+### The one unmeasured surface, and its pre-registered bar
+
+There is a second plausible claim — `flux check`'s **filtered gate** (in kiosk it
+turned ~950 raw lines into one). It is genuinely unmeasured: the ramp analysis
+structurally cannot see it, because verification output lands *after* the first
+edit, outside the ramp window.
+
+It gets the same discipline the frontier got, and the bar is fixed **before** the
+number is looked at, because reaching for a fresh justification the moment the old
+one dies is exactly the failure mode ADR 0001 already fell into:
+
+- **Metric**: median tokens of lint/test/build tool-result output landing in context
+  per api session (the `Bash output volume / session` row above, scoped to the gate).
+- **Bar**: **median > 5,000 tokens/session** ⇒ install flux in api for `flux check`
+  alone, and report against this metric, never the ramp.
+- **Below the bar** ⇒ api stays clean, and Phase 03's conclusion is recorded as
+  "flux does not generalize to api, and here is exactly why."
+- Either way the frontier claim stays spent. `flux prime` is not re-justified by
+  this measurement.
+
+**Measured the same day, and the bar was not cleared.** Gate output per api session:
+**median 2,166 tok** among the 8 of 19 sessions that ran it at all, **median 0** over
+all 19 (p90 4,410). api's jest/eslint are already terse — no gate run appears in the
+corpus's fifteen largest Bash results. kiosk's `nx run-many` fans out over 31 projects
+/ 83 tasks and emits ~950 lines regardless; the filter is worth a lot against a
+fan-out runner and nearly nothing against a plain `npm test`.
+
+**So api is not adopted, and Phase 03's api line is closed as a null.** flux has two
+measurable surfaces and api has the wrong shape for both. Full working:
+`.flux/analysis/2026-08-23-api-preprime-baseline.md`.
+
 ## Phases
 
 - **00 — baseline & decks** *(user-side, outside this repo)*: freeze the Aug 19
@@ -215,10 +266,12 @@ the result is a quality-per-context curve rather than a single cell.
 - **02 — skills**: write the five lifecycle skills from the PAUL originals
   (in zaps/kiosk); migrate kiosk's PAUL state into `.flux/` (archive `.paul/`);
   run one full real phase (plan → audit → apply → wrap) on flux v2 in kiosk.
-- **03 — package & generalize**: install via marketplace on every machine; adopt in
-  zaps/api and this repo's own sessions (`/flux:adopt`, shipped 2026-08-20); retire
-  PAUL + mattpocock install once parity is proven; first before/after ledger
-  comparison.
+- **03 — establish where flux pays** *(rescoped 2026-08-23; was "package &
+  generalize")*: install via marketplace on every machine; retire the competing
+  framework installs; first before/after ledger comparison, taken **in kiosk**,
+  where a measured delta exists. **Adopting zaps/api is no longer part of it** —
+  see "Where flux pays" below. The original phase assumed the kiosk win
+  generalized; it does not, and the boundary is the finding.
 
 ## Out of scope
 

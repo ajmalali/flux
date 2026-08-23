@@ -684,8 +684,49 @@ assert that quality decays with context.
       tasks, sonnet, $40. meridian-002 answered only flux-vs-vanilla over 3 tasks,
       and the arm that matters most (`flux-lite`, machinery vs ceremony) never ran.
       **Read the report first thing next session.**
+- [x] **Done 2026-08-22 — meridian-003 read, and cycle 2 (`meridian-004`) run.
+      The lifecycle ceremony has now had its two reporting cycles and moved
+      nothing.** Full write-up: `.flux/analysis/2026-08-22-ceremony-two-cycles.md`.
+
+      meridian-003: vanilla / flux / flux-lite all 4/4 at 100% acceptance;
+      flux $2.92/task against $1.05 for the other two; paul 1/4 at 31%. speckit
+      and agentos void (429s). But **every arm that ran scored 100%**, so that run
+      could not have seen a quality difference in principle.
+
+      So `m5` was written to be the case that could: a real feature (holds) whose
+      ticket carries a **false claim about the code**, whose rule must land in two
+      places that already disagree, and whose "released hold" collapses into
+      `CANCELLED`. 27 acceptance tests, verified satisfiable from both the
+      cumulative tree and the bare seed before it was allowed to judge anyone.
+
+      meridian-004: **all three arms 27/27, identical fix** (`if not
+      booking.is_active: continue`). flux $5.03/task vs $1.75 flux-lite, $1.81
+      vanilla. The audit *did* catch the false claim, in as many words, and it was
+      worth $0 — the single-pass arms read the brief carefully and got there too.
+      Session split: plan $0.94 + audit $1.34 + apply $1.68 + wrap $1.07, where
+      **the apply session alone matched the whole one-shot arms**.
+
+      **The structural finding is the important one: fluxbench cannot, by
+      construction, measure what the ceremony is for.** Its fairness rule (tests
+      may only bind to seed symbols or briefed API) forces complete briefs, and a
+      complete brief is exactly the case where planning and auditing have nothing
+      to recover. One legal route remains — the check constrains symbols, not
+      behaviour, so a terse bug report pinned through seed API only would leave the
+      invariant discoverable in the code and nowhere else. That, not m5, is the
+      experiment worth running if the question is reopened.
+
+      Against deletion: the ceremony's only real-work datapoint is **positive** —
+      kiosk Phase 02's audit returned three blocking findings on a plan that looked
+      fine (parent SHA pinned as tip; "local gate is a superset of CI", false; a PR
+      body claim the branch contradicted). n=1, unblinded, same model as author.
+      And flux's one consistent win in both cycles is **21% lower ctx p50**.
+
+      **Decision pending with the user:** trim to prime+apply with audit opt-in, or
+      keep paying 2.9x. Principle 5 says trim.
 - [ ] Phase 03 — generalize (zaps/api), retire PAUL/mattpocock installs, first
-      ledger before/after.
+      ledger before/after. **PAUL's retirement is now evidence-backed**: 1/4
+      delivered at 31% acceptance in meridian-003, the worst arm that reached a
+      model.
 
 ## Session-close checklist (execute at the end of EVERY working session)
 

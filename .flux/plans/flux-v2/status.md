@@ -1,6 +1,14 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-23 (Phase 03's api line closed as a **pre-registered null**: prime's ceiling in zaps/api is ~1.1k tokens of a ~50k ramp, and the gate bar — written down before the number — was missed at 2,166 vs 5,000. api is NOT adopted. Five competing frameworks retired there instead: 193 files / −32,927 lines on a branch. Binding finding: **flux's value is repo-shaped** — it needs a bloated state artifact read whole and a fan-out gate; adoption is a measurement, not a rollout. Phase 03 rescoped to "establish where flux pays". 153 tests green. Later the same day: **kiosk PR #66 merged** (`e8a3199`), the codegraph hook guard homed on main (`f293528`), and the open `.flux/state.toml` question decided — **untracked in kiosk** (`19861ee`), because a wholesale-rewritten file across ~100 branches conflicts on every one of them.)
+Updated: 2026-08-23 (Phase 03's api line closed as a **pre-registered null**: prime's ceiling in zaps/api is ~1.1k tokens of a ~50k ramp, and the gate bar — written down before the number — was missed at 2,166 vs 5,000. api is NOT adopted. Five competing frameworks retired there instead: 193 files / −32,927 lines on a branch. Binding finding: **flux's value is repo-shaped** — it needs a bloated state artifact read whole and a fan-out gate; adoption is a measurement, not a rollout. Phase 03 rescoped to "establish where flux pays". 153 tests green. Later the same day: **kiosk PR #66 merged** (`e8a3199`), the codegraph hook guard homed on main (`f293528`), and the open `.flux/state.toml` question decided — **untracked in kiosk** (`19861ee`), because a wholesale-rewritten file across ~100 branches conflicts on every one of them. Later still: **the mattpocock install is RETIRED** — reopened on a
+utilisation bar derived from flux's own 2,000-token prime budget (≤2,000 tok per
+session-of-use), pre-registered in `ecfcffb` before a fresh number was read, and failed
+at **21,110 — 10.6x** on 9 invoking sessions out of 287. Trim was tried first and also
+failed. `research` and `writing-for-agents` were vendored with
+`disable-model-invocation: true` so the retirement costs no capability; plugin 2.7.0.
+The rule it settles: **carrying a skill is nearly free; listing it is not.** It leaves
+one thing open by design — the same bar points at **flux's own uncapped skill
+listing**, unmeasured.)
 
 ## Current state
 
@@ -850,31 +858,74 @@ assert that quality decays with context.
       30-day transcript cleanup. Now that main carries flux, ordinary kiosk work
       feeds it. Re-run `ramp` when a handful more have landed rather than treating
       this as an action.
-- [x] **The mattpocock install is measured and NOT retired — a second
-      pre-registered null, 2026-08-23.** Write-up:
-      `.flux/analysis/2026-08-23-mattpocock-install-cost.md`. Bar written before any
-      number: retire if **(a)** the unvendored skills were invoked in < 5% of sessions
-      **and (b)** the *duplicated* description text costs > 500 tok/session.
-      **(a) clears at 0.5%** (2 of 439 transcripts; 1.1% on the stricter
-      ~175-session interactive corpus). **(b) fails at 113 tok** — because the
-      duplication was mostly imaginary. Four of the six vendored skills are not
-      model-visible upstream either, and flux's lifecycle skills carry
-      `disable-model-invocation: true`, so the injected listing is **15 mattpocock
-      skills (3,669 B ≈ 917 tok) against exactly one flux skill (`flux:review`)** —
-      a single genuinely duplicated pair, `code-review`, worth 452 B.
-      Usage across 439 transcripts, in full: grilling 3 calls, writing-for-agents 2,
-      code-review 2, domain-modeling 1. `/tdd`, `/research`, `/prototype`,
-      `/codebase-design`, `/diagnosing-bugs`, `/wizard` and
-      `/resolving-merge-conflicts` have **never been invoked once**.
-      **Recorded, deliberately not used as a bar: 917 tok/session for skills invoked
-      in 1.6% of sessions** is a *utilisation* argument, not the duplication argument
-      that was queued. Reaching for it now is the failure mode ADR 0001 fell into and
-      the api line was closed on. The write-up publishes the number, so a future bar
-      cannot honestly be tuned to it — pre-register before looking again.
-      **The finding worth keeping: vendoring and the install are alternatives, not a
-      stack.** flux vendors copies so it works when the plugin is absent; with it
-      present they are free dead weight. The real question was "which of the two owns
-      these six skills", and at 113 tok/session it does not earn a decision.
+- [x] **The mattpocock install is RETIRED, 2026-08-23** — reopened the same day on a
+      pre-registered *utilisation* bar and uninstalled. Write-up:
+      `.flux/analysis/2026-08-23-mattpocock-utilisation-bar.md` (bar committed in
+      `ecfcffb`, before a fresh number was read; result in the commit after).
+      **The bar, derived not chosen:** `DEFAULT_STATE_BUDGET_TOKENS = 2000`
+      (`bin/flux:23`, Phase 01) is the price flux charges *itself* for a permanent
+      context slot, and `flux prime` pays off every session — so the rate flux holds
+      itself to is **≤2,000 tok per session-of-use**. That anchor predates the question
+      and has no view on Matt's skills, which is what makes it a bar after the previous
+      write-up published 917/1.6%. The one free choice (raw cost, which passes, vs
+      utilisation-adjusted, which fails) is decided *in* the write-up with the losing
+      reading named, so disagreement lands on the reasoning, not the arithmetic.
+      **Result: fails every cell.** Corpus re-scanned: 517 transcripts, 287
+      real-interactive. **9 sessions** had a mattpocock invocation — 3.14% real /
+      1.74% all. At the measured 662 tok/session listing that is **21,110 tok per
+      session-of-use, 10.6x the bar**; the least favourable cell is 52,734.
+      Both denominators agree, which the bar required.
+      **Trim was tried first, as pre-registered, and also fails**: all-5-invoked
+      = 10,382/session-of-use (5.2x); unvendored-only = 7,388 (3.7x). Hence uninstall.
+      **Two corrections to the numbers this repo had published.** (1) The listing is
+      **11** advertised skills = **662 tok**, not 15/918 — the four `misc/` skills
+      never reach the roster and nothing in their frontmatter explains it.
+      (2) Usage attribution had to be tightened to `mattpocock-skills:`-namespaced
+      invocations only: bare `/code-review` in `subagents` is the **built-in**, not
+      Matt's. That also found `research` (2 calls), which the prior write-up had
+      recorded as never invoked. Final tally: grilling 3, writing-for-agents 2,
+      research 2, code-review 2, domain-modeling 1; ten skills never invoked once.
+      **`claude plugin details` disagrees, and is wrong.** It projects ~1,620 tok
+      always-on for mattpocock and ~1,246 for flux — because it bills every skill
+      including `disable-model-invocation: true` ones. Direct evidence it over-counts:
+      this session's roster contains exactly **one** of flux's 14 skills (`flux:review`,
+      the only one without the key). It is a static inventory projection, not a
+      measurement. Recorded because it is what a reader running that command sees; the
+      verdict is the same either way (10.6x vs 25.8x).
+      **The retirement is capability-neutral, as pre-registered.** `research` and
+      `writing-for-agents` were the only invoked skills flux did not already carry, so
+      both are now **vendored** (`scripts/sync-vendored.sh`, same pin 1.2.3 /
+      `2ab9580…`, MIT) with `disable-model-invocation: true` — the bar applies to
+      flux's copies too, so they are carried but **not listed**. Dangling `/research`
+      and `/writing-for-agents` refs in `wayfinder`/`ask-matt` now rewrite to
+      `/flux:research` and `/flux:writing-for-agents`. grilling/domain-modeling/
+      code-review were already covered by `/flux:grill` and `/flux:review`.
+      **The one real loss**: those two can no longer be model-invoked on the agent's
+      own initiative — 4 autonomous calls in 287 sessions is the price. Plugin bumped
+      to **2.7.0** so the two new skills publish. Reversible:
+      `claude plugin install mattpocock-skills@claude-plugins-official`.
+      Note: `claude plugin uninstall` removes the install record but **not** the
+      marketplace cache, so `sync-vendored.sh`'s `$SRC` still resolves today — but it
+      is orphaned and `claude plugin prune` may take it; pass a checkout as `$1`.
+      **The finding worth keeping — carrying a skill is nearly free; listing it is
+      not.** The prior write-up said vendoring and the install are alternatives, not a
+      stack; this is the proof, executed. "Which of the two owns this skill" and "does
+      the model need to see it" are two questions. Ownership went to flux for
+      everything with recorded use; visibility went to nobody.
+      **Open, and handed to flux:** the bar came from flux's own budget, so it applies
+      to **flux's own skill listing** — uncapped, unmeasured, and not contemplated by
+      CLAUDE.md's no-uncapped-output rule. Deliberately not settled here; deciding it
+      on the back of this session, with no flux-skill utilisation measured, would be
+      the exact mistake the pre-registration exists to prevent.
+      Superseded note follows (kept for the reasoning that led here):
+      **The duplication bar, 2026-08-23 — a pre-registered null.** Write-up:
+      `.flux/analysis/2026-08-23-mattpocock-install-cost.md`. Retire if **(a)** the
+      unvendored skills were invoked in < 5% of sessions **and (b)** the *duplicated*
+      description text costs > 500 tok/session. (a) cleared at 0.5%; **(b) failed at
+      113 tok**, because the duplication was mostly imaginary — one genuinely
+      duplicated pair (`code-review`, 452 B). The 917-tok utilisation number was
+      recorded there and deliberately not used as a bar; this entry is the honest
+      reopening it demanded.
       Superseded note follows (kept for the reasoning that led here):
       On the mattpocock retirement: **measure first.** `VENDORED.md` already
       pre-decided that the eight unvendored skills (`/tdd`, `/research`, `/prototype`,

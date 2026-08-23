@@ -78,8 +78,19 @@ transcripts.
   `.flux/archive/<framework>/`), requires a clean tree, and is recommended only after
   one real phase has run on flux in that repo.
 - **Vendored skills** (in, synced by `scripts/sync-vendored.sh`, pinned):
-  wayfinder, to-spec, to-tickets, ask-matt, grill, review. Big-feature altitude:
+  wayfinder, to-spec, to-tickets, ask-matt, grill, review, and — added 2026-08-23 —
+  research, writing-for-agents. Big-feature altitude:
   wayfinder → to-spec → to-tickets → /flux:plan per ticket.
+  *(Amendment, 2026-08-23.)* The mattpocock-skills **install is retired**: it failed a
+  pre-registered utilisation bar at ≥10.6x
+  (`.flux/analysis/2026-08-23-mattpocock-utilisation-bar.md`). research and
+  writing-for-agents were the only upstream skills with recorded use that flux did not
+  already carry, so they were vendored to make the retirement capability-neutral, with
+  `disable-model-invocation: true`. The rule this settles, and the one to reuse:
+  **carrying a skill is nearly free; listing it is not** — so the case for keeping a
+  capability is not the case for advertising it, and vendoring is what separates them.
+  Open consequence: the bar was derived from flux's own 2,000-token prime budget, so it
+  applies to **flux's own skill listing**, which is uncapped and unmeasured.
 - **Agents**: flux-explorer (haiku/low), flux-verifier (sonnet/low).
 - **Model routing** only at session boundaries (prime surfaces the plan's routing
   stamp) and subagent boundaries. Never `/model` or skill `model:` mid-session.

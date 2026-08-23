@@ -24,6 +24,21 @@ copy_skill engineering/to-spec        to-spec
 copy_skill engineering/to-tickets     to-tickets
 copy_skill engineering/ask-matt       ask-matt
 copy_skill engineering/code-review    review
+copy_skill engineering/research       research
+copy_skill productivity/writing-for-agents writing-for-agents
+
+# Vendored to preserve the capability after the mattpocock install was retired
+# (2026-08-23 utilisation bar). They are kept OUT of the model-visible skill
+# listing: the bar that retired the upstream plugin applies to flux's copies too,
+# and at their measured utilisation a listing slot does not clear it. Reachable
+# as /flux:research and /flux:writing-for-agents.
+hide_skill() { # vendored-name — add disable-model-invocation to the frontmatter
+  local f="$DST/$1/SKILL.md"
+  grep -q '^disable-model-invocation:' "$f" ||
+    perl -0pi -e 's{\A(---\n.*?)(\n---\n)}{$1\ndisable-model-invocation: true$2}s' "$f"
+}
+hide_skill research
+hide_skill writing-for-agents
 
 # grill = the grill-with-docs wrapper + its two dependencies as local references
 rm -rf "$DST/grill"; mkdir -p "$DST/grill/references"
@@ -46,7 +61,8 @@ cp "$SRC/skills/engineering/domain-modeling/CONTEXT-FORMAT.md" "$DST/grill/refer
 # Namespace rewrites: vendored set points at itself; superseded skills point at
 # their flux replacements; grill's dependencies become local reference files.
 rewrite() { perl -pi -e "$1" "$2"; }
-ALL_FILES=$(find "$DST/wayfinder" "$DST/to-spec" "$DST/to-tickets" "$DST/ask-matt" "$DST/review" "$DST/grill" -type f -name '*.md')
+ALL_FILES=$(find "$DST/wayfinder" "$DST/to-spec" "$DST/to-tickets" "$DST/ask-matt" "$DST/review" \
+                 "$DST/research" "$DST/writing-for-agents" "$DST/grill" -type f -name '*.md')
 for f in $ALL_FILES; do
   rewrite 's{/mattpocock-skills:}{/flux:}g' "$f"
   rewrite 's{(?<![\w:/-])/to-spec(?![\w-])}{/flux:to-spec}g' "$f"
@@ -55,6 +71,8 @@ for f in $ALL_FILES; do
   rewrite 's{(?<![\w:/-])/ask-matt(?![\w-])}{/flux:ask-matt}g' "$f"
   rewrite 's{(?<![\w:/-])/code-review(?![\w-])}{/flux:review}g' "$f"
   rewrite 's{(?<![\w:/-])/grill-with-docs(?![\w-])}{/flux:grill}g' "$f"
+  rewrite 's{(?<![\w:/-])/research(?![\w-])}{/flux:research}g' "$f"
+  rewrite 's{(?<![\w:/-])/writing-for-agents(?![\w-])}{/flux:writing-for-agents}g' "$f"
   rewrite 's{(?<![\w:/-])/implement(?![\w-])}{/flux:apply}g' "$f"
   rewrite 's{(?<![\w:/-])/handoff(?![\w-])}{`flux handoff`}g' "$f"
 done
@@ -71,18 +89,31 @@ perl -pi -e 's{^name: code-review$}{name: review}' "$DST/review/SKILL.md"
 cat > "$DST/VENDORED.md" <<NOTE
 # Vendored skills
 
-wayfinder, to-spec, to-tickets, ask-matt, review (upstream: code-review) and
-grill (upstream: grill-with-docs + grilling + domain-modeling as references/)
-are vendored from Matt Pocock's mattpocock-skills, version $PIN_VERSION
+wayfinder, to-spec, to-tickets, ask-matt, review (upstream: code-review),
+research, writing-for-agents, and grill (upstream: grill-with-docs + grilling +
+domain-modeling as references/) are vendored from Matt Pocock's mattpocock-skills, version $PIN_VERSION
 (claude-plugins-official commit $PIN_SHA), MIT licensed — see LICENSE-mattpocock
 in this directory. Local changes are limited to the namespace rewrites in
-scripts/sync-vendored.sh. Re-sync only by rerunning that script deliberately.
+scripts/sync-vendored.sh, plus the disable-model-invocation key that script adds
+to research and writing-for-agents. Re-sync only by rerunning that script
+deliberately.
 
-Upstream skills referenced but NOT vendored (they resolve while the
-mattpocock-skills plugin is installed, and degrade to no-ops after it retires):
-/tdd, /research, /triage, /prototype, /codebase-design,
-/improve-codebase-architecture, /grill-me, and — outside the grill skill —
-/grilling and /domain-modeling (inside grill they are local references/). His implement and handoff are
+**The upstream plugin is retired** (2026-08-23, utilisation bar — see
+.flux/analysis/2026-08-23-mattpocock-utilisation-bar.md). The marketplace cache at
+\`\$SRC\` survived the uninstall, so a re-sync still works today — but it is now
+orphaned: nothing refreshes it, and \`claude plugin prune\` may remove it. Pass a
+checkout of claude-plugins-official as \$1 rather than relying on it.
+
+research and writing-for-agents are vendored *because* of that retirement: they
+were the only upstream skills with recorded use that flux did not already carry.
+They ship \`disable-model-invocation: true\` — reachable as /flux:research and
+/flux:writing-for-agents, costing nothing in a session that does not call them.
+
+Upstream skills referenced but NOT vendored — with the plugin retired these are
+now dead references, kept only where rewriting them would distort Matt's text:
+/tdd, /triage, /prototype, /codebase-design, /improve-codebase-architecture,
+/grill-me, and — outside the grill skill — /grilling and /domain-modeling
+(inside grill they are local references/). His implement and handoff are
 superseded by /flux:apply and \`flux handoff\` and are rewritten accordingly.
 NOTE
 cp "$SRC/LICENSE" "$DST/LICENSE-mattpocock"

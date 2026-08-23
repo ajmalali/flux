@@ -841,8 +841,7 @@ assert that quality decays with context.
       turns out to matter.
       Also refreshed kiosk's own state to post-merge reality (phase/position/next/open),
       dropping the three items this session resolved.
-- [ ] Phase 03 — remaining: retire the mattpocock install; **first ledger
-      before/after, taken in kiosk**, where a measured delta exists (api cannot
+- [ ] Phase 03 — remaining: **the first ledger before/after, taken in kiosk**, where a measured delta exists (api cannot
       supply one). Status 2026-08-23: **the after-side is still n=1** — a fresh
       `./bench/run.py ramp` reads kiosk before = 40 sessions / 27 ramp calls / 6
       frontier / 15,770 tok against on/after = 1 / 6 / 1 / 51. There is nothing to
@@ -851,6 +850,32 @@ assert that quality decays with context.
       30-day transcript cleanup. Now that main carries flux, ordinary kiosk work
       feeds it. Re-run `ramp` when a handful more have landed rather than treating
       this as an action.
+- [x] **The mattpocock install is measured and NOT retired — a second
+      pre-registered null, 2026-08-23.** Write-up:
+      `.flux/analysis/2026-08-23-mattpocock-install-cost.md`. Bar written before any
+      number: retire if **(a)** the unvendored skills were invoked in < 5% of sessions
+      **and (b)** the *duplicated* description text costs > 500 tok/session.
+      **(a) clears at 0.5%** (2 of 439 transcripts; 1.1% on the stricter
+      ~175-session interactive corpus). **(b) fails at 113 tok** — because the
+      duplication was mostly imaginary. Four of the six vendored skills are not
+      model-visible upstream either, and flux's lifecycle skills carry
+      `disable-model-invocation: true`, so the injected listing is **15 mattpocock
+      skills (3,669 B ≈ 917 tok) against exactly one flux skill (`flux:review`)** —
+      a single genuinely duplicated pair, `code-review`, worth 452 B.
+      Usage across 439 transcripts, in full: grilling 3 calls, writing-for-agents 2,
+      code-review 2, domain-modeling 1. `/tdd`, `/research`, `/prototype`,
+      `/codebase-design`, `/diagnosing-bugs`, `/wizard` and
+      `/resolving-merge-conflicts` have **never been invoked once**.
+      **Recorded, deliberately not used as a bar: 917 tok/session for skills invoked
+      in 1.6% of sessions** is a *utilisation* argument, not the duplication argument
+      that was queued. Reaching for it now is the failure mode ADR 0001 fell into and
+      the api line was closed on. The write-up publishes the number, so a future bar
+      cannot honestly be tuned to it — pre-register before looking again.
+      **The finding worth keeping: vendoring and the install are alternatives, not a
+      stack.** flux vendors copies so it works when the plugin is absent; with it
+      present they are free dead weight. The real question was "which of the two owns
+      these six skills", and at 113 tok/session it does not earn a decision.
+      Superseded note follows (kept for the reasoning that led here):
       On the mattpocock retirement: **measure first.** `VENDORED.md` already
       pre-decided that the eight unvendored skills (`/tdd`, `/research`, `/prototype`,
       `/codebase-design`, and the rest) degrade to no-ops on retirement, so the cost

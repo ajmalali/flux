@@ -54,6 +54,21 @@ Updated: 2026-08-22 (ADR 0001's ledger metric measured, then its experiment run:
     not commits, so it will report "already at the latest version" over a stale cache.
     See the adopt-run entry in the task queue; the plugin is now 2.1.0.
 
+  - **Superseded 2026-08-23 — the install is no longer a copy, and the manifest's
+    `hooks` key is now a load error.** `known_marketplaces.json` records
+    `flux-market.installLocation` as `/Users/ajmalali/Dev/flux` itself, so a
+    directory-source plugin loads from the working tree; the stale
+    `~/.claude/plugins/cache/flux-market/flux/{2.0.0,2.1.0,2.3.0}` copies are
+    leftovers. **The version bump is still required** — `claude plugin update`
+    compares versions — but a bumped version now publishes the tree, not a snapshot.
+    And on Claude Code 2.1.234 `hooks/hooks.json` is loaded automatically, so
+    `plugin.json`'s `"hooks": "./hooks/hooks.json"` made the plugin fail to load
+    outright (*"Duplicate hooks file detected"*), silently reverting the session to
+    no flux skills at all. The key is removed; `manifest.hooks` may only name
+    *additional* hook files. Plugin **2.6.0**, `claude plugin list` green.
+    Also: `claude plugin update flux` is "not found" — the argument is
+    `flux@flux-market`, marketplace suffix included.
+
   - **Detection generalized (2026-08-20)** — the goal the user set is "works for
     any repository, any project type", so detection was rebuilt as a rule table
     (`CHECK_RULES` in `bin/flux`) covering nx, turbo, bazel, cargo, go, mix,
@@ -736,6 +751,15 @@ assert that quality decays with context.
       - `plan.md` amended in place (not contradicted) with the reasoning and the two
         things the amendment does not claim.
       - Plugin **2.5.0** — skills changed, so the cache needs the bump to see them.
+- [x] **Fixed 2026-08-23 — the plugin had been failing to load since some Claude
+      Code update, and the 2.5.0 skills never reached any session.** `claude plugin
+      list` showed `flux@flux-market 2.3.0 ✘ failed to load: Duplicate hooks file
+      detected`. Cause and fix in the superseded-install note above. Nothing in the
+      suite guarded the manifest, and nothing surfaced the failure — a plugin that
+      fails to load is invisible unless you list it. **Two guard tests added**
+      (`TestPluginManifest`): the manifest may not reference the auto-loaded
+      `hooks/hooks.json`, and `hooks/hooks.json` must still register `flux prime` on
+      SessionStart. **153 green.**
 - [ ] Phase 03 — generalize (zaps/api), retire PAUL/mattpocock installs, first
       ledger before/after. **PAUL's retirement is now evidence-backed**: 1/4
       delivered at 31% acceptance in meridian-003, the worst arm that reached a

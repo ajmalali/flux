@@ -714,6 +714,35 @@ class TestLifecycleSkills(unittest.TestCase):
                                  "%s: the gate takes no arguments, got %r" % (name, call))
 
 
+class TestPluginManifest(unittest.TestCase):
+    """The manifest is how flux reaches a session at all, and a manifest that fails to
+    load is invisible — no skills, no hook, no error anywhere but `claude plugin list`.
+    Both rules below cost a real outage on 2026-08-23."""
+
+    def manifest(self):
+        import json
+        with open(os.path.join(REPO, ".claude-plugin", "plugin.json"), encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_manifest_does_not_declare_the_standard_hooks_file(self):
+        # Claude Code loads hooks/hooks.json automatically; naming it again in the
+        # manifest is a duplicate-hooks load error that disables the whole plugin.
+        # `hooks` may only point at *additional* files.
+        hooks = self.manifest().get("hooks")
+        self.assertTrue(
+            hooks is None or "hooks/hooks.json" not in str(hooks),
+            "plugin.json must not reference the auto-loaded hooks/hooks.json (got %r)" % (hooks,),
+        )
+
+    def test_standard_hooks_file_registers_prime(self):
+        import json
+        with open(os.path.join(REPO, "hooks", "hooks.json"), encoding="utf-8") as f:
+            data = json.load(f)
+        entries = data["hooks"]["SessionStart"]
+        commands = [h["command"] for entry in entries for h in entry["hooks"]]
+        self.assertTrue(any("flux" in c and "prime" in c for c in commands), commands)
+
+
 class TestHelp(unittest.TestCase):
     def test_no_args_prints_usage(self):
         out = subprocess.run([FLUX], capture_output=True, text=True)

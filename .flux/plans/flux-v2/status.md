@@ -1,6 +1,6 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-23 (Phase 03's api line closed as a **pre-registered null**: prime's ceiling in zaps/api is ~1.1k tokens of a ~50k ramp, and the gate bar — written down before the number — was missed at 2,166 vs 5,000. api is NOT adopted. Five competing frameworks retired there instead: 193 files / −32,927 lines on a branch. Binding finding: **flux's value is repo-shaped** — it needs a bloated state artifact read whole and a fan-out gate; adoption is a measurement, not a rollout. Phase 03 rescoped to "establish where flux pays". 153 tests green.)
+Updated: 2026-08-23 (Phase 03's api line closed as a **pre-registered null**: prime's ceiling in zaps/api is ~1.1k tokens of a ~50k ramp, and the gate bar — written down before the number — was missed at 2,166 vs 5,000. api is NOT adopted. Five competing frameworks retired there instead: 193 files / −32,927 lines on a branch. Binding finding: **flux's value is repo-shaped** — it needs a bloated state artifact read whole and a fan-out gate; adoption is a measurement, not a rollout. Phase 03 rescoped to "establish where flux pays". 153 tests green. Later the same day: **kiosk PR #66 merged** (`e8a3199`), the codegraph hook guard homed on main (`f293528`), and the open `.flux/state.toml` question decided — **untracked in kiosk** (`19861ee`), because a wholesale-rewritten file across ~100 branches conflicts on every one of them.)
 
 ## Current state
 
@@ -817,10 +817,47 @@ assert that quality decays with context.
       three references the deletions would have orphaned (`docs/agents/domain.md`,
       `.dockerignore`, `.gitignore`). **api was already flux-installed once (v1)** —
       Phase 03 there was a re-install after an abandoned removal, not a fresh one.
+- [x] **kiosk PR #66 merged 2026-08-23** (`e8a3199`), and its two loose ends closed
+      straight on main at the user's call (one-line, already verified — no PR):
+      - `f293528` **the codegraph guard is homed.** `.claude/settings.json`'s
+        UserPromptSubmit hook ran `codegraph prompt-hook` unconditionally, so every
+        prompt returned 127 for a contributor without the binary. Now
+        `command -v codegraph >/dev/null 2>&1 || exit 0; codegraph prompt-hook || exit 0`
+        — re-verified to exit 0 with codegraph off PATH, JSON re-parsed before commit.
+        This was the task the n=1 prime experiment session was given; the fix it
+        produced spent two days uncommitted because writes to `.claude/settings.json`
+        were denied in that session.
+      - `19861ee` **`.flux/state.toml` is no longer tracked in kiosk** — the open
+        question is decided, option (1) of two. It is rewritten wholesale every
+        session, and kiosk carries ~100 branch refs, so tracking it guarantees a
+        conflict on a file nobody edits by hand. Added to `.flux/.gitignore` with the
+        reasoning inline; `git rm --cached`. Verified after: `flux prime` still renders
+        the full pack, and a subsequent `flux state set` (6 keys, 1165/8000 bytes)
+        left `git status` clean — which is the whole point.
+      **Not done, and deliberately: the append-only state format (option 2, the
+      JSONL-in-git idea stolen from `bd`) is still the better long-term answer** and
+      is unbuilt. Untracking is reversible; the format change is the one that would
+      let state travel between clones without conflicting. Revisit if state-per-clone
+      turns out to matter.
+      Also refreshed kiosk's own state to post-merge reality (phase/position/next/open),
+      dropping the three items this session resolved.
 - [ ] Phase 03 — remaining: retire the mattpocock install; **first ledger
       before/after, taken in kiosk**, where a measured delta exists (api cannot
-      supply one). Close kiosk PR #66 and find a home for the uncommitted
-      `.claude/settings.json` codegraph guard.
+      supply one). Status 2026-08-23: **the after-side is still n=1** — a fresh
+      `./bench/run.py ramp` reads kiosk before = 40 sessions / 27 ramp calls / 6
+      frontier / 15,770 tok against on/after = 1 / 6 / 1 / 51. There is nothing to
+      *take* here on demand: the after-median accrues one datapoint per real
+      interactive kiosk session, and the before-corpus keeps eroding under the CLI's
+      30-day transcript cleanup. Now that main carries flux, ordinary kiosk work
+      feeds it. Re-run `ramp` when a handful more have landed rather than treating
+      this as an action.
+      On the mattpocock retirement: **measure first.** `VENDORED.md` already
+      pre-decided that the eight unvendored skills (`/tdd`, `/research`, `/prototype`,
+      `/codebase-design`, and the rest) degrade to no-ops on retirement, so the cost
+      is known and the case for pulling it is context — api's mining put whole-file
+      skill reads from the plugin cache at 18.7k/14.0k/9.7k chars, three of the
+      fifteen largest Bash results. Get that number for a session with both plugins
+      installed before uninstalling anything.
 
 ## Session-close checklist (execute at the end of EVERY working session)
 

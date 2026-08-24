@@ -1,6 +1,8 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-23 (Phase 03's api line closed as a **pre-registered null**: prime's ceiling in zaps/api is ~1.1k tokens of a ~50k ramp, and the gate bar — written down before the number — was missed at 2,166 vs 5,000. api is NOT adopted. Five competing frameworks retired there instead: 193 files / −32,927 lines on a branch. Binding finding: **flux's value is repo-shaped** — it needs a bloated state artifact read whole and a fan-out gate; adoption is a measurement, not a rollout. Phase 03 rescoped to "establish where flux pays". 153 tests green. Later the same day: **kiosk PR #66 merged** (`e8a3199`), the codegraph hook guard homed on main (`f293528`), and the open `.flux/state.toml` question decided — **untracked in kiosk** (`19861ee`), because a wholesale-rewritten file across ~100 branches conflicts on every one of them. Later still: **the mattpocock install is RETIRED** — reopened on a
+Updated: 2026-08-24 (**the agent roster failed the same bar at zero and both agents are deleted** — 505 B = 126 tok/session, 0 invocations in 273 billed sessions and 0 in all 537 transcripts; trim and merge cannot clear a zero denominator so deletion was the only rung, pre-registered in `88ce1a8` before the read. Corrected: the roster is 505 B = 126 tok, not the 473 B = 118 tok published in `6c9a8f6`. Capability given up, reported as loss: flux-verifier's pre-existing-failure check and flux-explorer's haiku/low cost pin; the rest was already done in code by `flux check`/`flux run --filter` and by the built-in `Explore` (invoked 13x in the same corpus where flux-explorer was invoked 0). **flux now injects nothing model-visible except `prime`** — 0 of 14 skills listed, 0 agents. Every uncapped always-on path it ever had has now met the bar and every one failed. Plugin 2.9.0, 153 tests green. NEXT: stop auditing context; build the append-only JSONL-in-git state format.)
+
+Previously — 2026-08-23 (Phase 03's api line closed as a **pre-registered null**: prime's ceiling in zaps/api is ~1.1k tokens of a ~50k ramp, and the gate bar — written down before the number — was missed at 2,166 vs 5,000. api is NOT adopted. Five competing frameworks retired there instead: 193 files / −32,927 lines on a branch. Binding finding: **flux's value is repo-shaped** — it needs a bloated state artifact read whole and a fan-out gate; adoption is a measurement, not a rollout. Phase 03 rescoped to "establish where flux pays". 153 tests green. Later the same day: **kiosk PR #66 merged** (`e8a3199`), the codegraph hook guard homed on main (`f293528`), and the open `.flux/state.toml` question decided — **untracked in kiosk** (`19861ee`), because a wholesale-rewritten file across ~100 branches conflicts on every one of them. Later still: **the mattpocock install is RETIRED** — reopened on a
 utilisation bar derived from flux's own 2,000-token prime budget (≤2,000 tok per
 session-of-use), pre-registered in `ecfcffb` before a fresh number was read, and failed
 at **21,110 — 10.6x** on 9 invoking sessions out of 287. Trim was tried first and also
@@ -31,6 +33,8 @@ the **agent** roster, 118 tok/session, 0 post-install uses, no dmi equivalent.)
   - Plugin scaffold: `.claude-plugin/plugin.json` + `marketplace.json` (self-market
     via `"source": "./"`); `hooks/hooks.json` SessionStart → `${CLAUDE_PLUGIN_ROOT}/bin/flux prime`.
   - `agents/flux-explorer.md` (haiku/low), `agents/flux-verifier.md` (sonnet/low).
+    **Both DELETED 2026-08-24** on the utilisation bar (0 invocations, 0.00% util);
+    there is no `agents/` directory any more. See the RESULT entry near the end.
   - Vendored skills: wayfinder, to-spec, to-tickets, ask-matt, review, grill
     (grill = wrapper + grilling/domain-modeling as `references/`), synced by
     `scripts/sync-vendored.sh`, pinned to mattpocock-skills 1.2.3
@@ -1021,7 +1025,7 @@ assert that quality decays with context.
       and agents have no `disable-model-invocation` equivalent, so the trim step may
       not exist. Measuring it is its own task.
 
-- [ ] **Next task: measure the AGENT roster against the same bar** — the last uncapped
+- [x] **DONE 2026-08-24 — measure the AGENT roster against the same bar** — the last uncapped
       always-on path flux has, and the one the skill-listing measurement handed on
       (`.flux/analysis/2026-08-23-flux-listing-utilisation.md`). Do not re-derive the
       bar: it is `ecfcffb`'s, 2,000 tok per session-of-use, both denominators, applied
@@ -1064,7 +1068,7 @@ assert that quality decays with context.
       item is the append-only JSONL-in-git state format (see the `bd` entry above), which
       is the answer to the `.flux/state.toml` conflict problem and is UNBUILT.
 
-- [ ] **Pre-registration — the agent roster's escalation ladder, written before any
+- [x] **Pre-registration (honoured) — the agent roster's escalation ladder, written before any
       fresh number (2026-08-24).** The bar is not re-derived: `ecfcffb`'s, verbatim —
       an always-on injection may cost at most **2,000 tok per session-of-use**,
       `cost = tokens injected per session / share of billed sessions with >=1 invocation`,
@@ -1109,6 +1113,59 @@ assert that quality decays with context.
       `6c9a8f6`, so the *direction* of this verdict is visible before the measurement.
       The pre-registration buys the **action**, not the suspense — and a ladder written
       after the number would be worth nothing at all.
+
+- [x] **RESULT 2026-08-24 — the agent roster FAILS at zero; both agents are deleted.**
+      Full write-up: `.flux/analysis/2026-08-24-agent-roster-utilisation.md`. Re-runnable:
+      `python3 scripts/skill-utilisation.py flux: --agents --since 2026-08-20 --roster-bytes 505`.
+      **The number:** 505 B = **126 tok/session** injected into every session in every
+      repo; **0** invocations of either agent in **273** billed sessions (89
+      real-interactive); **0.00% utilisation on both denominators**; cost per
+      session-of-use **undefined, because the denominator is zero**. Harder than the
+      skill listing's failure — there is no multiple to quote. And it is not "0 since
+      install": it is **0 across all 537 transcripts**. The only `flux:` agent calls ever
+      logged are 3 from 2026-08-11 (`flux:chore`/`build`/`deep`) — v1 names, retired
+      product, disqualified as the v1 skill commands were.
+      **Correction to publish:** the figure carried in `6c9a8f6` and the previous
+      analysis, **473 B = 118 tok, is wrong — it is 505 B = 126 tok**. The earlier count
+      omitted the `flux:` namespace prefix the harness prepends. 7% understated; verdict
+      unaffected.
+      **Method, stated as the weakness it is (the pre-registration required this).** The
+      numerator cannot be corpus-measured — 493 `skill_listing` attachments exist and
+      **zero** agent equivalents, because the roster is injected into the system prompt
+      and never logged. So it was both **projected** from `agents/*.md` and **read off
+      one live session**, which agreed exactly at 505 B. Agreement of a projection with
+      an n=1 observation is not a corpus, and this is the same class of evidence the repo
+      used to dismiss `claude plugin details`. "Billed" is a proxy too — nothing records
+      a session as *carrying* the roster, so agent mode assumes a user-scoped plugin
+      bills every session after install (`--since`), and now warns if run without it.
+      **The half that decides it is solid**: `subagent_type` on `Task`/`Agent` calls is
+      logged, and the zero is measured. A weak numerator can only set how badly it fails,
+      and at a zero denominator that is undefined anyway.
+      **Why the ladder had to be rewritten, which is the transferable finding:** at zero
+      utilisation, **trim and merge are arithmetically incapable of clearing the bar** —
+      any positive cost over a zero denominator fails. Deletion was not the harshest rung
+      here, it was **the only rung that exists**. Registered in `88ce1a8` before the read.
+      **Capability given up, reported as loss, not argued away:** (a) flux-verifier's
+      pre-existing-failure check (reproduce on a clean stash, say so) — `flux check`
+      cannot do that, and it is gone; its main job was already done in code by
+      `apply_filter`. (b) flux-explorer's `model: haiku, effort: low` cost pin, which the
+      built-in `Explore` does not offer. Its format rule is largely duplicated by
+      `Explore`. Corpus settles the preference: in the same 537 transcripts,
+      `general-purpose` 47 / `Explore` **13** / `flux-explorer` **0**.
+      **The one assumption that could reopen it:** that no frontmatter key hides an agent
+      from the roster while keeping it invocable. Inherited, not re-verified here.
+      **Changed:** `agents/` deleted entirely; `apply`/`adopt`/`plan` rerouted to the
+      built-in `Explore` and to `flux check` / `flux run --filter`; plugin **2.9.0**;
+      `scripts/skill-utilisation.py --agents` added (labels its numerator `projected`
+      everywhere it prints it). 153 tests green — and the 6,000 B skill budget caught the
+      first `apply` rewrite at 6,169 B and forced it back down, unprompted.
+      **The line this closes: flux now injects nothing the model can see except `prime`.**
+      0 of 14 skills model-visible, 0 agents. Every uncapped always-on path flux ever had
+      has now met the same pre-registered bar and **every one failed** — mattpocock 6.7x,
+      `flux:review` zero, the agent roster zero. **A listing slot is not a default, and
+      neither is an agent**: both were bought by inheritance (upstream frontmatter;
+      a scaffold's `agents/` directory), neither ever carried a falsifiable claim that
+      the model must see the thing, and when one was demanded none survived.
 
 ## Session-close checklist (execute at the end of EVERY working session)
 

@@ -24,7 +24,7 @@ The primed pack is already in context — `phase`, `position`, `next`, `open`. A
 - the effort's `plan.md` / `status.md` under `.flux/plans/`, if one exists;
 - source files whose *current shape* the plan's correctness depends on.
 
-Send wider reading to `flux-explorer`; take its pointers, not its files. Do not chain
+Send wider reading to the built-in `Explore` agent; take its pointers, not its files. Do not chain
 prior summaries "for context" — unread context still costs the same as read context.
 
 ## Size the work before writing it

@@ -90,12 +90,11 @@ including when the failure looks unrelated — say so, don't route around it.
 
 ## Delegate the reading
 
-- Need to find where something lives, or how a pattern is used → `flux-explorer`.
-- Gate failing in a way you need diagnosed → `flux-verifier`. It returns each distinct
-  failure once, no stack dumps.
-
-Both exist so the raw output never enters this session. Use them before pasting a
-large file or a long log into your own context.
+- Need to find where something lives, or how a pattern is used → the built-in
+  `Explore` agent. Take its pointers, not its files.
+- Gate failing and the log is long → `flux check` already filters it, and
+  `flux run --filter failures -- <cmd>` does the same for a scoped run. Read the
+  filtered output; never re-run the command raw to see more.
 
 ## When something turns out wrong, diagnose before patching
 

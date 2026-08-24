@@ -106,10 +106,19 @@ transcripts.
   claim that the model must see it — the slot is not a default.
   Re-runnable at `scripts/skill-utilisation.py <namespace-prefix>`, which prints both
   readings; it also corrected the mattpocock figure to 6.7x (from 10.6x).
-  Still open, same bar: the **agent** roster (flux-explorer + flux-verifier,
-  473 B = 118 tok/session, 0 real invocations since the install) — larger than the
-  skill listing was, and with no `disable-model-invocation` equivalent to trim to.
-- **Agents**: flux-explorer (haiku/low), flux-verifier (sonnet/low).
+  Closed the same way, 2026-08-24: the **agent** roster (flux-explorer +
+  flux-verifier, corrected to **505 B = 126 tok/session**) took the same bar and
+  failed at **0.00% utilisation on both denominators** — 0 invocations in 273 billed
+  sessions, and 0 in the whole 537-transcript corpus. With no
+  `disable-model-invocation` equivalent, and trim/merge arithmetically unable to clear
+  a zero denominator, **deletion was the only rung on the ladder**; both agents are
+  gone (`--agents` mode, `.flux/analysis/2026-08-24-agent-roster-utilisation.md`).
+- **Agents**: none. flux ships no agents and no model-visible skills; `prime` is the
+  entire model-visible surface, and it is capped. Shipped in Phase 01 as
+  flux-explorer (haiku/low) + flux-verifier (sonnet/low), deleted 2026-08-24 on the
+  utilisation bar — `flux check`/`flux run --filter` already keep raw output out of
+  context in code, and the built-in `Explore` agent was invoked 13 times in the same
+  corpus where flux-explorer was invoked 0.
 - **Model routing** only at session boundaries (prime surfaces the plan's routing
   stamp) and subagent boundaries. Never `/model` or skill `model:` mid-session.
 

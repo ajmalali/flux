@@ -1,6 +1,6 @@
 {
   "name": "flux",
-  "version": "2.8.0",
+  "version": "2.9.0",
   "description": "Deterministic session machinery for Claude Code: primed sessions, budgeted state, filtered verification, generated handoffs — plus a lean lifecycle skill set.",
   "author": { "name": "Ajmal Ali" }
 }

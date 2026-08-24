@@ -48,8 +48,8 @@ sed -n '10,88p' STATE.md | cut -c1-300  # one section, line length capped
 **Cap line length, not line count.** These files are append-layered and their lines
 run long — kiosk's `STATE.md` is 300 KB over 631 lines, with a single 17 KB line, so a
 plain `head -60` returned 100 KB. `head`/`tail` alone are not a budget; `cut -c1-300`
-is. Prefer targeted questions to `flux-explorer` over reading at all, and take its
-pointers back rather than its pages. Read history only where it explains something live.
+is. Prefer targeted questions to the built-in `Explore` agent over reading at all,
+and take its pointers back rather than its pages. Read history only where it explains something live.
 
 ## 4. Trust the tree over the framework
 

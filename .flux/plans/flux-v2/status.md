@@ -1,6 +1,6 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-24, later (**the append-only state format is BUILT and dogfooded** — `.flux/state.toml` is gone from this repo, replaced by `.flux/state.jsonl`, one JSON record per key per write, union-merged by git via `.flux/.gitattributes` and resolved by replay. ADR **0002**. `updated` is now derived from the newest record rather than stored — it was one guaranteed-divergent line per session on a file every branch rewrote. New: `flux state log [N]` (the superseded value survives a bad write — the 2026-08-22 silent-corruption defect had no recovery path) and `flux state compact` (auto-fires past 8x the pack budget, because CLAUDE.md forbids uncapped stored state and an append-only file is uncapped by construction). The budget still prices the **rendered pack**, not the log — checked before appending, so an over-budget write leaves the log untouched. **18 new tests, 171 green**, and the two that matter run real `git merge`: two branches touching the same key merge clean and the newer wins, while the same two sessions against the old `state.toml` conflict — the control is in the suite. Plugin **2.10.0**. NEXT: the metric only reads honestly once kiosk removes `state.toml` from `.flux/.gitignore` and commits the log; until then it is 0 for the wrong reason.)
+Updated: 2026-08-24, later (**the append-only state format is BUILT and dogfooded** — `.flux/state.toml` is gone from this repo, replaced by `.flux/state.jsonl`, one JSON record per key per write, union-merged by git via `.flux/.gitattributes` and resolved by replay. ADR **0002**. `updated` is now derived from the newest record rather than stored — it was one guaranteed-divergent line per session on a file every branch rewrote. New: `flux state log [N]` (the superseded value survives a bad write — the 2026-08-22 silent-corruption defect had no recovery path) and `flux state compact` (auto-fires past 8x the pack budget, because CLAUDE.md forbids uncapped stored state and an append-only file is uncapped by construction). The budget still prices the **rendered pack**, not the log — checked before appending, so an over-budget write leaves the log untouched. **18 new tests, 171 green**, and the two that matter run real `git merge`: two branches touching the same key merge clean and the newer wins, while the same two sessions against the old `state.toml` conflict — the control is in the suite. Plugin **2.10.0**. **ADOPTED IN KIOSK the same day** (`728adf8`, unpushed): the `state.toml` line is out of kiosk's `.flux/.gitignore`, the 5 live keys migrated one-way on first write, and `state.jsonl` + `.gitattributes` are committed on `main` in a **101-branch** repo — so the conflict metric has a denominator and cycle 1 of 2 starts now. A live two-branch merge there came back clean: 0 unmerged paths, both records kept, replay returned the newer. NEXT: nothing to build on this line — let ordinary kiosk work accrue and read the count next cycle.)
 
 Previously — 2026-08-24 (**the agent roster failed the same bar at zero and both agents are deleted** — 505 B = 126 tok/session, 0 invocations in 273 billed sessions and 0 in all 537 transcripts; trim and merge cannot clear a zero denominator so deletion was the only rung, pre-registered in `88ce1a8` before the read. Corrected: the roster is 505 B = 126 tok, not the 473 B = 118 tok published in `6c9a8f6`. Capability given up, reported as loss: flux-verifier's pre-existing-failure check and flux-explorer's haiku/low cost pin; the rest was already done in code by `flux check`/`flux run --filter` and by the built-in `Explore` (invoked 13x in the same corpus where flux-explorer was invoked 0). **flux now injects nothing model-visible except `prime`** — 0 of 14 skills listed, 0 agents. Every uncapped always-on path it ever had has now met the bar and every one failed. Plugin 2.9.0, 153 tests green. NEXT: stop auditing context; build the append-only JSONL-in-git state format.)
 
@@ -1212,10 +1212,18 @@ assert that quality decays with context.
       branch count to produce one. **Delete condition:** if after two cycles
       `state.jsonl` is still untracked everywhere, the format bought nothing untracking
       did not, and it reverts.
-      **The adoption step this needs and did NOT do here:** kiosk's `.flux/.gitignore`
-      still names `state.toml` (added `19861ee`). Until that line goes and the log is
-      committed there, the metric can only read 0 for the wrong reason. That, not more
-      building, is the next move on this line.
+      **The adoption step — DONE in kiosk 2026-08-24, `728adf8` (unpushed).** The
+      `state.toml` line is out of kiosk's `.flux/.gitignore` (it had been added by
+      `19861ee`), `flux state set` migrated the 5 live keys one-way and removed the
+      TOML, and `.flux/state.jsonl` + `.flux/.gitattributes` are committed on `main`
+      in a repo with **101 branches**. Two checks in the real checkout, not the suite:
+      `git check-attr merge -- .flux/state.jsonl` reports `union`, and a live test —
+      two branches off `main`, each `flux state set next <...>`, merged — came back
+      **clean: 0 unmerged paths, both records kept, replay returned the newer**
+      (temp branches deleted, `main` left at the adoption commit). Kiosk's `position`
+      was rewritten in the same write to describe the log rather than the untracking.
+      **Cycle 1 of the two-cycle delete condition starts here**; the count is now 0
+      for the right reason, and the next move is to read it, not to build.
       **Not claimed:** conflict-*free* (a rebase or a hand-edit can still conflict —
       replay survives it), merge semantics (it is last-write-wins; the loser is
       preserved and visible in `flux state log`), or any context saving — the pack

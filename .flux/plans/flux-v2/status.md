@@ -1,6 +1,8 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-24 (**the agent roster failed the same bar at zero and both agents are deleted** — 505 B = 126 tok/session, 0 invocations in 273 billed sessions and 0 in all 537 transcripts; trim and merge cannot clear a zero denominator so deletion was the only rung, pre-registered in `88ce1a8` before the read. Corrected: the roster is 505 B = 126 tok, not the 473 B = 118 tok published in `6c9a8f6`. Capability given up, reported as loss: flux-verifier's pre-existing-failure check and flux-explorer's haiku/low cost pin; the rest was already done in code by `flux check`/`flux run --filter` and by the built-in `Explore` (invoked 13x in the same corpus where flux-explorer was invoked 0). **flux now injects nothing model-visible except `prime`** — 0 of 14 skills listed, 0 agents. Every uncapped always-on path it ever had has now met the bar and every one failed. Plugin 2.9.0, 153 tests green. NEXT: stop auditing context; build the append-only JSONL-in-git state format.)
+Updated: 2026-08-24, later (**the append-only state format is BUILT and dogfooded** — `.flux/state.toml` is gone from this repo, replaced by `.flux/state.jsonl`, one JSON record per key per write, union-merged by git via `.flux/.gitattributes` and resolved by replay. ADR **0002**. `updated` is now derived from the newest record rather than stored — it was one guaranteed-divergent line per session on a file every branch rewrote. New: `flux state log [N]` (the superseded value survives a bad write — the 2026-08-22 silent-corruption defect had no recovery path) and `flux state compact` (auto-fires past 8x the pack budget, because CLAUDE.md forbids uncapped stored state and an append-only file is uncapped by construction). The budget still prices the **rendered pack**, not the log — checked before appending, so an over-budget write leaves the log untouched. **18 new tests, 171 green**, and the two that matter run real `git merge`: two branches touching the same key merge clean and the newer wins, while the same two sessions against the old `state.toml` conflict — the control is in the suite. Plugin **2.10.0**. NEXT: the metric only reads honestly once kiosk removes `state.toml` from `.flux/.gitignore` and commits the log; until then it is 0 for the wrong reason.)
+
+Previously — 2026-08-24 (**the agent roster failed the same bar at zero and both agents are deleted** — 505 B = 126 tok/session, 0 invocations in 273 billed sessions and 0 in all 537 transcripts; trim and merge cannot clear a zero denominator so deletion was the only rung, pre-registered in `88ce1a8` before the read. Corrected: the roster is 505 B = 126 tok, not the 473 B = 118 tok published in `6c9a8f6`. Capability given up, reported as loss: flux-verifier's pre-existing-failure check and flux-explorer's haiku/low cost pin; the rest was already done in code by `flux check`/`flux run --filter` and by the built-in `Explore` (invoked 13x in the same corpus where flux-explorer was invoked 0). **flux now injects nothing model-visible except `prime`** — 0 of 14 skills listed, 0 agents. Every uncapped always-on path it ever had has now met the bar and every one failed. Plugin 2.9.0, 153 tests green. NEXT: stop auditing context; build the append-only JSONL-in-git state format.)
 
 Previously — 2026-08-23 (Phase 03's api line closed as a **pre-registered null**: prime's ceiling in zaps/api is ~1.1k tokens of a ~50k ramp, and the gate bar — written down before the number — was missed at 2,166 vs 5,000. api is NOT adopted. Five competing frameworks retired there instead: 193 files / −32,927 lines on a branch. Binding finding: **flux's value is repo-shaped** — it needs a bloated state artifact read whole and a fan-out gate; adoption is a measurement, not a rollout. Phase 03 rescoped to "establish where flux pays". 153 tests green. Later the same day: **kiosk PR #66 merged** (`e8a3199`), the codegraph hook guard homed on main (`f293528`), and the open `.flux/state.toml` question decided — **untracked in kiosk** (`19861ee`), because a wholesale-rewritten file across ~100 branches conflicts on every one of them. Later still: **the mattpocock install is RETIRED** — reopened on a
 utilisation bar derived from flux's own 2,000-token prime budget (≤2,000 tok per
@@ -1166,6 +1168,59 @@ assert that quality decays with context.
       neither is an agent**: both were bought by inheritance (upstream frontmatter;
       a scaffold's `agents/` directory), neither ever carried a falsifiable claim that
       the model must see the thing, and when one was demanded none survived.
+
+- [x] **BUILT 2026-08-24 — the append-only state format. `.flux/state.toml` is
+      retired; state is `.flux/state.jsonl` and git merges it.** ADR
+      `.flux/adr/0002-append-only-state.md`. This is the standing build item the last
+      three sessions kept deferring, and the second of the two ideas the `bd` entry
+      above marked worth stealing without taking the dependency.
+      **The format:** one record per key per write — `{"ts","k","v"}`, appended, never
+      rewritten. `flux init` writes `.flux/.gitattributes` with
+      `state.jsonl merge=union`, so two branches that appended both keep their
+      records; **replay resolves it last-write-wins and git never has to decide.**
+      **Three things fall out, each the point rather than a side effect:** `updated`
+      is now **derived** from the newest surviving record instead of stored (stored, it
+      was one guaranteed-divergent line per session on a file every branch rewrote —
+      the conflict in miniature); an **empty value clears a key**, which the rewritten
+      file could only do by hand-edit; and `flux state log [N]` shows the **superseded
+      value**, which is the one thing an append-only format buys that a rewrite cannot
+      — the 2026-08-22 silent-corruption defect (`--phase` written as a key) had no
+      recovery path at all.
+      **The cap, because CLAUDE.md forbids uncapped stored state and an append-only
+      file is uncapped by construction:** `flux state compact` collapses to one record
+      per live key, and `state set` fires it automatically past **8x the rendered
+      budget** (64 KB at the 2,000-token default). Compaction is deterministic — same
+      records in, byte-identical file out — so two clones that compact independently
+      agree rather than diverging on the fix for divergence.
+      **The budget prices the pack, not the log**, checked *before* appending, so an
+      over-budget write leaves the log exactly as it was (the guarantee the rewritten
+      file gave). Billing storage would have strangled the format on day one; a test
+      pins it — ten rewrites of one key grow the log and not the pack.
+      **Migration is one-way on first write** and **removes `state.toml`**: leaving it
+      leaves a stale second copy of the file a human reads to learn where a project is.
+      Before that first write `read_state` still renders the TOML — every adopting repo
+      has one and `prime` must not go blank waiting for a `set`. Run live here: 5 keys
+      migrated, `prime` renders identically, `git status` shows the swap.
+      **18 tests, 171 green. The two that matter run a real `git merge`**: same-key
+      writes on two branches merge clean and the newer wins — and the **control is in
+      the suite**, the same two sessions against the old `state.toml` conflicting. Also
+      guarded: an unparseable line (conflict marker, truncated write) is skipped and
+      `prime` still renders, because this is the file that carries the project.
+      Plugin **2.10.0** — `bin/flux` is hook-invoked.
+      **Ledger metric (ADR 0002): merge conflicts touching `.flux/state.*` per
+      reporting cycle, target 0, measured in kiosk** — the only adopting repo with the
+      branch count to produce one. **Delete condition:** if after two cycles
+      `state.jsonl` is still untracked everywhere, the format bought nothing untracking
+      did not, and it reverts.
+      **The adoption step this needs and did NOT do here:** kiosk's `.flux/.gitignore`
+      still names `state.toml` (added `19861ee`). Until that line goes and the log is
+      committed there, the metric can only read 0 for the wrong reason. That, not more
+      building, is the next move on this line.
+      **Not claimed:** conflict-*free* (a rebase or a hand-edit can still conflict —
+      replay survives it), merge semantics (it is last-write-wins; the loser is
+      preserved and visible in `flux state log`), or any context saving — the pack
+      `prime` renders is byte-identical to before. This buys durability across clones,
+      not tokens.
 
 ## Session-close checklist (execute at the end of EVERY working session)
 

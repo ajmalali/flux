@@ -5,12 +5,15 @@ Single-file, stdlib-only, Python 3.9+. Rides in the plugin's bin/ so hooks can
 call it as a bare command with zero install latency. Everything it injects into
 model context has a hard byte budget it enforces itself (tokens ~= bytes / 4).
 
-Commands: init | prime | state get/set | check | handoff | run -- <cmd>
+Commands: init | prime | state get/set/log/compact | check | handoff | run -- <cmd>
 
   flux init [--force] [--scan]   --scan: inventory prior project state, write nothing
+  flux state log [N]             recent writes, newest first (default 20)
+  flux state compact             collapse the log to one record per live key
   flux run [--tail N] [--filter elide|failures|tail:N|raw] -- <command...>
 """
 
+import calendar
 import fnmatch
 import json
 import os
@@ -22,6 +25,24 @@ import time
 BYTES_PER_TOKEN = 4
 DEFAULT_STATE_BUDGET_TOKENS = 2000
 COLD_SECONDS = 3600
+
+# State is an append-only log, not a rewritten file. See read_state() for why.
+STATE_LOG_NAME = "state.jsonl"
+STATE_LOG_LEGACY = "state.toml"
+# The log is stored state, so it is capped in code like everything else flux keeps:
+# past this multiple of the rendered budget, `state set` compacts it.
+STATE_LOG_BUDGET_MULTIPLE = 8
+# Render order: the pack's keys first, then anything else alphabetically. Fixed so
+# two clones replaying the same records produce byte-identical output.
+STATE_KEY_ORDER = ("phase", "position", "next", "routing", "open")
+# `updated` is derived from the newest surviving record. Storing it was one
+# guaranteed-divergent line per session in a file every branch rewrote.
+STATE_DERIVED_KEYS = ("updated",)
+GITATTRIBUTES = (
+    "# Concurrent appends from two branches must merge, not conflict: union keeps\n"
+    "# both sides' records and `flux state get` replays them last-write-wins.\n"
+    "%s merge=union\n" % STATE_LOG_NAME
+)
 
 # ---------------------------------------------------------------- toml (subset)
 
@@ -67,7 +88,8 @@ def load_toml(path):
     return data
 
 def dump_flat_toml(mapping):
-    """Serialize a flat str->str mapping (state.toml is nothing fancier)."""
+    """Serialize a flat str->str mapping. Still how the state pack is *rendered*
+    for the byte budget — the budget prices context, not storage."""
     lines = []
     for key, value in mapping.items():
         escaped = str(value).replace("\\", "\\\\").replace('"', '\\"')
@@ -110,14 +132,119 @@ def read_config(root):
         print("flux: could not parse .flux/flux.toml: %s" % exc, file=sys.stderr)
         return None
 
+# ------------------------------------------------------------- state (the log)
+#
+# Why a log and not a file. `state.toml` was rewritten whole on every write, so
+# every branch that held a session diverged on the same five lines. In a repo
+# carrying ~100 branches (kiosk) that is a conflict on every merge, on a file
+# nobody edits by hand -- which is why kiosk untracked it, and untracked state
+# does not survive a clone. Appending one record per key instead means two
+# branches that touched different keys merge cleanly, and `merge=union` (written
+# to .flux/.gitattributes at init) makes git keep both sides' records even when
+# they touched the same one. Replay resolves the result; git never has to.
+
+def state_log_path(root):
+    return os.path.join(flux_dir(root), STATE_LOG_NAME)
+
+def read_log(path):
+    """Records in file order. Anything unparseable is skipped, never raised.
+
+    A union merge can leave a line git could not join, an interrupted write can
+    leave a partial one -- and this is the file that carries the project between
+    sessions. Rendering what is readable beats failing on what is not."""
+    records = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line.startswith("{"):
+                    continue
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(rec, dict) and isinstance(rec.get("k"), str) and rec["k"]:
+                    records.append(rec)
+    except OSError:
+        return []
+    return records
+
+def winners(records):
+    """-> {key: (ts, value)}, last write per key, cleared keys included.
+
+    Newest wins on (ts, file position). `ts` carries milliseconds, so a tie needs
+    two branches writing the same key in the same millisecond; that falls back to
+    file order, which is fixed within a clone and only ambiguous across one."""
+    best = {}
+    for i, rec in enumerate(records):
+        key = rec["k"]
+        stamp = (str(rec.get("ts", "")), i)
+        if key not in best or stamp >= best[key][0]:
+            best[key] = (stamp, str(rec.get("v", "")))
+    return dict((k, (stamp[0], value)) for k, (stamp, value) in best.items())
+
+def order_state(mapping):
+    ordered = {}
+    for key in STATE_KEY_ORDER:
+        if key in mapping:
+            ordered[key] = mapping[key]
+    for key in sorted(mapping):
+        if key not in ordered:
+            ordered[key] = mapping[key]
+    return ordered
+
+def replay(records):
+    """-> (ordered state, iso timestamp of the newest live record).
+
+    An empty value clears a key -- the only way the TOML format ever had to
+    remove one was to hand-edit the file."""
+    live = dict((k, v) for k, (_ts, v) in winners(records).items() if v != "")
+    stamps = [ts for _k, (ts, v) in winners(records).items() if v != ""]
+    return order_state(live), max(stamps) if stamps else ""
+
 def read_state(root):
-    path = os.path.join(flux_dir(root), "state.toml")
+    """The log is the source of truth; state.toml is read-only legacy."""
+    log = state_log_path(root)
+    if os.path.isfile(log):
+        state, newest = replay(read_log(log))
+        if newest:
+            state["updated"] = local_stamp(newest)
+        return state
+    path = os.path.join(flux_dir(root), STATE_LOG_LEGACY)
     if not os.path.isfile(path):
         return {}
     try:
         return {k: v for k, v in load_toml(path).items() if not isinstance(v, dict)}
     except Exception:
         return {}
+
+def append_records(path, pairs, stamp):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        for key, value in pairs:
+            f.write(json.dumps({"ts": stamp, "k": key, "v": value},
+                               ensure_ascii=False) + "\n")
+
+def compact_log(path):
+    """Rewrite as one record per live key, sorted, each keeping its own ts.
+
+    Deterministic: two clones compacting the same records write identical bytes.
+    Returns (records before, records after)."""
+    records = read_log(path)
+    live = sorted((k, ts, v) for k, (ts, v) in winners(records).items() if v != "")
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        for key, ts, value in live:
+            f.write(json.dumps({"ts": ts, "k": key, "v": value},
+                               ensure_ascii=False) + "\n")
+    os.replace(tmp, path)
+    return len(records), len(live)
+
+def write_gitattributes(fdir):
+    path = os.path.join(fdir, ".gitattributes")
+    if not os.path.exists(path):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(GITATTRIBUTES)
 
 def state_budget_bytes(cfg):
     budget = DEFAULT_STATE_BUDGET_TOKENS
@@ -134,6 +261,21 @@ def clip(text, max_bytes, marker="\n[flux: truncated at budget]"):
 
 def now_stamp():
     return time.strftime("%Y-%m-%d %H:%M", time.localtime())
+
+def now_iso():
+    """UTC, milliseconds. Records are ordered across machines, so the stamp has
+    to be absolute; milliseconds so two writes in one session cannot tie."""
+    t = time.time()
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t)) + ".%03dZ" % (t % 1 * 1000)
+
+def local_stamp(iso):
+    """A log timestamp rendered the way state.toml's `updated` always looked."""
+    try:
+        epoch = calendar.timegm(time.strptime(iso.split(".")[0].rstrip("Z"),
+                                              "%Y-%m-%dT%H:%M:%S"))
+        return time.strftime("%Y-%m-%d %H:%M", time.localtime(epoch))
+    except Exception:
+        return iso
 
 # ------------------------------------------------------------------------ init
 
@@ -436,14 +578,6 @@ tail = 100                    # `flux run` keeps at most this many trailing line
 filter = "elide"              # elide | failures | tail:80 | raw (--filter overrides)
 """
 
-STATE_SCAFFOLD = {
-    "phase": "",
-    "position": "",
-    "next": "",
-    "routing": "",
-    "open": "",
-}
-
 def cmd_init(args):
     root = repo_root()
     if "--scan" in args:
@@ -457,12 +591,11 @@ def cmd_init(args):
     detected, check = detect_check_command(root)
     with open(toml_path, "w", encoding="utf-8") as f:
         f.write(FLUX_TOML_TEMPLATE % {"check": check.replace('"', '\\"')})
-    state_path = os.path.join(fdir, "state.toml")
-    if not os.path.exists(state_path):
-        scaffold = dict(STATE_SCAFFOLD)
-        scaffold["updated"] = now_stamp()
-        with open(state_path, "w", encoding="utf-8") as f:
-            f.write(dump_flat_toml(scaffold))
+    state_path = os.path.join(fdir, STATE_LOG_NAME)
+    if not os.path.exists(state_path) and not os.path.exists(
+            os.path.join(fdir, STATE_LOG_LEGACY)):
+        open(state_path, "a", encoding="utf-8").close()  # empty log, keys unset
+    write_gitattributes(fdir)
     gitignore_path = os.path.join(fdir, ".gitignore")
     if not os.path.exists(gitignore_path):
         with open(gitignore_path, "w", encoding="utf-8") as f:
@@ -661,12 +794,24 @@ def cmd_state(args):
                   "flux state set <key> <value> [<key> <value>...]"
                   % ", ".join(bad), file=sys.stderr)
             return 2
-        for i in range(0, len(pairs), 2):
-            state[pairs[i]] = pairs[i + 1]
+        derived = [pairs[i] for i in range(0, len(pairs), 2)
+                   if pairs[i] in STATE_DERIVED_KEYS]
+        if derived:
+            print("flux state: %s is derived from the log, not stored — "
+                  "nothing to set" % ", ".join(derived), file=sys.stderr)
+            return 2
+        migrate_legacy(root)
+        writes = [(pairs[i], pairs[i + 1]) for i in range(0, len(pairs), 2)]
+        for key, value in writes:
+            state[key] = value
+        state = order_state(dict((k, v) for k, v in state.items()
+                                 if k not in STATE_DERIVED_KEYS and str(v) != ""))
         state["updated"] = now_stamp()
         serialized = dump_flat_toml(state)
         budget = state_budget_bytes(cfg)
         if len(serialized.encode("utf-8")) > budget:
+            # Checked before appending, so an over-budget write leaves the log
+            # exactly as it was -- same guarantee the rewritten file gave.
             print(
                 "flux state: refused — write would be %d bytes, budget is %d "
                 "([state].budget_tokens x %d). Trim values; move prose to a plan doc."
@@ -674,18 +819,89 @@ def cmd_state(args):
                 file=sys.stderr,
             )
             return 1
-        path = os.path.join(flux_dir(root), "state.toml")
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(serialized)
-        os.replace(tmp, path)
+        path = state_log_path(root)
+        append_records(path, writes, now_iso())
+        write_gitattributes(flux_dir(root))
         print(
             "flux state: wrote %d keys, %d/%d bytes"
             % (len(state), len(serialized.encode("utf-8")), budget)
         )
+        cap = budget * STATE_LOG_BUDGET_MULTIPLE
+        if os.path.getsize(path) > cap:
+            before, after = compact_log(path)
+            print("flux state: compacted %s — %d records -> %d, log was over "
+                  "%d bytes (%dx the pack budget)"
+                  % (STATE_LOG_NAME, before, after, cap, STATE_LOG_BUDGET_MULTIPLE))
         return 0
-    print("usage: flux state get [key...] | flux state set <key> <value>...", file=sys.stderr)
+    if args[0] == "log":
+        return cmd_state_log(root, args[1:])
+    if args[0] == "compact":
+        path = state_log_path(root)
+        if not os.path.isfile(path):
+            print("flux state: no %s to compact" % STATE_LOG_NAME, file=sys.stderr)
+            return 1
+        before, after = compact_log(path)
+        print("flux state: compacted %s — %d records -> %d"
+              % (STATE_LOG_NAME, before, after))
+        return 0
+    print("usage: flux state get [key...] | set <key> <value>... | log [N] | compact",
+          file=sys.stderr)
     return 2
+
+
+STATE_LOG_DEFAULT_N = 20
+STATE_LOG_VALUE_CHARS = 120
+
+def cmd_state_log(root, args):
+    """What an append-only format buys that a rewritten file cannot: the previous
+    value is still there after a bad write. Capped -- it prints into a session."""
+    path = state_log_path(root)
+    if not os.path.isfile(path):
+        print("flux state: no %s here (legacy %s keeps no history)"
+              % (STATE_LOG_NAME, STATE_LOG_LEGACY), file=sys.stderr)
+        return 1
+    try:
+        count = max(1, int(args[0])) if args else STATE_LOG_DEFAULT_N
+    except ValueError:
+        print("usage: flux state log [N]", file=sys.stderr)
+        return 2
+    records = read_log(path)
+    for rec in reversed(records[-count:]):
+        value = str(rec.get("v", ""))
+        if len(value) > STATE_LOG_VALUE_CHARS:
+            value = value[:STATE_LOG_VALUE_CHARS] + "…"
+        print("%s  %-9s %s" % (local_stamp(str(rec.get("ts", ""))), rec["k"],
+                               value or "(cleared)"))
+    if len(records) > count:
+        print("... +%d older (flux state log %d)" % (len(records) - count, len(records)))
+    return 0
+
+
+def migrate_legacy(root):
+    """One-way, on first write: state.toml -> state.jsonl, then the old file goes.
+
+    Leaving it in place would leave a stale copy of the one file a human reads to
+    learn where the project is. Its content is in the log, and in git if it was
+    tracked."""
+    fdir = flux_dir(root)
+    legacy = os.path.join(fdir, STATE_LOG_LEGACY)
+    log = state_log_path(root)
+    if os.path.exists(log) or not os.path.isfile(legacy):
+        return False
+    try:
+        old = {k: v for k, v in load_toml(legacy).items() if not isinstance(v, dict)}
+    except Exception:
+        old = {}
+    stamp = now_iso()
+    pairs = [(k, str(v)) for k, v in order_state(old).items()
+             if k not in STATE_DERIVED_KEYS and str(v) != ""]
+    append_records(log, pairs, stamp)
+    os.remove(legacy)
+    write_gitattributes(fdir)
+    print("flux state: migrated %d keys from %s to the append-only %s "
+          "(commit it — .flux/.gitattributes union-merges it)"
+          % (len(pairs), STATE_LOG_LEGACY, STATE_LOG_NAME))
+    return True
 
 # ----------------------------------------------------------------------- check
 

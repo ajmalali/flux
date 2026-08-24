@@ -35,7 +35,9 @@ transcripts.
 - **CLI** (`bin/flux`, single-file stdlib Python ≥3.9, on PATH while the plugin is
   enabled): `init` (+ `--scan`: inventory prior project state, write nothing) ·
   `prime` (SessionStart pack, ≤2k tokens, cold->1h warning, silent
-  no-op without `.flux/`) · `state get|set` (budget-enforced TOML) · `check`
+  no-op without `.flux/`) · `state get|set|log|compact` (budget-enforced; an
+  append-only `state.jsonl` union-merged by git — ADR 0002, 2026-08-24, replacing
+  the rewritten `state.toml` that conflicted on every branch) · `check`
   (configured verification, failures-only) · `handoff` (generated, capped) ·
   `run -- <cmd>` (dedupe/elide output filter).
 - **Hooks**: SessionStart → `flux prime`. Later, optional PostToolUse(Edit) →

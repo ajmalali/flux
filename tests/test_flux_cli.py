@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 
 def flux_module():
@@ -64,8 +65,14 @@ class TestInit(FluxRepoCase):
         self.assertIn("uv.lock", out.stdout)
         with open(os.path.join(self.repo, ".flux", "flux.toml")) as f:
             self.assertIn("uv run ruff check", f.read())
-        self.assertTrue(os.path.exists(os.path.join(self.repo, ".flux", "state.toml")))
+        self.assertTrue(os.path.exists(os.path.join(self.repo, ".flux", "state.jsonl")))
         self.assertTrue(os.path.exists(os.path.join(self.repo, ".flux", ".gitignore")))
+
+    def test_init_writes_the_union_merge_attribute(self):
+        """Without it the log conflicts exactly like the file it replaced."""
+        run_flux(["init"], self.repo)
+        with open(os.path.join(self.repo, ".flux", ".gitattributes")) as f:
+            self.assertIn("state.jsonl merge=union", f.read())
 
     def test_detected_command_is_a_candidate(self):
         self.write("uv.lock", "")
@@ -365,12 +372,218 @@ class TestState(FluxRepoCase):
         self.assertNotIn("P2", run_flux(["state", "get"], self.repo).stdout)
 
     def test_set_confirms_the_write_against_the_budget(self):
-        # a silent write leaves no way to see how close the pack is to its cap
+        # a silent write leaves no way to see how close the pack is to its cap.
+        # The number is the RENDERED pack, not the log on disk: the budget prices
+        # what reaches model context, and the log also carries superseded records.
         out = run_flux(["state", "set", "phase", "P2"], self.repo)
         self.assertRegex(out.stdout, r"flux state: wrote \d+ keys, (\d+)/8000 bytes")
         used = int(re.search(r"wrote \d+ keys, (\d+)/", out.stdout).group(1))
-        state = os.path.join(self.repo, ".flux", "state.toml")
-        self.assertEqual(used, os.path.getsize(state))
+        flux = flux_module()
+        rendered = flux.dump_flat_toml(flux.read_state(self.repo))
+        self.assertEqual(used, len(rendered.encode("utf-8")))
+
+    def test_the_budget_prices_the_pack_not_the_log(self):
+        """Rewriting the same key ten times grows the log and not the pack. If the
+        budget billed storage, an append-only format would strangle itself."""
+        sizes = []
+        for i in range(10):
+            out = run_flux(["state", "set", "phase", "P%d" % i], self.repo)
+            sizes.append(int(re.search(r"wrote \d+ keys, (\d+)/", out.stdout).group(1)))
+        log = os.path.join(self.repo, ".flux", "state.jsonl")
+        self.assertEqual(len(set(sizes)), 1)
+        with open(log) as f:
+            self.assertEqual(len(f.read().splitlines()), 10)
+        self.assertGreater(os.path.getsize(log), sizes[0])
+
+
+class TestStateLog(FluxRepoCase):
+    """The append-only format. The merge tests are the point of the whole change:
+    state.toml was rewritten whole every session, so every branch that held one
+    diverged on the same five lines — which is why kiosk untracked it, and
+    untracked state does not survive a clone."""
+
+    def setUp(self):
+        super().setUp()
+        run_flux(["init"], self.repo)
+
+    def _git(self, *args):
+        subprocess.run(["git", "-C", self.repo, "-c", "user.email=t@t",
+                        "-c", "user.name=t"] + list(args), check=True,
+                       capture_output=True)
+
+    def _commit_all(self, message):
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", message)
+
+    def _merge(self, ref):
+        return subprocess.run(
+            ["git", "-C", self.repo, "-c", "user.email=t@t", "-c", "user.name=t",
+             "merge", "--no-edit", ref], capture_output=True, text=True)
+
+    def log_lines(self):
+        with open(os.path.join(self.repo, ".flux", "state.jsonl")) as f:
+            return [l for l in f.read().splitlines() if l.strip()]
+
+    # --- replay -----------------------------------------------------------
+
+    def test_last_write_wins_per_key(self):
+        run_flux(["state", "set", "phase", "one"], self.repo)
+        run_flux(["state", "set", "phase", "two"], self.repo)
+        self.assertEqual(run_flux(["state", "get", "phase"], self.repo).stdout.strip(), "two")
+        self.assertEqual(len(self.log_lines()), 2)  # the old value is still on disk
+
+    def test_one_record_per_key_so_two_keys_are_independent(self):
+        run_flux(["state", "set", "phase", "p", "next", "n"], self.repo)
+        self.assertEqual(len(self.log_lines()), 2)
+
+    def test_an_empty_value_clears_a_key(self):
+        """The rewritten file had no way to remove a key but hand-editing it."""
+        run_flux(["state", "set", "routing", "build"], self.repo)
+        run_flux(["state", "set", "routing", ""], self.repo)
+        self.assertNotIn("routing", run_flux(["state", "get"], self.repo).stdout)
+
+    def test_updated_is_derived_and_cannot_be_set(self):
+        """Stored, it was one guaranteed-divergent line per session on a file every
+        branch rewrote — the conflict this format exists to remove."""
+        run_flux(["state", "set", "phase", "p"], self.repo)
+        self.assertIn("updated = ", run_flux(["state", "get"], self.repo).stdout)
+        self.assertNotIn('"k": "updated"', "\n".join(self.log_lines()))
+        out = run_flux(["state", "set", "updated", "whenever"], self.repo)
+        self.assertEqual(out.returncode, 2)
+        self.assertIn("derived", out.stderr)
+
+    def test_an_unreadable_line_is_skipped_not_raised(self):
+        """A union merge can leave a line git could not join. prime must still
+        render: this is the file that carries the project between sessions."""
+        run_flux(["state", "set", "phase", "survives"], self.repo)
+        path = os.path.join(self.repo, ".flux", "state.jsonl")
+        with open(path, "a") as f:
+            f.write("<<<<<<< HEAD\n{not json at all\n\n")
+        out = run_flux(["prime"], self.repo)
+        self.assertEqual(out.returncode, 0)
+        self.assertIn("phase: survives", out.stdout)
+
+    # --- the merge behaviour it was built for ------------------------------
+
+    def test_two_branches_touching_different_keys_merge_clean(self):
+        self._commit_all("adopt flux")
+        self._git("checkout", "-q", "-b", "feature")
+        run_flux(["state", "set", "phase", "on the feature"], self.repo)
+        self._commit_all("feature session")
+        self._git("checkout", "-q", "main")
+        run_flux(["state", "set", "next", "on main"], self.repo)
+        self._commit_all("main session")
+        merged = self._merge("feature")
+        self.assertEqual(merged.returncode, 0, merged.stdout + merged.stderr)
+        after = run_flux(["state", "get"], self.repo).stdout
+        self.assertIn("phase = on the feature", after)
+        self.assertIn("next = on main", after)
+
+    def test_two_branches_touching_the_SAME_key_merge_clean_and_newer_wins(self):
+        """union keeps both records rather than conflicting; replay picks the
+        newer one. git never has to decide."""
+        self._commit_all("adopt flux")
+        self._git("checkout", "-q", "-b", "feature")
+        run_flux(["state", "set", "phase", "older"], self.repo)
+        self._commit_all("feature session")
+        self._git("checkout", "-q", "main")
+        time.sleep(0.01)
+        run_flux(["state", "set", "phase", "newer"], self.repo)
+        self._commit_all("main session")
+        merged = self._merge("feature")
+        self.assertEqual(merged.returncode, 0, merged.stdout + merged.stderr)
+        self.assertEqual(len(self.log_lines()), 2)  # both survive on disk
+        self.assertEqual(
+            run_flux(["state", "get", "phase"], self.repo).stdout.strip(), "newer")
+
+    def test_the_old_format_is_what_conflicted(self):
+        """The control. Same two sessions against a rewritten state.toml, which is
+        what flux shipped until now — git cannot merge it."""
+        self.write(".flux/state.toml", 'phase = "base"\nupdated = "1"\n')
+        self._commit_all("legacy state")
+        self._git("checkout", "-q", "-b", "feature")
+        self.write(".flux/state.toml", 'phase = "on the feature"\nupdated = "2"\n')
+        self._commit_all("feature session")
+        self._git("checkout", "-q", "main")
+        self.write(".flux/state.toml", 'phase = "base"\nnext = "on main"\nupdated = "3"\n')
+        self._commit_all("main session")
+        self.assertNotEqual(self._merge("feature").returncode, 0)
+
+    # --- migration ---------------------------------------------------------
+
+    def test_first_write_migrates_state_toml_and_removes_it(self):
+        os.remove(os.path.join(self.repo, ".flux", "state.jsonl"))
+        self.write(".flux/state.toml",
+                   'phase = "carried"\nopen = "kept"\nupdated = "2026-01-01 00:00"\n')
+        out = run_flux(["state", "set", "next", "fresh"], self.repo)
+        self.assertEqual(out.returncode, 0)
+        self.assertIn("migrated 2 keys", out.stdout)
+        self.assertFalse(os.path.exists(os.path.join(self.repo, ".flux", "state.toml")))
+        after = run_flux(["state", "get"], self.repo).stdout
+        self.assertIn("phase = carried", after)
+        self.assertIn("open = kept", after)
+        self.assertIn("next = fresh", after)
+        # the stale `updated` is not carried across — it is derived now
+        self.assertNotIn("2026-01-01", after)
+
+    def test_legacy_state_toml_still_renders_before_any_write(self):
+        """Every adopting repo has one. prime must not go blank waiting for a set."""
+        os.remove(os.path.join(self.repo, ".flux", "state.jsonl"))
+        self.write(".flux/state.toml", 'phase = "legacy"\n')
+        self.assertIn("phase: legacy", run_flux(["prime"], self.repo).stdout)
+
+    # --- the cap on stored state ------------------------------------------
+
+    def test_compact_collapses_to_one_record_per_live_key(self):
+        for i in range(5):
+            run_flux(["state", "set", "phase", "P%d" % i], self.repo)
+        run_flux(["state", "set", "next", "n", "routing", "r"], self.repo)
+        run_flux(["state", "set", "routing", ""], self.repo)
+        before = run_flux(["state", "get"], self.repo).stdout
+        out = run_flux(["state", "compact"], self.repo)
+        self.assertIn("8 records -> 2", out.stdout)
+        self.assertEqual(run_flux(["state", "get"], self.repo).stdout, before)
+
+    def test_compaction_is_deterministic_so_two_clones_agree(self):
+        run_flux(["state", "set", "next", "n", "phase", "p", "open", "o"], self.repo)
+        run_flux(["state", "compact"], self.repo)
+        once = self.log_lines()
+        run_flux(["state", "compact"], self.repo)
+        self.assertEqual(once, self.log_lines())
+
+    def test_the_log_is_capped_in_code_and_compacts_itself(self):
+        """CLAUDE.md: nothing flux stores as state may grow without a cap."""
+        out = None
+        for i in range(15):
+            out = run_flux(["state", "set", "position", "x" * 7000], self.repo)
+            if "compacted" in out.stdout:
+                break
+        self.assertIn("compacted", out.stdout)
+        self.assertLessEqual(os.path.getsize(
+            os.path.join(self.repo, ".flux", "state.jsonl")), 8000 * 8)
+        self.assertIn("position = " + "x" * 7000,
+                      run_flux(["state", "get"], self.repo).stdout)
+
+    # --- history -----------------------------------------------------------
+
+    def test_log_shows_the_superseded_value_a_rewrite_would_have_lost(self):
+        run_flux(["state", "set", "phase", "the good one"], self.repo)
+        run_flux(["state", "set", "phase", "the typo"], self.repo)
+        out = run_flux(["state", "log"], self.repo)
+        self.assertIn("the good one", out.stdout)
+        self.assertLess(out.stdout.index("the typo"), out.stdout.index("the good one"))
+
+    def test_log_is_capped_and_says_what_it_dropped(self):
+        for i in range(6):
+            run_flux(["state", "set", "phase", "P%d" % i], self.repo)
+        out = run_flux(["state", "log", "2"], self.repo)
+        self.assertEqual(len(out.stdout.splitlines()), 3)
+        self.assertIn("+4 older", out.stdout)
+
+    def test_log_clips_a_long_value(self):
+        run_flux(["state", "set", "open", "y" * 500], self.repo)
+        for line in run_flux(["state", "log"], self.repo).stdout.splitlines():
+            self.assertLess(len(line), 200)
 
 
 class TestCheck(FluxRepoCase):

@@ -416,6 +416,29 @@ assert that quality decays with context.
 
 ## Task queue
 
+- [ ] **IN FLIGHT — `meridian-005`, the competitor arms' first valid numbers.**
+      Launched 2026-08-24, detached (`nohup`), log `/tmp/meridian-005.log`, records
+      `~/.flux-bench/runs/meridian-005/`. Read with `./bench/run.py report meridian-005`
+      (safe on a partial run — unreached work comes back `void`, not `0/5`).
+      **Why it exists:** flux has been measured hard against `vanilla` and against
+      itself, and against the three actual competitors it has **no valid data at all** —
+      `paul` was voided in 002 and then scored 1/4 on our own arm bug in 003 (fixed in
+      `bench/arms/paul.toml`, never rerun), and `speckit`/`agentos` were 429-voided in
+      both runs and have literally never been attempted. meridian-004 ran only
+      vanilla/flux/flux-lite.
+      **Shape:** `vanilla,paul,speckit,agentos` x m1–m5 on sonnet, `--max-usd 50`.
+      Arms ordered by decreasing decision-relevance so a budget cut-off voids `agentos`,
+      not `paul`. `vanilla` is in-run on purpose: 003/004 are a different harness
+      revision (arms were renamed when the lifecycle was trimmed) and
+      "flux lost m3 on merit" already failed to reproduce once, so the yardstick has to
+      be inside the run rather than borrowed across it. Corpus re-verified before spend:
+      all 5 tasks red-on-seed, green-on-reference.
+      **What it can answer:** whether the other frameworks pay the same ceremony tax
+      vanilla-relative, and whether anything in them is worth stealing.
+      **What it cannot:** quality. Every arm that has ever run this corpus scored 100%,
+      and the fairness rule that forces complete briefs is why (see the meridian-004
+      entry). A cost ranking is the whole deliverable.
+
 - [x] **Mine transcripts for the context/quality decay knee. Done 2026-08-22 —
       there is no knee, and ADR 0001 rule 2 was amended before any code.** Findings:
       `.flux/analysis/2026-08-22-context-decay.md`. Re-runnable: `./bench/run.py decay`

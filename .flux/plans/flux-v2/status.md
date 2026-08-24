@@ -1064,6 +1064,52 @@ assert that quality decays with context.
       item is the append-only JSONL-in-git state format (see the `bd` entry above), which
       is the answer to the `.flux/state.toml` conflict problem and is UNBUILT.
 
+- [ ] **Pre-registration — the agent roster's escalation ladder, written before any
+      fresh number (2026-08-24).** The bar is not re-derived: `ecfcffb`'s, verbatim —
+      an always-on injection may cost at most **2,000 tok per session-of-use**,
+      `cost = tokens injected per session / share of billed sessions with >=1 invocation`,
+      and it must fail on **both** denominators (all-corpus, real-interactive) to fire.
+      **The ladder had to be respecified, because agents have no
+      `disable-model-invocation`.** Every skill retirement so far was capability-neutral
+      because the skill could be carried and not listed; that move does not exist here.
+      What replaces it, cheapest change first:
+      1. **Trim** — shorten the two `description:` fields so the injected roster costs
+         fewer tokens. **Registered as unavailable at zero utilisation**: with 0
+         invocations the denominator is 0 and *any* positive cost fails, so trim can
+         only be tried if the fresh number finds >=1 real invocation. Stating this now,
+         not after, is the point of pre-registering.
+      2. **Merge** flux-explorer + flux-verifier into one agent — roughly halves the
+         cost. Same constraint: clears the bar only if invocations >= 1.
+      3. **Delete both** — the only step that clears a zero-utilisation reading, because
+         it is the only one that takes the cost to 0.
+      **So the ladder is honestly a two-branch conditional, fixed now:**
+      - fresh number finds **>=1 real invocation** and cost/session-of-use <= 2,000 on
+        *either* denominator → **PASS, keep both, no action**;
+      - **>=1 invocation but fails both** → try (1), then (2), re-measure, then (3);
+      - **0 real invocations** → (1) and (2) are arithmetically incapable of clearing it,
+        so the action is **(3) delete**, conditional on the capability audit below.
+      **Capability cost is enumerated before acting, and a loss is reported as a loss.**
+      Registered hypothesis: `flux-verifier` overlaps `flux check` / `flux run --filter`,
+      which already keep raw output out of context; `flux-explorer` overlaps the built-in
+      `Explore` agent. If either overlap is partial, the deletion still happens but the
+      residue is written down as capability given up, not argued away.
+      **Two method weaknesses registered in advance, both of which weaken the numerator
+      and neither of which is a reason to skip the measurement:**
+      (a) the roster is injected into the system prompt and **not logged** — 493
+      `skill_listing` attachments exist, zero agent equivalents — so the numerator is a
+      projection from `agents/*.md` or an **n=1 read off one live session**, exactly the
+      weakness this repo used to dismiss `claude plugin details`. It is reported as such.
+      (b) there is no per-session record of *carrying* the roster either, so "billed"
+      cannot be tested the way `bytes > 0` tested it for skills; it is proxied by
+      **install date** (user-scoped plugin ⇒ every project after it). The denominator
+      itself — `Task`/`Agent` `subagent_type` — **is** logged and is solid.
+      **Not imported from the skill measurement:** its Reading A / Reading B ambiguity.
+      Both flux agents are listed, so the two readings coincide here.
+      **Honesty caveat.** `473 B = 118 tok, 0 invocations` was already published in
+      `6c9a8f6`, so the *direction* of this verdict is visible before the measurement.
+      The pre-registration buys the **action**, not the suspense — and a ladder written
+      after the number would be worth nothing at all.
+
 ## Session-close checklist (execute at the end of EVERY working session)
 
 1. `flux check` green (or the failure documented here).

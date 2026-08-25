@@ -51,6 +51,7 @@ class RunConfig:
     timeout_s: int = 1800
     api_backoff_s: List[int] = field(default_factory=lambda: list(DEFAULT_BACKOFF_S))
     tasks: Optional[List[str]] = None
+    from_reference: bool = False
     runs_dir: Path = DEFAULT_RUNS_DIR
     run_id: str = ""
     dry_run: bool = False
@@ -92,6 +93,17 @@ def _commit_all(repo: Path, message: str) -> None:
           "commit", "--allow-empty", "-q", "-m", message], repo)
 
 
+def apply_reference(task: Task, repo: Path) -> None:
+    """Overlay a task's reference implementation onto a repo, file by file."""
+    assert task.reference_dir is not None
+    for item in task.reference_dir.iterdir():
+        target = repo / item.name
+        if item.is_dir():
+            shutil.copytree(item, target, dirs_exist_ok=True)
+        else:
+            shutil.copy2(item, target)
+
+
 def materialize(project: Project, arm: Arm, dest: Path) -> Path:
     """Fresh clone-equivalent for one arm: project seed, then the arm's own files."""
     repo = dest / "repo"
@@ -122,6 +134,14 @@ class Runner:
         self.out = Path(config.runs_dir) / self.run_id
         self.records_path = self.out / "records.jsonl"
         self.spent = 0.0
+        if config.from_reference:
+            if not config.tasks:
+                raise ValueError("--from-reference needs --tasks: with every task selected "
+                                 "there is no prefix to pre-supply")
+            missing = [t.id for t in self._prefix_tasks() if not t.has_reference]
+            if missing:
+                raise ValueError("--from-reference needs a reference implementation for every "
+                                 "preceding task; missing: %s" % ", ".join(missing))
 
     # -- plumbing -----------------------------------------------------------
 
@@ -221,10 +241,35 @@ class Runner:
         return [t for t in self.project.tasks
                 if not self.config.tasks or t.id in self.config.tasks]
 
+    def _prefix_tasks(self) -> List[Task]:
+        """Tasks the arm does not attempt but whose work its task must stand on.
+
+        Normally an arm builds task N on top of its own task N-1, which is the
+        point: the benchmark measures what a setup accumulates. ``--from-reference``
+        trades that away deliberately. It exists for one shape of task -- a bug
+        report about a defect latent in the corpus's own reference tree -- where
+        every arm must start from *the same* broken tree or the experiment is
+        measuring which arm happened to write the bug, not which one finds it.
+        """
+        if not self.config.from_reference or not self.config.tasks:
+            return []
+        selected = {t.id for t in self._tasks()}
+        prefix: List[Task] = []
+        for task in self.project.tasks:
+            if task.id in selected:
+                break
+            prefix.append(task)
+        return prefix
+
     def run_arm(self, arm: Arm) -> List[TaskRecord]:
         self._log("\n=== arm: %s (%s) ===" % (arm.name, arm.title))
         repo = materialize(self.project, arm, self.out / arm.name)
         records: List[TaskRecord] = []
+
+        for task in self._prefix_tasks():
+            apply_reference(task, repo)
+            _commit_all(repo, "reference: %s (pre-supplied, not this arm's work)" % task.id)
+            self._log("  + pre-supplied reference for %s" % task.id)
 
         try:
             for i, step in enumerate(arm.bootstrap):

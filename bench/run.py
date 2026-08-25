@@ -55,6 +55,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         max_usd_per_session=args.max_usd_per_session,
         timeout_s=args.timeout,
         tasks=[t.strip() for t in args.tasks.split(",")] if args.tasks else None,
+        from_reference=args.from_reference,
         runs_dir=Path(args.runs_dir).expanduser(),
         run_id=args.run_id or "",
     )
@@ -159,6 +160,10 @@ def main(argv=None) -> int:
     run.add_argument("--model", default="sonnet")
     run.add_argument("--effort", default=None)
     run.add_argument("--tasks", default=None, help="comma-separated task ids (default: all)")
+    run.add_argument("--from-reference", action="store_true",
+                     help="pre-supply the reference implementation of every task before the "
+                          "selected ones, so each arm starts from the same tree instead of "
+                          "its own earlier work (needs --tasks)")
     run.add_argument("--max-usd", type=float, default=40.0, help="hard ceiling for the whole run")
     run.add_argument("--max-usd-per-session", type=float, default=4.0)
     run.add_argument("--timeout", type=int, default=1800, help="per-session timeout in seconds")

@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import List
 
 from .grade import grade
+from .runner import apply_reference
 from .spec import Project, Task
 
 _SYMBOL_IMPORT = re.compile(r"^\s*from\s+meridian[\w.]*\s+import\s+(?P<names>[^\n#]+)", re.M)
@@ -106,15 +107,6 @@ class TaskVerdict:
                 and self.red_ok and self.green_ok and self.gate_ok)
 
 
-def _apply(reference: Path, repo: Path) -> None:
-    for item in reference.iterdir():
-        target = repo / item.name
-        if item.is_dir():
-            shutil.copytree(item, target, dirs_exist_ok=True)
-        else:
-            shutil.copy2(item, target)
-
-
 def verify_project(project: Project) -> List[TaskVerdict]:
     verdicts: List[TaskVerdict] = []
     seed = seed_symbols(project)
@@ -147,7 +139,7 @@ def verify_project(project: Project) -> List[TaskVerdict]:
                 verdicts.append(v)
                 continue
 
-            _apply(task.reference_dir, repo)
+            apply_reference(task, repo)
             after = grade(repo, task.accept_dir,
                           task.accept_command or project.accept_command, project.gate)
             v.after_passed, v.after_total = after.accept_passed, after.accept_total

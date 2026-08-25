@@ -323,6 +323,8 @@ def _winners(summaries: List[ArmSummary]) -> Dict[str, str]:
     letting it 'win' a column would make the table actively misleading."""
     eligible = [s for s in summaries if s.delivered_count > 0] or summaries
     winners: Dict[str, str] = {}
+    if not eligible:
+        return winners
     for key, _h, _u, lower_is_better, _t in COLUMNS:
         if key in ("delivered",):
             best = max(eligible, key=lambda s: s.delivered_count)
@@ -345,6 +347,13 @@ def render_markdown(manifest: Dict[str, Any], summaries: List[ArmSummary]) -> st
                     (" · effort `%s`" % cfg["effort"]) if cfg.get("effort") else "",
                     len(manifest.get("project", {}).get("tasks", [])),
                     float(cfg.get("max_usd", 0))))
+    if cfg.get("from_reference"):
+        lines.append("")
+        lines.append("> **Not the standard protocol.** Run with `--from-reference` on tasks "
+                     "`%s`: every arm started from the corpus reference implementation of the "
+                     "preceding tasks, not from its own. Nothing here measures what an arm "
+                     "accumulates across a project."
+                     % ", ".join(cfg.get("tasks") or []))
     lines.append("")
 
     headers = ["arm"] + [h for _k, h, _u, _l, _t in COLUMNS]

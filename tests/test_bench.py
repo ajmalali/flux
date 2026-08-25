@@ -21,6 +21,7 @@ sys.path.insert(0, str(BENCH))
 
 from fluxbench import decay, driver, metrics, ramp, report  # noqa: E402
 from fluxbench.grade import ACCEPT_DIRNAME, grade  # noqa: E402
+from fluxbench.runner import RunConfig, Runner, apply_reference  # noqa: E402
 from fluxbench.spec import Arm, Project, available_arms, available_projects, render  # noqa: E402
 from fluxbench.verify import verify_project  # noqa: E402
 
@@ -1084,3 +1085,77 @@ class StalledArmTests(unittest.TestCase):
         text = report.render_markdown(manifest, report.summarize(manifest, rows))
         self.assertIn("Check before publishing", text)
         self.assertIn("| stalled | 1 of 2 |", text)
+
+
+class ReferencePrefixTests(unittest.TestCase):
+    """``--from-reference`` gives every arm the same starting tree.
+
+    Written for m6, the corpus's bug-report task. The defect it is about is
+    latent in the corpus's own reference implementation of m1--m5, so an arm
+    that built those tasks itself might never have written the bug -- and then
+    m6 measures which arm happened to reproduce the defect, not which one finds
+    it. The flag trades away the compounding the benchmark normally measures,
+    which is why it is opt-in, announced in the report, and refuses to run
+    without an explicit task selection.
+    """
+
+    def _runner(self, tasks, from_reference=True):
+        project = Project.load("meridian")
+        config = RunConfig(project="meridian", arms=["vanilla"], tasks=tasks,
+                           from_reference=from_reference,
+                           runs_dir=Path(tempfile.mkdtemp(prefix="fluxbench-prefix-")))
+        return Runner(config, project, [Arm.load("vanilla")])
+
+    def test_the_prefix_is_every_task_before_the_selected_one(self):
+        runner = self._runner(["m6"])
+        self.assertEqual([t.id for t in runner._prefix_tasks()],
+                         ["m1", "m2", "m3", "m4", "m5"])
+
+    def test_the_default_protocol_pre_supplies_nothing(self):
+        runner = self._runner(["m6"], from_reference=False)
+        self.assertEqual(runner._prefix_tasks(), [])
+
+    def test_selecting_the_first_task_has_no_prefix(self):
+        self.assertEqual(self._runner(["m1"])._prefix_tasks(), [])
+
+    def test_it_refuses_to_run_without_a_task_selection(self):
+        with self.assertRaises(ValueError):
+            self._runner(None)
+
+    def test_the_tree_an_arm_receives_carries_the_m6_defect(self):
+        """The whole point: red before the arm starts, on the pre-supplied tree.
+
+        If this ever goes green, m6 is being handed a tree that already
+        satisfies the invariant and the task is measuring nothing.
+        """
+        project = Project.load("meridian")
+        m6 = [t for t in project.tasks if t.id == "m6"][0]
+        workdir = Path(tempfile.mkdtemp(prefix="fluxbench-prefix-repo-"))
+        repo = workdir / "repo"
+        try:
+            shutil.copytree(project.seed_dir, repo)
+            for task in project.tasks:
+                if task.id == "m6":
+                    break
+                apply_reference(task, repo)
+            result = grade(repo, m6.accept_dir,
+                           m6.accept_command or project.accept_command, "")
+            self.assertFalse(result.accept_ok,
+                             "m6's acceptance suite passes on the tree the arm receives")
+            self.assertGreater(result.accept_passed, 0,
+                               "no over-correction guard passes -- the tree is wrong, not buggy")
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    def test_the_report_announces_the_protocol_change(self):
+        manifest = {"run_id": "x", "config": {"model": "sonnet", "max_usd": 10,
+                                              "from_reference": True, "tasks": ["m6"]},
+                    "project": {"title": "Meridian", "tasks": [{"id": "m6"}]}, "arms": []}
+        text = report.render_markdown(manifest, [])
+        self.assertIn("Not the standard protocol", text)
+        self.assertIn("m6", text)
+
+    def test_a_normal_run_says_nothing_about_it(self):
+        manifest = {"run_id": "x", "config": {"model": "sonnet", "max_usd": 10},
+                    "project": {"title": "Meridian", "tasks": [{"id": "m6"}]}, "arms": []}
+        self.assertNotIn("Not the standard protocol", report.render_markdown(manifest, []))

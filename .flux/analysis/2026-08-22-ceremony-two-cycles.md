@@ -96,3 +96,77 @@ What the runs do *not* say, and must not be read as saying:
   single-session arms (58,326 vs ~73,500 here; 49,930 vs 58,598–62,047 there).
   Whether that is worth 2.9x the money depends on what fails at 74k, which this
   corpus never reaches and this account is underpowered to measure.
+
+---
+
+## Cycle 3 — meridian-007 (m6, 2026-08-25): the last legal route, run, and null
+
+The section above named exactly one experiment this corpus could still run: *"a
+terse bug report [pinning] the correct fix through seed API only, leaving the
+invariant discoverable in the code and nowhere else."* `m6` was written to be
+that task (2026-08-24) and `meridian-007` ran it. Records
+`~/.flux-bench/runs/meridian-007/`, log `/tmp/meridian-007.log`, $3.81 of a $15
+cap.
+
+**Protocol change, stated up front.** m6's defect is latent in the corpus's own
+reference implementation of m1–m5, so under the normal cumulative protocol each
+arm would have been graded on a tree it wrote itself — and an arm that never
+reproduced the bug would have been handed a task with nothing in it. The run used
+the new `--from-reference` flag (commit `62a3fff`): every arm starts from the
+identical reference tree, m6 selected alone. This trades away the compounding the
+benchmark normally measures, it is printed above the report table, and a test
+asserts the property it exists for — m6's suite is red 5/10 on the pre-supplied
+tree, with only the over-correction guards passing.
+
+| arm | delivered | accept | $/task | ctx p50 | bash out | wall/task | sessions |
+|---|---|---|---|---|---|---|---|
+| vanilla | 1/1 | **10/10** | **$0.78** | 58,459 | 10,899 | **130s** | 1.0 |
+| flux (prime+apply) | 1/1 | **10/10** | $0.81 | 54,194 | **9,417** | 134s | 1.0 |
+| flux-full (plan→audit→apply→wrap) | 1/1 | **10/10** | $2.22 | **46,788** | 29,052 | 263s | 4.0 |
+
+**All three arms wrote the same two lines, in the same function.** Not the same
+outcome — the same mechanism:
+
+```python
+space = self.repos.spaces.get(hold.space_id)
+self._reject_conflicts(space, hold.interval, ignore_id=hold.id)
+```
+
+inserted into `confirm_hold` after the liveness check. vanilla and flux-full are
+byte-identical; flux wrote `Interval(hold.start, hold.end)` for the same value.
+The tests are mechanism-blind and two fixes were legal (refuse the booking that
+would be trapped, or refuse the confirmation that springs it) — every arm chose
+the same one, and each explained it in a docstring naming the hold-claims-less-
+than-a-booking asymmetry. The 155-line plan and the audit session produced the
+same edit that one pass did.
+
+Session costs repeat cycle 2's shape: plan $0.46 + audit $0.83 + apply $0.46 +
+wrap $0.47. **The apply session alone ($0.46) beat vanilla ($0.78)** — the plan
+does make the implementing pass cheaper — and the other $1.76 bought nothing this
+suite could see. flux-full again owns the lowest ctx p50 (46,788, 20% under
+vanilla), again at 2.8x the money, and this time with 2.7x the bash output.
+
+## Verdict, restated after three cycles
+
+The ceremony's defenders had one open question — *cost is settled, but does the
+lifecycle buy judgment?* — and one task in the corpus that could answer it either
+way. It answered **no**, on the task designed as its best case: a brief naming
+only the symptom, an invariant stated nowhere but in the code, and tests that
+refuse to reward a particular mechanism.
+
+Boundaries, so this is not over-read:
+
+- **n=1 per arm on one task, one model.** The null is "ceremony did not help
+  here", not "ceremony cannot help". A 10/10-everywhere run separates arms on
+  nothing.
+- **The pre-supplied tree removes compounding.** If the lifecycle pays by keeping
+  a five-task project coherent, this run was blind to it by construction — and
+  meridian-003 (4 tasks, cumulative) is the run that was not, which also found
+  nothing.
+- **The kiosk datapoint still stands** and still points the other way: n=1, on a
+  self-authored plan with wrong premises, which is the case meridian cannot
+  represent. Every negative result here is about *briefed* work.
+
+What changes: there is no longer a pending experiment behind which the ceremony's
+quality claim can wait. Three cycles, the last two written specifically to favour
+it, same delivery and same acceptance every time, 2.8x–2.9x the cost.

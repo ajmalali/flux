@@ -48,8 +48,23 @@ falsifiability rule says the ceremony goes — and it did, twice: meridian-003
 (4 tasks, every arm at 100% acceptance, full lifecycle 2.8x the cost) and
 meridian-004 (m5, written specifically to punish a single pass; every arm 27/27,
 2.9x). So the names swapped on 2026-08-22: `flux` is the lean path, `flux-full`
-is the ceremony, kept for the one experiment this corpus cannot yet run
-(`.flux/analysis/2026-08-22-ceremony-two-cycles.md`).
+is the ceremony. It was kept for one experiment the corpus could not yet run --
+a terse bug report pinned through seed API only, so the invariant lives in the
+code and nowhere else. That experiment is `m6`, it ran as `meridian-007`
+(2026-08-25), and it is a third null: every arm 10/10, and all three wrote the
+same two-line fix in the same function. Three cycles are written up in
+`.flux/analysis/2026-08-22-ceremony-two-cycles.md`.
+
+**`--from-reference`.** m6 needed it and it is the only task that should use it.
+The flag pre-supplies the reference implementation of every task before the
+selected ones, so all arms start from the identical tree instead of their own
+earlier work. That is required when the task is a bug report about a defect
+latent in the corpus's own reference tree -- otherwise the run measures which arm
+happened to reproduce the bug rather than which one finds it -- and it is wrong
+everywhere else, because it throws away the compounding this benchmark exists to
+measure. It refuses without an explicit `--tasks`, refuses when a preceding task
+has no reference, and prints the protocol change above the report table so no
+reader mistakes it for a normal run.
 
 **Agent OS caveat.** v3 is built to interview the user: every command drives the
 work through `AskUserQuestion`, and `/shape-spec` refuses outright unless the

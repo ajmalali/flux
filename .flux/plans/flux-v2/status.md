@@ -1,6 +1,8 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-24, later (**the append-only state format is BUILT and dogfooded** — `.flux/state.toml` is gone from this repo, replaced by `.flux/state.jsonl`, one JSON record per key per write, union-merged by git via `.flux/.gitattributes` and resolved by replay. ADR **0002**. `updated` is now derived from the newest record rather than stored — it was one guaranteed-divergent line per session on a file every branch rewrote. New: `flux state log [N]` (the superseded value survives a bad write — the 2026-08-22 silent-corruption defect had no recovery path) and `flux state compact` (auto-fires past 8x the pack budget, because CLAUDE.md forbids uncapped stored state and an append-only file is uncapped by construction). The budget still prices the **rendered pack**, not the log — checked before appending, so an over-budget write leaves the log untouched. **18 new tests, 171 green**, and the two that matter run real `git merge`: two branches touching the same key merge clean and the newer wins, while the same two sessions against the old `state.toml` conflict — the control is in the suite. Plugin **2.10.0**. **ADOPTED IN KIOSK the same day** (`728adf8`, pushed to `zaps-io/kiosk` main): the `state.toml` line is out of kiosk's `.flux/.gitignore`, the 5 live keys migrated one-way on first write, and `state.jsonl` + `.gitattributes` are committed on `main` in a **101-branch** repo — so the conflict metric has a denominator and cycle 1 of 2 starts now. A live two-branch merge there came back clean: 0 unmerged paths, both records kept, replay returned the newer. NEXT: nothing to build on this line — let ordinary kiosk work accrue and read the count next cycle.) **Also 2026-08-24: `meridian-005` gave PAUL its first fair numbers** — 4/4 at 82/82, and **6.0x vanilla's cost** on the four tasks both scored, so the ceremony tax reproduces on the framework flux was distilled from. meridian-003's `paul 1/4` is withdrawn as our own arm bug. A live harness defect was found and fixed in the process: a transport failure reported without a status code slipped every check in the void machinery and graded five untried speckit sessions 0/19. 177 tests green. speckit and agentos remain unmeasured after three runs.
+Updated: 2026-08-25 (**the ceremony's quality question is answered and it is a null — all three arms wrote the same two lines**. `meridian-007` ran m6, the corpus's only bug-report task, against vanilla / flux / flux-full: every arm delivered, every arm 10/10, and every arm inserted the *same* `_reject_conflicts` call into `confirm_hold` — vanilla and flux-full byte-identical. flux-full paid $2.22 against $0.78/$0.81 and 4 sessions against 1 for it; its apply session alone ($0.46) beat vanilla's whole run, and the other $1.76 bought nothing the suite could see. Getting there needed a new `--from-reference` flag (`62a3fff`): m6's defect is latent in the *corpus* reference tree, so under the cumulative protocol each arm would have been graded on a tree it wrote itself — the flag pre-supplies m1–m5's references so all arms start from the identical broken tree, refuses without explicit `--tasks`, and announces itself above the report table. Cycle 3 written up in `.flux/analysis/2026-08-22-ceremony-two-cycles.md`; that file's "one legal route left" is now closed. **184 tests green.** NEXT is a judgment call, not a measurement: whether principle 5 fires on the shipped lifecycle skills — see the DECIDE item at the top of the queue.)
+
+Previously — 2026-08-24, later (**the append-only state format is BUILT and dogfooded** — `.flux/state.toml` is gone from this repo, replaced by `.flux/state.jsonl`, one JSON record per key per write, union-merged by git via `.flux/.gitattributes` and resolved by replay. ADR **0002**. `updated` is now derived from the newest record rather than stored — it was one guaranteed-divergent line per session on a file every branch rewrote. New: `flux state log [N]` (the superseded value survives a bad write — the 2026-08-22 silent-corruption defect had no recovery path) and `flux state compact` (auto-fires past 8x the pack budget, because CLAUDE.md forbids uncapped stored state and an append-only file is uncapped by construction). The budget still prices the **rendered pack**, not the log — checked before appending, so an over-budget write leaves the log untouched. **18 new tests, 171 green**, and the two that matter run real `git merge`: two branches touching the same key merge clean and the newer wins, while the same two sessions against the old `state.toml` conflict — the control is in the suite. Plugin **2.10.0**. **ADOPTED IN KIOSK the same day** (`728adf8`, pushed to `zaps-io/kiosk` main): the `state.toml` line is out of kiosk's `.flux/.gitignore`, the 5 live keys migrated one-way on first write, and `state.jsonl` + `.gitattributes` are committed on `main` in a **101-branch** repo — so the conflict metric has a denominator and cycle 1 of 2 starts now. A live two-branch merge there came back clean: 0 unmerged paths, both records kept, replay returned the newer. NEXT: nothing to build on this line — let ordinary kiosk work accrue and read the count next cycle.) **Also 2026-08-24: `meridian-005` gave PAUL its first fair numbers** — 4/4 at 82/82, and **6.0x vanilla's cost** on the four tasks both scored, so the ceremony tax reproduces on the framework flux was distilled from. meridian-003's `paul 1/4` is withdrawn as our own arm bug. A live harness defect was found and fixed in the process: a transport failure reported without a status code slipped every check in the void machinery and graded five untried speckit sessions 0/19. 177 tests green. speckit and agentos remain unmeasured after three runs.
 
 Previously — 2026-08-24 (**the agent roster failed the same bar at zero and both agents are deleted** — 505 B = 126 tok/session, 0 invocations in 273 billed sessions and 0 in all 537 transcripts; trim and merge cannot clear a zero denominator so deletion was the only rung, pre-registered in `88ce1a8` before the read. Corrected: the roster is 505 B = 126 tok, not the 473 B = 118 tok published in `6c9a8f6`. Capability given up, reported as loss: flux-verifier's pre-existing-failure check and flux-explorer's haiku/low cost pin; the rest was already done in code by `flux check`/`flux run --filter` and by the built-in `Explore` (invoked 13x in the same corpus where flux-explorer was invoked 0). **flux now injects nothing model-visible except `prime`** — 0 of 14 skills listed, 0 agents. Every uncapped always-on path it ever had has now met the bar and every one failed. Plugin 2.9.0, 153 tests green. NEXT: stop auditing context; build the append-only JSONL-in-git state format.)
 
@@ -415,6 +417,75 @@ assert that quality decays with context.
 
 
 ## Task queue
+
+- [x] **`meridian-007` — the ceremony's last open question is answered, and the
+      answer is that all three arms wrote the same two lines. 2026-08-25.** m6 —
+      the corpus's only bug-report task, written 2026-08-24 as the one experiment
+      the fairness rule still permitted — run against vanilla / flux / flux-full.
+      Records `~/.flux-bench/runs/meridian-007/`, $3.81 of a $15 cap. Full write-up
+      appended to `.flux/analysis/2026-08-22-ceremony-two-cycles.md` as cycle 3.
+
+      | arm | delivered | accept | $/task | ctx p50 | wall/task | sessions |
+      |---|---|---|---|---|---|---|
+      | vanilla | 1/1 | **10/10** | **$0.78** | 58,459 | **130s** | 1.0 |
+      | flux | 1/1 | **10/10** | $0.81 | 54,194 | 134s | 1.0 |
+      | flux-full | 1/1 | **10/10** | $2.22 | **46,788** | 263s | 4.0 |
+
+      **1. Identical mechanism, not just identical score.** Every arm inserted
+      `space = self.repos.spaces.get(hold.space_id)` +
+      `self._reject_conflicts(space, hold.interval, ignore_id=hold.id)` into
+      `confirm_hold` after the liveness check — vanilla and flux-full byte-identical,
+      flux with `Interval(hold.start, hold.end)` for the same value. Two fixes were
+      legal and the tests are mechanism-blind; all three chose the same one and each
+      named the hold-claims-less-than-a-booking asymmetry in a docstring. flux-full's
+      155-line plan and its audit session produced the same edit one pass did.
+      Session costs: plan $0.46 + audit $0.83 + apply $0.46 + wrap $0.47 — **the
+      apply session alone beat vanilla's whole run** ($0.46 vs $0.78), as in cycle 2,
+      and the remaining $1.76 bought nothing the suite could see.
+
+      **2. It needed a harness change, and the change is the honest one.** m6's
+      defect is latent in the *corpus reference tree*; under the cumulative protocol
+      each arm would have been graded on a tree it wrote itself, so the run would
+      have measured which arm happened to reproduce the bug rather than which one
+      finds it. New `--from-reference` (commit `62a3fff`) pre-supplies the reference
+      implementation of the preceding tasks so every arm starts from the identical
+      broken tree. It refuses without explicit `--tasks`, refuses if a preceding task
+      has no reference, prints the protocol change above the report table, and a test
+      pins the property the experiment rests on: m6 is red 5/10 on the pre-supplied
+      tree with only the over-correction guards passing. **184 tests green.**
+
+      **3. What it does not settle.** n=1 per arm, one task, one model — the null is
+      "ceremony did not help here". The pre-supplied tree removes compounding by
+      construction, so if the lifecycle pays by keeping a multi-task project coherent
+      this run was blind to it (meridian-003, 4 tasks cumulative, was not, and found
+      nothing either). The kiosk Phase 02 audit datapoint still stands and still
+      points the other way — n=1, self-authored plan with wrong premises, the case
+      meridian cannot represent. Every negative result on this line is about
+      *briefed* work.
+
+      **What changes:** there is no pending experiment left behind which the
+      ceremony's quality claim can wait. Three cycles, the last two written to favour
+      it, identical delivery and acceptance each time, 2.8-2.9x the cost. **The
+      decision this hands the user is whether principle 5 now fires on the shipped
+      lifecycle skills (plan/audit/wrap), which is a capability deletion and so is
+      not taken unilaterally** — see the next queue item.
+
+- [ ] **DECIDE: does principle 5 fire on the lifecycle skills?** The evidence on
+      the ceremony is now complete and one-directional in the benchmark: 003, 004
+      and 007 all found the same delivery and the same acceptance at 2.8-2.9x the
+      cost, and 005/006 showed the ranking is monotone in session count across four
+      independent frameworks. plan.md's rule ("two unmoved reporting cycles ⇒ delete
+      it") has been satisfied three times over. The counter-evidence is one
+      unblinded real-work datapoint (kiosk Phase 02) in the exact case the corpus
+      cannot represent — an incomplete, self-authored plan. Options, in the shape
+      the earlier utilisation decisions took: delete the lifecycle skills; keep them
+      carried but not listed (they already are — `disable-model-invocation: true`,
+      so they cost nothing per session); or keep and pre-register a real-work bar
+      for the incomplete-plan case, which is the only case still unmeasured.
+      **Note the asymmetry with the utilisation deletions:** those failed a bar at
+      *zero* utilisation with a per-session context cost. These cost 0 tokens in a
+      session that does not invoke them, so "delete" here buys no context back — it
+      only removes an option. That is a judgment call, not an arithmetic one.
 
 - [x] **`meridian-006` — every framework now has real numbers, and the ranking is
       monotone in ceremony. 2026-08-24.** agentos and speckit ran to completion for

@@ -30,3 +30,19 @@ title = "Fix the utilisation report and break it down by space"
 [[task]]
 id = "m5"
 title = "Holds: a slot reserved for fifteen minutes before it is paid for"
+
+# m6 is the corpus's first BUG REPORT, and the only experiment the fairness rule
+# still permits (status.md, meridian-004): "the check constrains symbols, not
+# behaviour, so a terse bug report pinned through seed API only would leave the
+# invariant discoverable in the code and nowhere else." m1-m5 are complete
+# specifications, which is precisely the regime where planning and auditing have
+# nothing to recover -- every brief hands the arm its own answer. This one names
+# a symptom, names no rule and no file, and invents no symbol: the acceptance
+# tests bind only to API m1 and m5 already briefed. The defect is real and was
+# latent in the corpus's own reference tree, not injected: `confirm_hold` grows a
+# hold's claim from its bare interval to interval-plus-changeover and never
+# re-applies the collision rule, so an ordinary three-call sequence lands two
+# confirmed bookings inside each other's changeover with nothing raising.
+[[task]]
+id = "m6"
+title = "Bay 2 was double-booked back to back"

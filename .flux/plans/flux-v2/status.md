@@ -416,6 +416,56 @@ assert that quality decays with context.
 
 ## Task queue
 
+- [ ] **IN FLIGHT — `meridian-006`: agentos and speckit, the two arms that have
+      never attempted a task.** Launched 2026-08-24 after the rate limit cleared
+      (probed with a one-word headless session first), detached, log
+      `/tmp/meridian-006.log`, records `~/.flux-bench/runs/meridian-006/`. Ordered
+      **agentos first** — 2 steps against speckit's 4, so a returning limit costs the
+      cheaper arm's completion rather than leaving two half-arms. Scope is m1–m5
+      (the manifest predates m6, so nothing here is contaminated by it). `paul/m5`
+      is deliberately NOT retried: the corpus is cumulative, m5 cannot run from the
+      seed in isolation, and re-running paul m1–m5 costs ~$27 for one cell PAUL's
+      4/4 already answers. First sign of life ever from agentos: bootstrap installed
+      and `discover-standards` ran.
+
+- [x] **`m6` — the corpus's first bug report, and the only quality experiment the
+      fairness rule permits. Written 2026-08-24.** meridian-004 established that
+      **fluxbench cannot measure what ceremony is for**: its rule that tests may bind
+      only to seed symbols or briefed API forces complete briefs, and a complete
+      brief is the case where planning and auditing have nothing to recover. One
+      route was left open — "the check constrains symbols, not behaviour, so a terse
+      bug report pinned through seed API only would leave the invariant discoverable
+      in the code and nowhere else." m6 is that task.
+      **The defect is real and was latent in the corpus's own reference tree, not
+      injected.** `confirm_hold` grows a hold's claim from its bare interval to
+      interval-plus-changeover, and never re-applies the collision rule. So an
+      ordinary three-call sequence — hold 09:00–10:00, book 10:00–11:00, confirm the
+      hold — lands two confirmed bookings inside each other's changeover with nothing
+      raising anywhere. Reproduced against the post-m5 tree before a line was written.
+      No brief covers it: m5 §3 explicitly puts confirmed-vs-confirmed overlap out of
+      scope, and m5's acceptance suite sets no buffer at all.
+      **The brief names the symptom and nothing else** — 41 lines against m5's 120,
+      no file, no function, no rule, no invented symbol. It says outright: "the rule
+      this violates is already in this codebase and is already enforced everywhere
+      else; find it, and find the path that gets around it."
+      **The tests are blind to the mechanism**, which is what keeps it fair. Two
+      fixes are legal — refuse the booking that would be trapped, or refuse the
+      confirmation that springs it — so the suite pins the *invariant* (no two
+      confirmed bookings inside each other's changeover, computed with m1's own
+      formula) plus "something refused", never a particular call. That is the
+      meridian-001/m2 lesson applied before the fact rather than after.
+      **Verified:** `red ok (5/10 before) green ok (10/10 after)`, and the 5 that
+      already pass on the unfixed tree are the over-correction guards — a zero-buffer
+      space still books back to back, a live hold still claims only its own interval
+      (m5, unchanged), released and expired holds still trap nothing. m1/m3/m5
+      acceptance all still green under the reference fix (115 tests). 177 repo tests
+      green.
+      **What it still cannot do:** prove ceremony pays. It creates the *possibility*
+      of a quality difference where five runs had none; whether plan/audit finds the
+      invariant and one-shot does not is the open question, and m6 is the first task
+      that can answer it either way. Run it against vanilla / flux / flux-full when
+      the account has headroom.
+
 - [x] **`meridian-005` — PAUL measured fairly at last, and the ceremony tax
       reproduces on someone else's framework. 2026-08-24.** Killed early on the
       account's rate limit (user's call) after the decision-relevant part was banked.

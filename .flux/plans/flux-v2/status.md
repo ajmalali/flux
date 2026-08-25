@@ -416,17 +416,47 @@ assert that quality decays with context.
 
 ## Task queue
 
-- [ ] **IN FLIGHT — `meridian-006`: agentos and speckit, the two arms that have
-      never attempted a task.** Launched 2026-08-24 after the rate limit cleared
-      (probed with a one-word headless session first), detached, log
-      `/tmp/meridian-006.log`, records `~/.flux-bench/runs/meridian-006/`. Ordered
-      **agentos first** — 2 steps against speckit's 4, so a returning limit costs the
-      cheaper arm's completion rather than leaving two half-arms. Scope is m1–m5
-      (the manifest predates m6, so nothing here is contaminated by it). `paul/m5`
-      is deliberately NOT retried: the corpus is cumulative, m5 cannot run from the
-      seed in isolation, and re-running paul m1–m5 costs ~$27 for one cell PAUL's
-      4/4 already answers. First sign of life ever from agentos: bootstrap installed
-      and `discover-standards` ran.
+- [x] **`meridian-006` — every framework now has real numbers, and the ranking is
+      monotone in ceremony. 2026-08-24.** agentos and speckit ran to completion for
+      the first time in four attempts; no voids, $34.19 of a $40 cap. Records
+      `~/.flux-bench/runs/meridian-006/`.
+
+      Combined with `meridian-005` (same corpus, same model, same harness revision;
+      vanilla is the shared yardstick):
+
+      | arm | sessions/task | delivered | accept | $/task |
+      |---|---|---|---|---|
+      | vanilla (005) | 1 | **5/5** | 109/109 | **$1.10** |
+      | flux = prime+apply (003/004) | 1 | 4/4, 1/1 | 100% | $1.05 / $1.75 |
+      | agentos (006) | 2 | **5/5** | 109/109 | $1.68 |
+      | flux-full (003/004) | 4 | 4/4, 1/1 | 100% | $2.92 / $5.03 |
+      | speckit (006) | 4 | **3/5** | 103/109 | $5.16 ($8.60/delivered) |
+      | paul (005, m1–m4) | 4 | 4/4 | 82/82 | $5.38 |
+
+      **1. Session count predicts cost; nothing predicts quality.** One-session arms
+      cost ~$1.10, two ~$1.68, four $2.92–5.38 — across four independent frameworks
+      and flux's own two configurations. Not one of the four bought a delivery or an
+      acceptance point with the extra sessions. The trim to prime+apply put flux in
+      the cheap band, and this is the widest evidence yet that the band is the whole
+      story.
+
+      **2. speckit is the first arm to lose tasks on merit under a fair brief.**
+      m2 12/16: every tier boundary and rounding case passes, but
+      `meridian/domain/policy.py` was never created — the brief names the module
+      (line 26) and the signature `refund_cents(price_cents: int, gap: timedelta)
+      -> int` (line 32), so the corpus rule written after meridian-001 died on this
+      exact task is satisfied and the loss is fair. m3 26/28, independently:
+      `series_id` defaulted to `None` where the brief says `""` (line 8), and
+      `GET /series/{series_id}` (line 52) returns 404. **Checked, not assumed** — the
+      m3 failures are not a cascade from m2's missing module.
+      The shape is the same both times: the behaviour is right, the *stated details*
+      of the spec are not honoured. The spec-driven framework is the one that missed
+      explicit spec points, while agentos and vanilla scored 100% on the same briefs.
+
+      **3. What this does not establish.** It separates arms on **spec compliance**,
+      which is what a complete brief can test — not on the judgment m6 was written
+      for. And two tasks is suggestive, not settled: meridian-002's "flux lost m3 on
+      merit" did not reproduce. If speckit's pattern matters it will repeat.
 
 - [x] **`m6` — the corpus's first bug report, and the only quality experiment the
       fairness rule permits. Written 2026-08-24.** meridian-004 established that

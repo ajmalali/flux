@@ -860,6 +860,42 @@ class TransportFailureTests(unittest.TestCase):
         self.assertEqual(out.attempts, 2)
         self.assertEqual(slept, [1], "it must have waited before trying again")
 
+    # -- meridian-005: the same failure, with no status code attached ------
+    #
+    # The fix above keyed on `api_error_status`. When the limit returned in
+    # meridian-005 the CLI reported `terminal_reason: api_error` and left the
+    # status EMPTY, so nothing matched: speckit's five untried sessions were
+    # graded as an arm that delivered 0/19. Same lie, new shape.
+
+    @staticmethod
+    def _bare_api_error(cost=0.0):
+        return driver.SessionOutcome(
+            ok=False, payload={"total_cost_usd": cost, "terminal_reason": "api_error"},
+            stdout="", stderr="", wall_ms=1, argv=[], error="api_error",
+            api_error_status="")
+
+    def test_a_bare_api_error_is_a_transport_failure(self):
+        self.assertTrue(driver.is_transport_failure(self._bare_api_error()))
+
+    def test_a_bare_api_error_on_a_free_attempt_is_retryable(self):
+        self.assertTrue(driver.is_retryable(self._bare_api_error()))
+
+    def test_a_billed_bare_api_error_voids_without_being_retried(self):
+        """Both halves: never rerun a billed attempt, never score it either."""
+        billed = self._bare_api_error(cost=0.26)
+        self.assertFalse(driver.is_retryable(billed))
+        self.assertTrue(driver.is_transport_failure(billed))
+
+    def test_a_delivered_session_is_not_a_transport_failure(self):
+        self.assertFalse(driver.is_transport_failure(self._envelope(ok=True)))
+
+    def test_an_arms_own_failure_is_still_its_result(self):
+        """A session that reached the model and failed belongs to the arm."""
+        outcome = driver.SessionOutcome(
+            ok=False, payload={"total_cost_usd": 1.4, "terminal_reason": "error_max_turns"},
+            stdout="", stderr="", wall_ms=1, argv=[], error="session failed")
+        self.assertFalse(driver.is_transport_failure(outcome))
+
     def test_run_session_gives_up_after_the_backoff_schedule(self):
         slept = []
         original = driver._attempt
@@ -942,6 +978,30 @@ class VoidTaskTests(unittest.TestCase):
         text = report.render_markdown(manifest, report.summarize(manifest, rows))
         self.assertIn("This run is incomplete", text)
         self.assertIn("| downed | 0 | 2 |", text)
+
+    def test_a_statusless_api_error_still_voids_the_task(self):
+        """meridian-005's record shape, read back.
+
+        The runner did not void these -- it graded speckit 0/19 on five sessions
+        that never reached a model -- so the report has to catch what the run
+        recorded, exactly as it back-fills the 429s from meridian-002.
+        """
+        manifest = {"type": "manifest", "run_id": "t",
+                    "config": {"model": "sonnet", "max_usd": 10},
+                    "project": {"title": "p", "tasks": [{"id": "a"}]},
+                    "arms": [{"name": "speckit"}]}
+        rows = [
+            {"type": "session", "arm": "speckit", "task": "a", "cost_usd": 0.26,
+             "wall_ms": 185900, "ok": False, "error": "api_error",
+             "api_error_status": "", "tool_calls": {}, "requests": []},
+            {"type": "task", "arm": "speckit", "task": "a", "delivered": False,
+             "grade": {"accept_total": 19, "accept_passed": 0, "gate_ok": True}},
+        ]
+        speckit = report.summarize(manifest, rows)[0]
+        self.assertEqual(speckit.void_tasks, 1)
+        self.assertEqual(speckit.delivered, "void",
+                         "an untried arm must never render as 0/1")
+        self.assertIn("api_error", speckit.void_reason)
 
     def test_the_verdict_compares_on_shared_tasks_not_unequal_totals(self):
         """`vanilla` scoring 4 tasks and `flux` 2 is not `flux` being

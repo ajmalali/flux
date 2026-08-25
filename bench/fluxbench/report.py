@@ -193,13 +193,21 @@ def load(records_path: Path) -> "tuple[Dict[str, Any], List[Dict[str, Any]]]":
 API_ERROR_STATUSES = {"400", "401", "403", "404", "408", "429",
                       "500", "502", "503", "504", "529"}
 
+# A transport failure that named no status at all. Records written by
+# meridian-005 carry `error: "api_error"` with an empty `api_error_status`;
+# reading only the code re-published the untried-arm-as-failed-arm mistake the
+# void machinery exists to stop, so the reason counts as evidence too.
+API_ERROR_REASONS = {"api_error"}
+
 
 def _api_status(row: Dict[str, Any]) -> str:
     status = str(row.get("api_error_status") or "")
     if status:
         return status
     error = str(row.get("error") or "").strip()
-    return error if error in API_ERROR_STATUSES else ""
+    if error in API_ERROR_STATUSES:
+        return error
+    return error if error in API_ERROR_REASONS else ""
 
 
 def _is_api_failure(row: Dict[str, Any]) -> bool:

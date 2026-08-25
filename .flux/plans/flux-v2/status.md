@@ -1,6 +1,6 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-24, later (**the append-only state format is BUILT and dogfooded** — `.flux/state.toml` is gone from this repo, replaced by `.flux/state.jsonl`, one JSON record per key per write, union-merged by git via `.flux/.gitattributes` and resolved by replay. ADR **0002**. `updated` is now derived from the newest record rather than stored — it was one guaranteed-divergent line per session on a file every branch rewrote. New: `flux state log [N]` (the superseded value survives a bad write — the 2026-08-22 silent-corruption defect had no recovery path) and `flux state compact` (auto-fires past 8x the pack budget, because CLAUDE.md forbids uncapped stored state and an append-only file is uncapped by construction). The budget still prices the **rendered pack**, not the log — checked before appending, so an over-budget write leaves the log untouched. **18 new tests, 171 green**, and the two that matter run real `git merge`: two branches touching the same key merge clean and the newer wins, while the same two sessions against the old `state.toml` conflict — the control is in the suite. Plugin **2.10.0**. **ADOPTED IN KIOSK the same day** (`728adf8`, pushed to `zaps-io/kiosk` main): the `state.toml` line is out of kiosk's `.flux/.gitignore`, the 5 live keys migrated one-way on first write, and `state.jsonl` + `.gitattributes` are committed on `main` in a **101-branch** repo — so the conflict metric has a denominator and cycle 1 of 2 starts now. A live two-branch merge there came back clean: 0 unmerged paths, both records kept, replay returned the newer. NEXT: nothing to build on this line — let ordinary kiosk work accrue and read the count next cycle.)
+Updated: 2026-08-24, later (**the append-only state format is BUILT and dogfooded** — `.flux/state.toml` is gone from this repo, replaced by `.flux/state.jsonl`, one JSON record per key per write, union-merged by git via `.flux/.gitattributes` and resolved by replay. ADR **0002**. `updated` is now derived from the newest record rather than stored — it was one guaranteed-divergent line per session on a file every branch rewrote. New: `flux state log [N]` (the superseded value survives a bad write — the 2026-08-22 silent-corruption defect had no recovery path) and `flux state compact` (auto-fires past 8x the pack budget, because CLAUDE.md forbids uncapped stored state and an append-only file is uncapped by construction). The budget still prices the **rendered pack**, not the log — checked before appending, so an over-budget write leaves the log untouched. **18 new tests, 171 green**, and the two that matter run real `git merge`: two branches touching the same key merge clean and the newer wins, while the same two sessions against the old `state.toml` conflict — the control is in the suite. Plugin **2.10.0**. **ADOPTED IN KIOSK the same day** (`728adf8`, pushed to `zaps-io/kiosk` main): the `state.toml` line is out of kiosk's `.flux/.gitignore`, the 5 live keys migrated one-way on first write, and `state.jsonl` + `.gitattributes` are committed on `main` in a **101-branch** repo — so the conflict metric has a denominator and cycle 1 of 2 starts now. A live two-branch merge there came back clean: 0 unmerged paths, both records kept, replay returned the newer. NEXT: nothing to build on this line — let ordinary kiosk work accrue and read the count next cycle.) **Also 2026-08-24: `meridian-005` gave PAUL its first fair numbers** — 4/4 at 82/82, and **6.0x vanilla's cost** on the four tasks both scored, so the ceremony tax reproduces on the framework flux was distilled from. meridian-003's `paul 1/4` is withdrawn as our own arm bug. A live harness defect was found and fixed in the process: a transport failure reported without a status code slipped every check in the void machinery and graded five untried speckit sessions 0/19. 177 tests green. speckit and agentos remain unmeasured after three runs.
 
 Previously — 2026-08-24 (**the agent roster failed the same bar at zero and both agents are deleted** — 505 B = 126 tok/session, 0 invocations in 273 billed sessions and 0 in all 537 transcripts; trim and merge cannot clear a zero denominator so deletion was the only rung, pre-registered in `88ce1a8` before the read. Corrected: the roster is 505 B = 126 tok, not the 473 B = 118 tok published in `6c9a8f6`. Capability given up, reported as loss: flux-verifier's pre-existing-failure check and flux-explorer's haiku/low cost pin; the rest was already done in code by `flux check`/`flux run --filter` and by the built-in `Explore` (invoked 13x in the same corpus where flux-explorer was invoked 0). **flux now injects nothing model-visible except `prime`** — 0 of 14 skills listed, 0 agents. Every uncapped always-on path it ever had has now met the bar and every one failed. Plugin 2.9.0, 153 tests green. NEXT: stop auditing context; build the append-only JSONL-in-git state format.)
 
@@ -416,126 +416,54 @@ assert that quality decays with context.
 
 ## Task queue
 
-- [ ] **IN FLIGHT — `meridian-005`, the competitor arms' first valid numbers.**
-      Launched 2026-08-24, detached (`nohup`), log `/tmp/meridian-005.log`, records
-      `~/.flux-bench/runs/meridian-005/`. Read with `./bench/run.py report meridian-005`
-      (safe on a partial run — unreached work comes back `void`, not `0/5`).
-      **Why it exists:** flux has been measured hard against `vanilla` and against
-      itself, and against the three actual competitors it has **no valid data at all** —
-      `paul` was voided in 002 and then scored 1/4 on our own arm bug in 003 (fixed in
-      `bench/arms/paul.toml`, never rerun), and `speckit`/`agentos` were 429-voided in
-      both runs and have literally never been attempted. meridian-004 ran only
-      vanilla/flux/flux-lite.
-      **Shape:** `vanilla,paul,speckit,agentos` x m1–m5 on sonnet, `--max-usd 50`.
-      Arms ordered by decreasing decision-relevance so a budget cut-off voids `agentos`,
-      not `paul`. `vanilla` is in-run on purpose: 003/004 are a different harness
-      revision (arms were renamed when the lifecycle was trimmed) and
-      "flux lost m3 on merit" already failed to reproduce once, so the yardstick has to
-      be inside the run rather than borrowed across it. Corpus re-verified before spend:
-      all 5 tasks red-on-seed, green-on-reference.
-      **What it can answer:** whether the other frameworks pay the same ceremony tax
-      vanilla-relative, and whether anything in them is worth stealing.
-      **What it cannot:** quality. Every arm that has ever run this corpus scored 100%,
-      and the fairness rule that forces complete briefs is why (see the meridian-004
-      entry). A cost ranking is the whole deliverable.
+- [x] **`meridian-005` — PAUL measured fairly at last, and the ceremony tax
+      reproduces on someone else's framework. 2026-08-24.** Killed early on the
+      account's rate limit (user's call) after the decision-relevant part was banked.
+      Records `~/.flux-bench/runs/meridian-005/`, log `/tmp/meridian-005.log`.
 
-- [x] **Mine transcripts for the context/quality decay knee. Done 2026-08-22 —
-      there is no knee, and ADR 0001 rule 2 was amended before any code.** Findings:
-      `.flux/analysis/2026-08-22-context-decay.md`. Re-runnable: `./bench/run.py decay`
-      (`bench/fluxbench/decay.py`, 15 tests). See the section below.
-- [x] **`bench` reported permission friction as a quality column. Fixed 2026-08-22.**
-      Every failed tool result is now classified at collection time
-      (`decay.classify_error` → new `decay.error_bucket`) into three buckets, stored
-      per session as `tool_error_buckets` beside the unchanged raw `tool_errors`:
-      **model** (`memory` — a stale edit string, an unread file: the only class that is
-      evidence about the model's picture of the code), **friction** (`permission` —
-      approval prompts and blocks, the operator's allowlist), **other** (everything
-      else: a test exiting 1, a missing binary, an oversized output — the work itself,
-      and never quality either way). `report.py`'s single `tool err` column is replaced
-      by `model err` (carries the < 1.5% plan.md target) and `friction` (reported, never
-      targeted — it measures the operator, not the arm), with a paragraph under the
-      table saying which is which. plan.md's targets row and footnote amended to match;
-      the 3.2% baseline is **withdrawn** as the old pooled number.
-      **Two honesty guards, because old runs have totals and no buckets:** the table
-      names the arms whose errors predate the split and by how many, and the targets
-      table renders their model-err cell `0.0% ?` rather than `✓` — a tick there would
-      be earned by missing data, the same defect as ticking an arm that never ran.
-      Verified live on `meridian-003`: flux (7), flux-lite (1), paul (10) unclassified,
-      all three now `?`; vanilla's genuine 0 still ticks. **Eight tests** guard it
-      (`ErrorClassificationTests`): the bucket mapping, the three-way split of one
-      session, a permission refusal on an *Edit* landing in friction rather than memory
-      (classification order), an arm whose only errors are approval prompts winning the
-      quality column, `COLUMNS` publishing the split keys and never the raw rate, the
-      target following model-err and never friction, and both directions of the
-      pre-split warning. 142 green. No plugin bump — `bench/` is not on the plugin
-      surface.
-- [x] **`flux task` — measured before building, and NOT BUILT. 2026-08-22.**
-      Prompted by the user asking whether to adopt `beads` (`bd`) as a backend instead
-      of building an index. Both answers turned out to be premature: ADR 0001's own
-      ledger metric had never been measured, so neither build was justified yet.
-      Shipped `bench/fluxbench/ramp.py` + `./bench/run.py ramp` + 8 tests (150 green).
-      Write-up: `.flux/analysis/2026-08-22-cold-start-ramp.md`. **ADR 0001 is now
-      Status: Accepted, then suspended** — its falsifier fired in advance.
-      175 real interactive sessions, 129 reaching an edit. The ramp is real: median
-      **21 tool calls / ~48k tokens of context growth** before the first Edit. But
-      **60% of it is reading source code**, which no index removes, and the frontier
-      an index replaces is **15% of calls / 31% of result tokens — a median of 3 calls
-      and 2,715 tokens, i.e. 5.7% of the ramp**. Worse for the ADR: **75% of all
-      frontier tokens are one repo**, kiosk, whose PAUL `STATE.md` (299 KB) and phase
-      plans are read whole at 48–60 KB. Median kiosk session 6 calls / 14,083 tokens;
-      median everywhere else 1 call / 1,098 tokens. **`flux prime` already replaces
-      that exact read** (299 KB → 2k pack, adopted in kiosk 2026-08-20), so the
-      expensive frontier is a solved PAUL-shaped problem and `flux task` was left
-      competing for the 2,715-token remainder.
-      **The one case left**: the index also stores *declared files per task*, which
-      could shrink the 60% code bucket — invisible to mining, since no session ever
-      had that information. If revived, revive on that, with **code-bucket ramp** as
-      the metric. The frontier justification is spent.
-      **Two defects found while measuring**, both recorded in the write-up: the first
-      classifier read only `file_path`, so every ramp call made through Bash (`cat`,
-      `sed -n`, `grep` — which a global instruction tells this account to prefer) fell
-      into "other", 69% of the ramp, understating frontier and code threefold; and
-      counting calls alone said the frontier was 15% of the ramp while counting result
-      tokens said 31%, so both are now reported. `decay.Call` gained `arg` (Bash
-      command / Grep pattern) and `result_chars` to support it.
-- [x] **Done 2026-08-22 — the kiosk experiment ran, and ADR 0001's frontier case is
-      closed.** One real session in `zaps/kiosk` with the plugin live (prime pack in
-      its transcript), given one of kiosk's own open bugs and no other context: the
-      unguarded `codegraph prompt-hook`, a 127 on every prompt for contributors
-      without the binary.
+      | arm | delivered | accept | $/task | sessions | wall/task | tokens |
+      |---|---|---|---|---|---|---|
+      | vanilla | **5/5** | 109/109 | $1.10 | 1.0 | 189s | 8.0M |
+      | paul | **4/4** (+1 void) | 82/82 | $5.38 | 4.0 | 911s | 31.1M |
+      | speckit | void | — | — | — | — | — |
+      | agentos | never reached | | | | | |
 
-      | kiosk | n | ramp calls | frontier calls | frontier tokens | growth |
-      |---|---:|---:|---:|---:|---:|
-      | before prime (median) | 40 | 27 | 6 | 15,770 | 86,967 |
-      | the session on prime | 1 | **6** | **1** | **51** | **5,356** |
+      **Like-for-like on m1–m4, the four tasks both arms scored:** paul costs
+      **6.0x** the dollars ($21.23 vs $3.53), **5.8x** the wall-clock, **6.5x** the
+      tokens and 4 sessions per task against 1 — for **identical acceptance**, 82/82
+      each. Its diffs run 5–8x larger (m2: 24 files/+1038 against vanilla's 12/+90),
+      most of it PAUL's own state artifacts.
 
-      The one frontier call was `git status && git log -3`. **`.paul/STATE.md` was
-      never opened** — and kiosk's `CLAUDE.md` still names it as where phase and
-      position live, unchanged. The instruction stands; the pack made it unnecessary.
+      **1. The arm fix is vindicated and meridian-003's `paul 1/4` is formally
+      withdrawn.** m2 is exactly where 003 collapsed, and it cleared it 16/16. That
+      run was measuring our own misconfiguration (`/paul:verify` where
+      `/paul:unify` belonged), never PAUL. **Do not cite the 1/4 again.**
 
-      Three honest limits, all in `.flux/analysis/2026-08-22-cold-start-ramp.md`:
-      **n=1** (an existence proof, not a moved median); it was a **`claude -p`**
-      session whose prompt named the task, so the claim is "prime plus a specific
-      prompt" (against which: 40 pre-prime kiosk sessions also had specific prompts
-      and still paid 15,770); and **the corpus decays** — launching a fresh `claude`
-      fires the CLI's 30-day transcript cleanup, kiosk went 50 → 46 transcripts and
-      the corpus 175/129 → 170/123 editing *during the experiment*, which is why the
-      same pre-prime median read 14,083 this morning and 15,770 this evening. The
-      pre-prime baseline cannot be re-measured later.
+      **2. The ceremony tax is not a flux artifact.** flux's own lifecycle measured
+      2.8–2.9x against a one-shot arm; PAUL — the framework flux was distilled from,
+      same plan→audit→apply→close shape — costs 6.0x for the same output on the same
+      corpus. The finding the trim to prime+apply acted on reproduces on an
+      independent implementation. Same caveat as ever, and it is load-bearing: this
+      corpus cannot see quality (everyone scores 100%), so this ranks cost and
+      nothing else.
 
-      Also recorded rather than smoothed: **this repo's on/after cell went the wrong
-      way** (4,146 vs 1,898 frontier tokens, n=2). In flux, `status.md`/`plan.md`/ADRs
-      *are* the work product, so those reads are the session working, not orienting.
+      **3. A harness defect that would have republished meridian-002's lie —
+      found live, fixed, 6 tests, 177 green.** When the limit returned, the CLI
+      reported `terminal_reason: api_error` with an **empty** `api_error_status`.
+      Every check in the void machinery keyed on the status code, so nothing
+      matched: five speckit sessions that never reached a model were graded as an
+      arm delivering **0/19**. `driver.is_transport_failure` now keys on *did this
+      reach a model*, not *did it name a code* — covering both shapes — and
+      `report._api_status` back-fills the same rule over stored records, so
+      meridian-005 re-renders speckit as `void`. Retry still requires a free
+      attempt; a billed one voids without a rerun.
 
-      `ramp.report()` no longer hardcodes a flux-only block: the before/after split now
-      follows the three repos that actually carry frontier tokens, and the by-project
-      table reports median frontier **tokens** alongside calls. +1 test, **151 green**.
+      **4. Still unmeasured, third attempt running: `speckit` and `agentos`.** Both
+      have now been 429-voided in 002, 003 and 005 without ever attempting a task.
+      `paul/m5` also voided (billed 429, correctly not retried). Relaunch
+      `--arms speckit,agentos` plus `paul` on `--tasks m5` when the limit clears;
+      vanilla's m1–m5 numbers here are the yardstick to read them against.
 
-      Side effect, in kiosk's tree and uncommitted: the session was denied writes to
-      `.claude/settings.json` (three attempts), so its verified one-liner was applied
-      from here — `command -v codegraph >/dev/null 2>&1 || exit 0; codegraph
-      prompt-hook || exit 0`, checked to exit 0 with the binary off PATH. Not
-      committed and not pushed: PR #66 is open and awaiting the user's sign-off.
 - [ ] **Decided 2026-08-22: do not adopt `beads` (`bd`).** Investigated at the user's
       request; `bd` 1.2.2 is installed on this machine and used in no repo. It is not
       a backend for flux, it is a peer: `bd prime`, `bd remember/recall`, `bd hooks`,

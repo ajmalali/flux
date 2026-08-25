@@ -51,6 +51,14 @@ DEFAULT_TIMEOUT_S = 1800
 # meridian-002); 5xx and 529 are upstream capacity.
 RETRYABLE_API_STATUSES = {"429", "500", "502", "503", "504", "529"}
 
+# The same transport failure, reported without a status code. meridian-005 hit
+# it: after the retries were exhausted the CLI came back `terminal_reason:
+# api_error` with an EMPTY `api_error_status`, so every status-keyed check below
+# saw nothing, and five speckit sessions that never reached a model were graded
+# as an arm delivering 0/19. That is meridian-002's lie in a new shape, so the
+# transport test keys on "did this reach a model", not on "did it name a code".
+TRANSPORT_TERMINAL_REASONS = {"api_error"}
+
 # Rate-limit windows are measured in minutes, so the waits are too. Three
 # attempts spread over ~13 minutes rides out a window without stalling a run
 # behind an outage that is not going to clear.
@@ -189,15 +197,30 @@ def _attempt(
     )
 
 
+def is_transport_failure(outcome: SessionOutcome) -> bool:
+    """Did the request fail to reach a model at all?
+
+    Two shapes of the same thing: a named retryable status, or a bare
+    ``api_error`` terminal reason with no status attached. Either way the arm was
+    never given the chance to try, so neither may be scored as its answer.
+    """
+    if outcome.ok:
+        return False
+    if outcome.api_error_status in RETRYABLE_API_STATUSES:
+        return True
+    reason = str(outcome.payload.get("terminal_reason") or "")
+    return reason in TRANSPORT_TERMINAL_REASONS
+
+
 def is_retryable(outcome: SessionOutcome) -> bool:
     """Wait-and-try-again, or give up and refuse to score?
 
-    Both halves matter. The status has to be a transport failure rather than the
-    model's answer, *and* the attempt has to have cost nothing -- a session that
-    was billed for turns may already have written to the repo, and re-running it
+    Both halves matter. The failure has to be transport rather than the model's
+    answer, *and* the attempt has to have cost nothing -- a session that was
+    billed for turns may already have written to the repo, and re-running it
     would judge the arm against a tree its own abandoned attempt had moved.
     """
-    if outcome.ok or outcome.api_error_status not in RETRYABLE_API_STATUSES:
+    if not is_transport_failure(outcome):
         return False
     return float(outcome.payload.get("total_cost_usd") or 0.0) == 0.0
 

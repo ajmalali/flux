@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from . import metrics as M
-from .driver import DEFAULT_BACKOFF_S, run_session
+from .driver import DEFAULT_BACKOFF_S, is_transport_failure, run_session
 from .grade import grade
 from .spec import FRAMEWORKS_DIR, REPO_ROOT, Arm, Project, Task, render
 
@@ -204,10 +204,11 @@ class Runner:
         self._append({"type": "session", **sm.to_json(),
                       "api_error_status": outcome.api_error_status,
                       "attempts": outcome.attempts})
-        if outcome.api_error_status:
+        if is_transport_failure(outcome):
             raise ArmVoided(
                 "%s could not reach the model (%s, %d attempts) -- the arm was not "
-                "given the chance to try" % (label, outcome.api_error_status, outcome.attempts))
+                "given the chance to try"
+                % (label, outcome.api_error_status or "api_error", outcome.attempts))
         if sm.num_turns == 0 and sm.cost_usd == 0.0 and not step.optional:
             raise ArmMisconfigured(
                 "%s produced no turns -- check the prompt resolves (arm %s, step %s)"

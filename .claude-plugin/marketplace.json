@@ -1,5 +1,5 @@
 {
-  "name": "flux-market",
+  "name": "store",
   "owner": { "name": "Ajmal Ali" },
   "plugins": [
     { "name": "flux", "source": "./" }

@@ -11,7 +11,7 @@ stays in a lean skill set.
 Once per machine:
 
     /plugin marketplace add ajmalali/flux
-    /plugin install flux@flux-market
+    /plugin install flux@store
 
 Once per repo:
 

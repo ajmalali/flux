@@ -470,22 +470,35 @@ assert that quality decays with context.
       lifecycle skills (plan/audit/wrap), which is a capability deletion and so is
       not taken unilaterally** — see the next queue item.
 
-- [ ] **DECIDE: does principle 5 fire on the lifecycle skills?** The evidence on
-      the ceremony is now complete and one-directional in the benchmark: 003, 004
-      and 007 all found the same delivery and the same acceptance at 2.8-2.9x the
-      cost, and 005/006 showed the ranking is monotone in session count across four
-      independent frameworks. plan.md's rule ("two unmoved reporting cycles ⇒ delete
-      it") has been satisfied three times over. The counter-evidence is one
-      unblinded real-work datapoint (kiosk Phase 02) in the exact case the corpus
-      cannot represent — an incomplete, self-authored plan. Options, in the shape
-      the earlier utilisation decisions took: delete the lifecycle skills; keep them
-      carried but not listed (they already are — `disable-model-invocation: true`,
-      so they cost nothing per session); or keep and pre-register a real-work bar
-      for the incomplete-plan case, which is the only case still unmeasured.
-      **Note the asymmetry with the utilisation deletions:** those failed a bar at
-      *zero* utilisation with a per-session context cost. These cost 0 tokens in a
-      session that does not invoke them, so "delete" here buys no context back — it
-      only removes an option. That is a judgment call, not an arithmetic one.
+- [x] **DECIDE resolved 2026-08-25 — KEEP all three, pending a real-work bar.**
+      The three options were: delete the lifecycle skills; keep-but-status-quo; or
+      keep and pre-register a real-work bar for the one case still unmeasured. The
+      resolution is the third, and the reasoning is the asymmetry the item already
+      named. The utilisation deletions (mattpocock listing, flux:review, the agent
+      roster) all failed a bar at *zero* utilisation while costing tokens every
+      session — deletion bought context back. plan/audit/wrap carry
+      `disable-model-invocation: true`, so they cost 0 tokens in a session that does
+      not invoke them; deleting them reclaims nothing and only removes an option.
+      And that option holds the *only* positive real-work datapoint in the whole
+      corpus (kiosk Phase 02, audit caught three false plan premises), in the exact
+      case the benchmark cannot represent. Paying a real cost (losing the one tool
+      that has ever paid on real work) to buy nothing is a bad trade regardless of
+      the three benchmark nulls — which measured *briefed* work, where planning and
+      auditing have nothing to recover by construction. wrap in particular is not
+      ceremony at all: it is the only carrier of cross-session state, and the
+      benchmark scored it as tax only because fluxbench runs one task per fresh tree,
+      so there is no next session for it to serve. **What the nulls DID settle stays
+      settled:** on well-specified single-session work, reach for `/flux:apply`, not
+      the lifecycle — the plan skill says so in its own first paragraph. The
+      lifecycle earns its cost only when work spans sessions, is irreversible, or its
+      shape is unsettled. The real-work bar that could still move this is
+      pre-registered in `.flux/analysis/2026-08-25-realwork-preregistration.md`
+      (dogfood flux on a live multi-phase project; keep/remove/add read from a
+      pre-committed question set, not post-hoc). Also decided: **grill stays a
+      separate skill, not folded into plan** — merging a divergent interrogation
+      loop into a convergent one-file planner would uncap plan's cost and fork the
+      vendored copy away from `sync-vendored.sh`; the convention is grill → plan when
+      a phase's shape is unsettled, documented in the pre-registration note.
 
 - [x] **`meridian-006` — every framework now has real numbers, and the ranking is
       monotone in ceremony. 2026-08-24.** agentos and speckit ran to completion for

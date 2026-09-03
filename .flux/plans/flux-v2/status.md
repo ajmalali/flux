@@ -1,6 +1,8 @@
 # flux-v2 — status & next task
 
-Updated: 2026-08-26 (**the execution-index (ADR 0001) revival is DRAFTED as a design doc — nothing built**. `.flux/analysis/2026-08-26-execution-index-revival-design.md`, queued at the top of the task queue. A design conversation about how to run big multi-phase features settled a **division of labor** (= Principle 1): mattpocock `grill`/`wayfinder` do the **planning** (and `wayfinder` *invokes* grilling — they are not chained); **flux** does the **decomposition + execution**, breaking a spec into a task DAG **once** and carrying `routing` + `files` that mattpocock tickets have no slot for. So `to-tickets` leaves the execution path (kept only as a human-facing tracker view), and you decompose once, not twice. The revival honors ADR 0001's binding ruling — **the frontier justification is spent** (ramp 5.7%, `flux prime` already eats it) and may not be re-used — so it rests instead on **declared-files (code-bucket ramp)** + **per-task routing**, with build **gated behind the real-work pre-registration**: run the next live feature on the thin `status.md` queue, log `[pack-miss]`/`[want]`, build only if the pain shows on data. **beads stays rejected** as a dependency; its one useful verb (`bd ready`) is the topo sort, ~50 lines of stdlib. Storage reuses ADR 0002 verbatim (`tasks.jsonl` op-log, `merge=union`, replay, `blocked` computed on read). Two decisions left to the user in the doc: which store is canonical, and id assignment across parallel branches. **184 tests green, gate clean; no code changed this session.**)
+Updated: 2026-09-03 (**first field read-out of flux v2 on real work — `.flux/analysis/2026-09-03-field-readout.md`.** Every transcript for kiosk / rpi-rfm69 / broadcast / radiator / flux-itself since 2026-08-20 was mined (44 adopting-repo sessions, $867 API-equivalent; flux spent $415 on itself). **rpi-rfm69 is the shape flux was built for and met or grazed every target** (ctx p50 87k, 0 sessions >150 req, 11/16 wrapped, ~$26/phase, first edit after 11 calls vs 20 in kiosk-before; 3/3 audits landed real hits, 1 blocking — pre-registration **C2 met**). **radiator is the failure shape**: wrap ran in 3/13 sessions, `next` was identical for six sessions running, five sessions blew past 150 requests ($487 of $645), and state re-bloated into a 21 KB status.md + 46 KB plan read whole each start — the flux repo does the same with its own 106 KB status.md. Cross-cutting: the model bypasses the filtered gate (raw 35 vs `flux check` 24 in rpi, 59 vs 9 in radiator; `flux run` 0 uses), rediscovers the CLI each session (`flux --help` ×6, skill files cat-ed from the plugin cache ×4), stale keys ride unflagged (rpi `blocker` 5 days past resolution), `routing` is dead (17/18 writes `design`, all sessions Opus), and 9 of 14 skills had zero invocations. Thirteen actions filed in the queue below, each pinned to a ledger metric. **No code changed; 184 tests green.**)
+
+Previously — 2026-08-26 (**the execution-index (ADR 0001) revival is DRAFTED as a design doc — nothing built**. `.flux/analysis/2026-08-26-execution-index-revival-design.md`, queued at the top of the task queue. A design conversation about how to run big multi-phase features settled a **division of labor** (= Principle 1): mattpocock `grill`/`wayfinder` do the **planning** (and `wayfinder` *invokes* grilling — they are not chained); **flux** does the **decomposition + execution**, breaking a spec into a task DAG **once** and carrying `routing` + `files` that mattpocock tickets have no slot for. So `to-tickets` leaves the execution path (kept only as a human-facing tracker view), and you decompose once, not twice. The revival honors ADR 0001's binding ruling — **the frontier justification is spent** (ramp 5.7%, `flux prime` already eats it) and may not be re-used — so it rests instead on **declared-files (code-bucket ramp)** + **per-task routing**, with build **gated behind the real-work pre-registration**: run the next live feature on the thin `status.md` queue, log `[pack-miss]`/`[want]`, build only if the pain shows on data. **beads stays rejected** as a dependency; its one useful verb (`bd ready`) is the topo sort, ~50 lines of stdlib. Storage reuses ADR 0002 verbatim (`tasks.jsonl` op-log, `merge=union`, replay, `blocked` computed on read). Two decisions left to the user in the doc: which store is canonical, and id assignment across parallel branches. **184 tests green, gate clean; no code changed this session.**)
 
 Previously — 2026-08-25 (**the ceremony's quality question is answered and it is a null — all three arms wrote the same two lines**. `meridian-007` ran m6, the corpus's only bug-report task, against vanilla / flux / flux-full: every arm delivered, every arm 10/10, and every arm inserted the *same* `_reject_conflicts` call into `confirm_hold` — vanilla and flux-full byte-identical. flux-full paid $2.22 against $0.78/$0.81 and 4 sessions against 1 for it; its apply session alone ($0.46) beat vanilla's whole run, and the other $1.76 bought nothing the suite could see. Getting there needed a new `--from-reference` flag (`62a3fff`): m6's defect is latent in the *corpus* reference tree, so under the cumulative protocol each arm would have been graded on a tree it wrote itself — the flag pre-supplies m1–m5's references so all arms start from the identical broken tree, refuses without explicit `--tasks`, and announces itself above the report table. Cycle 3 written up in `.flux/analysis/2026-08-22-ceremony-two-cycles.md`; that file's "one legal route left" is now closed. **184 tests green.** NEXT is a judgment call, not a measurement: whether principle 5 fires on the shipped lifecycle skills — see the DECIDE item at the top of the queue.)
 
@@ -419,6 +421,32 @@ assert that quality decays with context.
 
 
 ## Task queue
+
+- [ ] **Field read-out actions — 2026-09-03.** Source and evidence:
+      `.flux/analysis/2026-09-03-field-readout.md` §5. In priority order, each with the
+      metric it must move (principle 5):
+      1. `flux guard` on a `UserPromptSubmit` hook — one line when context >120k or
+         requests >120, silent elsewhere → `sessions >150 req` (radiator 5→0).
+      2. Wrap-debt on `SessionEnd` (`flux seal`): log `[unwrapped]` to field-log; prime
+         warns next session → wrap coverage becomes measured (radiator 3/13).
+      3. Key age in the pack (`blocker: (unchanged 5d) …`) → pack-miss.
+      4. Inline latest handoff under its own ~1 200-token cap; `flux handoff` clips →
+         calls before first edit.
+      5. Pack footer with the verbs (gate / subset / close) → `--help` and skill-file
+         reads to 0, Bash output.
+      6. `flux log <tag> "…"` + `flux init` creates field-log.md (instrument only).
+      7. Optional: gate-bypass nudge on `PreToolUse` Bash → Bash output/session.
+      8. Apply flux to flux: cap this file at ~8 KB live state, history to
+         `.flux/analysis/` → flux-repo ctx p50 94k → ~70k.
+      9. Optional: session heartbeat, prime warns of a parallel session (unmeasured).
+      10. REMOVE `routing` key + `[routing]` + plan stamp (zero movement).
+      11. REMOVE eight zero-use skills (resume, review, wayfinder, to-spec, to-tickets,
+          ask-matt, research, writing-for-agents); fold adopt into `flux init` output.
+      12. `flux run` on notice — 0 uses in 44 sessions; delete next cycle if item 5
+          does not move it.
+      13. Close the kiosk conflict metric as unmeasurable (1 commit, 0 merges) unless
+          kiosk work resumes.
+      Items 10–11 are capability deletions — user decision, not unilateral.
 
 - [ ] **Execution index (ADR 0001) revival — DRAFT design filed, nothing built.
       2026-08-26.** Design doc at

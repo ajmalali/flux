@@ -2,7 +2,8 @@
 
 Updated: 2026-09-03 — loop phases 01 (`flux ledger`), 02 (status diet), 03 (`flux log`
 + pack footer), and 04 (guard/age/seal hooks) shipped, gated, wrapped (238 green); phase 05
-(claims + cycle line) is next to plan. Where we are: the v1→v2 pivot is done, `bin/flux` is the single-file stdlib CLI,
+(claims + cycle line) is **planned** (`.flux/plans/loop/05-claims-cycle.md`, design, 4
+tasks, unbuilt) — next is `/flux:apply` it (audit recommended first). Where we are: the v1→v2 pivot is done, `bin/flux` is the single-file stdlib CLI,
 phase 01's `flux ledger` mines transcripts into the field read-out's targets table, and
 phase 03 added `flux log <tag> "…"` → `.flux/field-log.md` plus a prime pack footer naming
 the four session verbs. History moved to `.flux/analysis/2026-09-03-status-history.md`;
@@ -44,9 +45,15 @@ this file is live state only.
   on SessionEnd is transcript-free — reads `cache/last-wrap` (dropped by `_touch_wrap` on
   every `state set`/`handoff`) vs `cache/last-prime` mtime to log `unwrapped` + set the seal
   marker. Adopting repos get the two new hooks on their next session (plugin update). **05
-  (claims + cycle line) next to plan** — it reads this cycle's ledger to score 04's + 03's +
-  02's claims. Then 06 handoff inline, 07 deletions (user decides), 08 optional. One
-  phase per session; wrap every session.
+  (claims + cycle line) PLANNED** (`.flux/plans/loop/05-claims-cycle.md`, design, 4 tasks):
+  `.flux/claims.jsonl` (append-only, `{ts,feature,metric,bar,scope,cycles}`), `flux claim
+  add`, `flux ledger --verdict` (scores each claim over post-claim cycles →
+  pending/moved/unmoved-N, reusing the ledger's own chunking + meta-tax, never a second
+  definition), and a flux-repo-only cached prime cycle line. T4 seeds this cycle's real
+  claims (02 ctx_p50, 03 help_reads, 04 over_cap + wrap_coverage, 00 meta_tax) — they read
+  `pending` at apply, judged 2 cycles out. **Next: `/flux:apply` (audit recommended first —
+  verdict chunking + prime cache have trap surface).** Then 06 handoff inline, 07 deletions
+  (user decides), 08 optional. One phase per session; wrap every session.
 - [ ] **Execution index (ADR 0001) revival — design filed, nothing built.** Design doc
   `.flux/analysis/2026-08-26-execution-index-revival-design.md`. Revive the suspended ADR 0001
   as `flux task add|start|done|block|next|list` over a `tasks.jsonl` op-log (ADR 0002's

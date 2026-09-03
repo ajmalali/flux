@@ -44,3 +44,11 @@
 {"ts": "2026-09-03T17:45:34.445Z", "k": "next", "v": "/flux:plan .flux/plans/loop/02-status-diet.md — write the phase-02 plan (it does not exist yet), then apply: cut this repo's 106 KB status.md to <=8 KB live state, dated history to .flux/analysis/. Target: flux-repo ctx p50 94k -> <75k next cycle."}
 {"ts": "2026-09-03T17:45:34.445Z", "k": "routing", "v": "design"}
 {"ts": "2026-09-03T17:45:34.445Z", "k": "open", "v": "Ledger gate ratio (flux-check/raw-gate) prints 16/25, not the read-out's unsaved-oracle 24/35 — unreproducible, documented, not a bug. Ledger medians exclude void/minor (differs from read-out's all-sessions medians on bash/re-reads/$-per-sess). Earlier live items still stand: ADR 0001 revival gated; kiosk conflict metric has no denominator; broadcast logs read pre-close (2 sessions); zaps/api chore branch unpushed."}
+{"ts": "2026-09-03T17:50:18.190Z", "k": "phase", "v": "02-status-diet"}
+{"ts": "2026-09-03T17:50:18.190Z", "k": "next", "v": "/flux:apply .flux/plans/loop/02-status-diet.md"}
+{"ts": "2026-09-03T17:50:18.190Z", "k": "routing", "v": "mechanical"}
+{"ts": "2026-09-03T18:12:54.687Z", "k": "phase", "v": "loop — phase 02 status diet DONE; phase 03 (flux log + pack footer) next"}
+{"ts": "2026-09-03T18:12:54.687Z", "k": "position", "v": "status.md cut 111 KB/1423 lines → 5,140 B/74 lines (live state only); frozen history verbatim in .flux/analysis/2026-09-03-status-history.md (99.5 KB, 26 done items + beads + benchmark/meridian/decay/check-command sections). Session-close section byte-for-byte unchanged. bin/flux/hooks/tests untouched — docs move only. 207 green."}
+{"ts": "2026-09-03T18:12:54.687Z", "k": "next", "v": "/flux:plan .flux/plans/loop/03-flux-log.md — flux log <tag> + field-log.md at init + pack footer (gate/subset/close/log ≤200 B); roadmap row 03, mechanical"}
+{"ts": "2026-09-03T18:12:54.687Z", "k": "routing", "v": "mechanical"}
+{"ts": "2026-09-03T18:12:54.687Z", "k": "open", "v": "Phase-02 claim UNVERIFIED: flux-repo ctx p50 94k→<75k is read next cycle by 'flux ledger --since 2026-09-03' (phase 05), not at apply. Ledger gate ratio prints 16/25 not read-out's 24/35 (unsaved oracle grep, documented). Ledger medians exclude void/minor. Live: ADR 0001 revival gated; kiosk conflict metric no denominator; bench/realworld run undecided; kiosk ledger before/after may be subsumed by phase-01 ledger."}

@@ -956,6 +956,84 @@ class TestPluginManifest(unittest.TestCase):
         self.assertTrue(any("flux" in c and "prime" in c for c in commands), commands)
 
 
+class TestLog(FluxRepoCase):
+    def _field_log(self):
+        with open(os.path.join(self.repo, ".flux", flux_module().FIELD_LOG_NAME)) as f:
+            return f.read()
+
+    def test_appends_ordered_entries(self):
+        run_flux(["init"], self.repo)
+        self.assertEqual(
+            run_flux(["log", "pack-miss", "prime lacked the gate cmd"], self.repo)
+            .returncode, 0)
+        self.assertEqual(
+            run_flux(["log", "want", "a subset verb"], self.repo).returncode, 0)
+        lines = [l for l in self._field_log().splitlines() if l.strip()]
+        self.assertEqual(len(lines), 2)
+        self.assertIn("pack-miss  prime lacked the gate cmd", lines[0])
+        self.assertIn("want  a subset verb", lines[1])  # newest last, first untouched
+
+    def test_free_text_clipped_to_budget(self):
+        run_flux(["init"], self.repo)
+        toml = os.path.join(self.repo, ".flux", "flux.toml")
+        with open(toml) as f:
+            content = f.read().replace("budget_tokens = 2000", "budget_tokens = 10")
+        with open(toml, "w") as f:
+            f.write(content)
+        run_flux(["log", "want", "x" * 500], self.repo)
+        self.assertLessEqual(len(self._field_log().encode()), 40 + 80)  # 40B + prefix
+
+    def test_missing_tag_or_text_errors_without_writing(self):
+        run_flux(["init"], self.repo)
+        for args in (["log"], ["log", "want"], ["log", "two words", "t"]):
+            out = run_flux(args, self.repo)
+            self.assertEqual(out.returncode, 2)
+            self.assertIn("usage: flux log", out.stderr)
+        self.assertEqual(self._field_log().strip(), "")  # nothing written
+
+    def test_non_flux_repo_returns_2_and_writes_nothing(self):
+        out = run_flux(["log", "want", "x"], self.repo)
+        self.assertEqual(out.returncode, 2)
+        self.assertFalse(os.path.exists(os.path.join(self.repo, ".flux", flux_module().FIELD_LOG_NAME)))
+
+
+class TestInitFieldLog(FluxRepoCase):
+    def _path(self):
+        return os.path.join(self.repo, ".flux", flux_module().FIELD_LOG_NAME)
+
+    def test_init_creates_field_log(self):
+        run_flux(["init"], self.repo)
+        self.assertTrue(os.path.exists(self._path()))
+
+    def test_force_preserves_existing_entries(self):
+        run_flux(["init"], self.repo)
+        run_flux(["log", "want", "keep me"], self.repo)
+        with open(self._path()) as f:
+            before = f.read()
+        run_flux(["init", "--force"], self.repo)
+        with open(self._path()) as f:
+            self.assertEqual(f.read(), before)
+
+
+class TestPackFooter(FluxRepoCase):
+    def test_prime_ends_with_the_four_verbs(self):
+        run_flux(["init"], self.repo)
+        out = run_flux(["prime"], self.repo)
+        footer = out.stdout.strip().splitlines()[-1]
+        for verb in ("gate:", "subset:", "close:", "log:"):
+            self.assertIn(verb, footer)
+        for cmd in ("flux check", "flux run", "flux handoff", "flux log"):
+            self.assertIn(cmd, footer)
+
+    def test_footer_under_200_bytes(self):
+        mod = flux_module()
+        self.assertLessEqual(len(mod.PACK_FOOTER.encode()), mod.PACK_FOOTER_BUDGET)
+
+    def test_non_flux_prime_still_silent(self):
+        out = run_flux(["prime"], self.repo)
+        self.assertEqual(out.stdout, "")
+
+
 class TestHelp(unittest.TestCase):
     def test_no_args_prints_usage(self):
         out = subprocess.run([FLUX], capture_output=True, text=True)

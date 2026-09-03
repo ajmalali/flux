@@ -1,10 +1,12 @@
 # flux-v2 — status & next task
 
-Updated: 2026-09-03 — loop phases 01 (`flux ledger`) and 02 (this status diet) shipped,
-gated, wrapped (207 green); phase 03 (`flux log` + pack footer) is next. Where we are: the
-v1→v2 pivot is done, `bin/flux` is the single-file stdlib CLI, and phase 01's `flux ledger`
-now mines transcripts into the field read-out's targets table. History moved to
-`.flux/analysis/2026-09-03-status-history.md`; this file is live state only.
+Updated: 2026-09-03 — loop phases 01 (`flux ledger`), 02 (status diet), and 03 (`flux log`
++ pack footer) shipped, gated, wrapped (216 green); phase 04 (guard/age/seal hooks) is
+next. Where we are: the v1→v2 pivot is done, `bin/flux` is the single-file stdlib CLI,
+phase 01's `flux ledger` mines transcripts into the field read-out's targets table, and
+phase 03 added `flux log <tag> "…"` → `.flux/field-log.md` plus a prime pack footer naming
+the four session verbs. History moved to `.flux/analysis/2026-09-03-status-history.md`;
+this file is live state only.
 
 ## Current state
 
@@ -12,9 +14,11 @@ now mines transcripts into the field read-out's targets table. History moved to
   `.flux/archive/v1/`, rationale ADR 0012 there). This repo is the flux v2 plugin +
   self-marketplace described in `plan.md`.
 - **`bin/flux`** — single-file stdlib CLI (Python ≥3.9, tomllib fallback):
-  init/prime/state/check/handoff/run/**ledger**, byte-budgets enforced (tokens ≈ bytes/4),
-  prime hook-safe (never fails, silent no-op without `.flux/`). `flux check` is the fixed
-  gate — no args, no narrowing; scoped runs go through `flux run --filter`.
+  init/prime/state/check/handoff/run/**ledger**/**log**, byte-budgets enforced (tokens ≈
+  bytes/4), prime hook-safe (never fails, silent no-op without `.flux/`). `flux check` is
+  the fixed gate — no args, no narrowing; scoped runs go through `flux run --filter`. Prime
+  ends with a pack footer naming the verbs (gate/subset/close/log, 143 B). `flux log <tag>
+  "…"` appends budget-clipped entries to `.flux/field-log.md` (created by `flux init`).
 - **Phase 01 ledger is in and green.** `flux ledger [--since] [--fleet] [--json]` mines
   on-disk transcripts into the targets table per cycle, budget-clipped, with a fleet view +
   `meta-tax` line; 23 tests + a checked-in golden fixture, **207 green**. Reproduces the
@@ -32,9 +36,10 @@ now mines transcripts into the field read-out's targets table. History moved to
 
 - [ ] **Build the loop — `.flux/plans/loop/` (ADR 0003, accepted 2026-09-03).** Roadmap
   `00-roadmap.md` maps every field-read-out action to eight phases, each with the claim it is
-  judged on. 01 ledger + 02 status diet DONE. **Next: 03 `flux log` + pack footer.** Then
-  04 guard/age/seal hooks, 05 claims + cycle line, 06 handoff inline, 07 deletions (user
-  decides), 08 optional. One phase per session; wrap every session.
+  judged on. 01 ledger + 02 status diet + 03 `flux log`/footer DONE. **Next: 04
+  guard/age/seal hooks** (`flux guard` on UserPromptSubmit, key age in pack, `flux seal` on
+  SessionEnd → `[unwrapped]`). Then 05 claims + cycle line, 06 handoff inline, 07 deletions
+  (user decides), 08 optional. One phase per session; wrap every session.
 - [ ] **Execution index (ADR 0001) revival — design filed, nothing built.** Design doc
   `.flux/analysis/2026-08-26-execution-index-revival-design.md`. Revive the suspended ADR 0001
   as `flux task add|start|done|block|next|list` over a `tasks.jsonl` op-log (ADR 0002's

@@ -6,9 +6,10 @@ call it as a bare command with zero install latency. Everything it injects into
 model context has a hard byte budget it enforces itself (tokens ~= bytes / 4).
 
 Commands: init | prime | state get/set/log/compact | check | handoff | run -- <cmd>
-          | ledger
+          | ledger | log <tag> "…"
 
   flux init [--force] [--scan]   --scan: inventory prior project state, write nothing
+  flux log <tag> "…"             append a field-log entry (tags: audit-hit|pack-miss|want)
   flux state log [N]             recent writes, newest first (default 20)
   flux state compact             collapse the log to one record per live key
   flux run [--tail N] [--filter elide|failures|tail:N|raw] -- <command...>
@@ -30,6 +31,17 @@ import time
 BYTES_PER_TOKEN = 4
 DEFAULT_STATE_BUDGET_TOKENS = 2000
 COLD_SECONDS = 3600
+
+# The field log — an append-only instrument (`flux log <tag> "…"`), created by init.
+FIELD_LOG_NAME = "field-log.md"
+# The prime pack's footer names the four session verbs so the model stops paying to
+# rediscover them (read-out item 5). Its own cap, stricter than the pack budget.
+PACK_FOOTER_BUDGET = 200
+PACK_FOOTER = (
+    'verbs — gate: flux check · subset: flux run -- <cmd> · '
+    'close: flux check && flux state set … && flux handoff · '
+    'log: flux log <tag> "…"'
+)
 
 # State is an append-only log, not a rewritten file. See read_state() for why.
 STATE_LOG_NAME = "state.jsonl"
@@ -600,6 +612,9 @@ def cmd_init(args):
     if not os.path.exists(state_path) and not os.path.exists(
             os.path.join(fdir, STATE_LOG_LEGACY)):
         open(state_path, "a", encoding="utf-8").close()  # empty log, keys unset
+    field_path = os.path.join(fdir, FIELD_LOG_NAME)
+    if not os.path.exists(field_path):  # created empty; never clobbers accrued entries
+        open(field_path, "a", encoding="utf-8").close()
     write_gitattributes(fdir)
     gitignore_path = os.path.join(fdir, ".gitignore")
     if not os.path.exists(gitignore_path):
@@ -680,6 +695,8 @@ def _prime_inner():
         lines.append("last handoff: %s" % os.path.relpath(latest, root))
     if not state.get("next"):
         lines.append("next: (unset — `flux state set next \"...\"` at wrap)")
+
+    lines.append(PACK_FOOTER)  # the verbs, so a cold session need not rediscover them
 
     print(clip("\n".join(lines), budget))
     return 0
@@ -998,6 +1015,36 @@ def cmd_check(_args):
         print("note: this command has never passed here — if the failure looks wrong, "
               "edit [check].command in .flux/flux.toml")
     return proc.returncode
+
+# ------------------------------------------------------------------------- log
+
+_LOG_USAGE = ('usage: flux log <tag> "<text>"  '
+              '(tags: audit-hit | pack-miss | want)')
+
+
+def _append_field_log(root, tag, text):
+    fdir = flux_dir(root)
+    os.makedirs(fdir, exist_ok=True)
+    with open(os.path.join(fdir, FIELD_LOG_NAME), "a", encoding="utf-8") as f:
+        f.write("- %s %s  %s\n" % (now_iso(), tag, text))
+
+
+def cmd_log(args):
+    """Append one entry to .flux/field-log.md — the field's own instrument. A user
+    command: it errors (not silent) outside a flux repo; the hook-safe seal caller
+    is phase 04's concern. The tag is an open bareword so seal can log `unwrapped`."""
+    root = repo_root()
+    cfg = read_config(root)
+    if cfg is None:
+        print("flux log: not a flux repo (run `flux init` first)", file=sys.stderr)
+        return 2
+    if len(args) < 2 or not args[0] or " " in args[0] or not " ".join(args[1:]).strip():
+        print(_LOG_USAGE, file=sys.stderr)
+        return 2
+    tag = args[0]
+    text = clip(" ".join(args[1:]).strip(), state_budget_bytes(cfg))
+    _append_field_log(root, tag, text)
+    return 0
 
 # --------------------------------------------------------------------- handoff
 
@@ -1624,6 +1671,7 @@ COMMANDS = {
     "handoff": cmd_handoff,
     "run": cmd_run,
     "ledger": cmd_ledger,
+    "log": cmd_log,
 }
 
 def main(argv):

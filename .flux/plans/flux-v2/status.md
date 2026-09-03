@@ -1,8 +1,8 @@
 # flux-v2 — status & next task
 
-Updated: 2026-09-03 — loop phases 01 (`flux ledger`), 02 (status diet), and 03 (`flux log`
-+ pack footer) shipped, gated, wrapped (216 green); phase 04 (guard/age/seal hooks) is
-**planned** (`.flux/plans/loop/04-guard-age-seal.md`, design) and apply-ready. Where we are: the v1→v2 pivot is done, `bin/flux` is the single-file stdlib CLI,
+Updated: 2026-09-03 — loop phases 01 (`flux ledger`), 02 (status diet), 03 (`flux log`
++ pack footer), and 04 (guard/age/seal hooks) shipped, gated, wrapped (238 green); phase 05
+(claims + cycle line) is next to plan. Where we are: the v1→v2 pivot is done, `bin/flux` is the single-file stdlib CLI,
 phase 01's `flux ledger` mines transcripts into the field read-out's targets table, and
 phase 03 added `flux log <tag> "…"` → `.flux/field-log.md` plus a prime pack footer naming
 the four session verbs. History moved to `.flux/analysis/2026-09-03-status-history.md`;
@@ -14,7 +14,7 @@ this file is live state only.
   `.flux/archive/v1/`, rationale ADR 0012 there). This repo is the flux v2 plugin +
   self-marketplace described in `plan.md`.
 - **`bin/flux`** — single-file stdlib CLI (Python ≥3.9, tomllib fallback):
-  init/prime/state/check/handoff/run/**ledger**/**log**, byte-budgets enforced (tokens ≈
+  init/prime/state/check/handoff/run/**ledger**/**log**/**guard**/**seal**, byte-budgets enforced (tokens ≈
   bytes/4), prime hook-safe (never fails, silent no-op without `.flux/`). `flux check` is
   the fixed gate — no args, no narrowing; scoped runs go through `flux run --filter`. Prime
   ends with a pack footer naming the verbs (gate/subset/close/log, 143 B). `flux log <tag>
@@ -36,14 +36,16 @@ this file is live state only.
 
 - [ ] **Build the loop — `.flux/plans/loop/` (ADR 0003, accepted 2026-09-03).** Roadmap
   `00-roadmap.md` maps every field-read-out action to eight phases, each with the claim it is
-  judged on. 01 ledger + 02 status diet + 03 `flux log`/footer DONE. **04 guard/age/seal
-  PLANNED** — `.flux/plans/loop/04-guard-age-seal.md` (design) is written; **apply next**.
-  Design pinned there: `flux guard` on UserPromptSubmit reuses `_scan_session[requests]`
-  and *nudges* (never exit-2) past `warn_requests`=120; prime suffixes stale keys ` [Nd]`
-  from the state-log ts; `flux seal` on SessionEnd is **transcript-free** (tight teardown
-  budget) — it reads `cache/last-wrap` (dropped by every `state set`/`handoff`) vs
-  `cache/last-prime` mtime to log `unwrapped` and set the marker prime warns on. Then 05
-  claims + cycle line, 06 handoff inline, 07 deletions (user decides), 08 optional. One
+  judged on. 01 ledger + 02 status diet + 03 `flux log`/footer + **04 guard/age/seal DONE**
+  (`.flux/plans/loop/04-guard-age-seal.md`, `status: done`; 238 green, plugin.json 2.11.0).
+  04 shipped: `flux guard` on UserPromptSubmit reuses `_scan_session[requests]` and *nudges*
+  (never exit-2) past `warn_requests`=120 (anti-nag via `cache/guard.json`); prime suffixes
+  stale keys ` [Nd]` from the state-log ts and warns after an unwrapped session; `flux seal`
+  on SessionEnd is transcript-free — reads `cache/last-wrap` (dropped by `_touch_wrap` on
+  every `state set`/`handoff`) vs `cache/last-prime` mtime to log `unwrapped` + set the seal
+  marker. Adopting repos get the two new hooks on their next session (plugin update). **05
+  (claims + cycle line) next to plan** — it reads this cycle's ledger to score 04's + 03's +
+  02's claims. Then 06 handoff inline, 07 deletions (user decides), 08 optional. One
   phase per session; wrap every session.
 - [ ] **Execution index (ADR 0001) revival — design filed, nothing built.** Design doc
   `.flux/analysis/2026-08-26-execution-index-revival-design.md`. Revive the suspended ADR 0001

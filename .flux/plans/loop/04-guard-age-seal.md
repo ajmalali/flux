@@ -1,7 +1,7 @@
 ---
 phase: 04-guard-age-seal
 routing: design
-status: planned
+status: done
 files:
   - bin/flux                       # cmd_guard + cmd_seal; key-age in _prime_inner; last-session/guard markers
   - hooks/hooks.json               # UserPromptSubmit -> flux guard; SessionEnd -> flux seal
@@ -323,3 +323,22 @@ contradiction found with plan.md's targets table or the binding conventions.
 
 ## outcome
 (unwritten — filled at apply.)
+
+## outcome — 2026-09-03
+shipped: `flux guard` (UserPromptSubmit) reuses `_scan_session["requests"]` — the ledger's
+  exact count — and nudges past `[guard].warn_requests` (120), anti-nagging via
+  `cache/guard.json`+`renudge`, never exiting non-zero. `flux seal` (SessionEnd) is
+  transcript-free: it reads `cache/last-wrap` (dropped by `_touch_wrap` on every `state
+  set`/`handoff`) vs `cache/last-prime` mtime, logs `unwrapped` to the field log past
+  `substantive_seconds` (180), and writes `cache/last-session.json`. prime stamps stale
+  state keys ` [Nd]` (from the state-log ts, `stale_days` 2) and warns when the seal marker
+  says the last session ended unwrapped. hooks.json carries all three events; the toml
+  template scaffolds a commented `[guard]` block; plugin.json 2.10.1 → 2.11.0. `flux check`
+  green at 238 tests (+22; was 216). All six ACs PASS.
+deviated: README got three CLI-table rows (guard, seal, prime additions) rather than the
+  frontmatter's "one paragraph" — the file was declared but no task specified it; honored
+  the declared scope in the table's existing style.
+deferred: the three claims are not falsifiable at apply, exactly as the plan pinned —
+  `sessions > 150 → 0` and wrap coverage are read next cycle by `flux ledger` in the
+  adopting repos (its `sessions > 150` and wrap columns), stale-key days-max ≤ 2 is
+  structural here + behavioural later; all recorded for phase 05. Nothing dropped from scope.

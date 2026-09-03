@@ -7,6 +7,20 @@
           { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/flux\" prime", "timeout": 10 }
         ]
       }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/flux\" guard", "timeout": 10 }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/flux\" seal", "timeout": 5 }
+        ]
+      }
     ]
   }
 }

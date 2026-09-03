@@ -6,7 +6,11 @@ call it as a bare command with zero install latency. Everything it injects into
 model context has a hard byte budget it enforces itself (tokens ~= bytes / 4).
 
 Commands: init | prime | state get/set/log/compact | check | handoff | run -- <cmd>
-          | ledger | log <tag> "…"
+          | ledger | log <tag> "…" | guard | seal
+
+  flux guard / flux seal          hook targets (UserPromptSubmit / SessionEnd),
+                                  not called by hand: guard nudges a runaway
+                                  session to wrap; seal flags an unwrapped one.
 
   flux init [--force] [--scan]   --scan: inventory prior project state, write nothing
   flux log <tag> "…"             append a field-log entry (tags: audit-hit|pack-miss|want)
@@ -293,6 +297,79 @@ def local_stamp(iso):
         return time.strftime("%Y-%m-%d %H:%M", time.localtime(epoch))
     except Exception:
         return iso
+
+def _iso_epoch(iso):
+    """ISO stamp (as now_iso() writes) -> UTC epoch seconds, or None if unparseable."""
+    try:
+        base = str(iso).split(".")[0].rstrip("Z")
+        return calendar.timegm(time.strptime(base, "%Y-%m-%dT%H:%M:%S"))
+    except Exception:
+        return None
+
+def _key_age_days(iso):
+    """Whole days between an ISO write stamp and now (UTC), or None if unparseable."""
+    epoch = _iso_epoch(iso)
+    if epoch is None:
+        return None
+    return int((time.time() - epoch) // 86400)
+
+# ------------------------------------------------------- hooks + cache scratch
+#
+# guard (UserPromptSubmit) and seal (SessionEnd) are hook targets, so they carry
+# prime's discipline: read one JSON object off stdin, no-op silently on anything
+# unexpected, never return non-zero. Their memory lives in .flux/cache/ — the
+# same gitignored scratch dir _cold_gap_seconds keeps last-prime in.
+
+def _hook_input():
+    """The hook's JSON object off stdin. {} on empty / unparseable / non-object."""
+    try:
+        obj = json.loads(sys.stdin.read())
+        return obj if isinstance(obj, dict) else {}
+    except Exception:
+        return {}
+
+def _cache_dir(root):
+    return os.path.join(flux_dir(root), "cache")
+
+def _read_cache_json(root, name):
+    try:
+        with open(os.path.join(_cache_dir(root), name), encoding="utf-8") as f:
+            obj = json.load(f)
+        return obj if isinstance(obj, dict) else {}
+    except Exception:
+        return {}
+
+def _write_cache_json(root, name, obj):
+    try:
+        cdir = _cache_dir(root)
+        os.makedirs(cdir, exist_ok=True)
+        with open(os.path.join(cdir, name), "w", encoding="utf-8") as f:
+            json.dump(obj, f)
+    except Exception:
+        pass
+
+def _guard_cfg(cfg, key, default):
+    """A [guard] key as int, else the code default — every adopted repo works
+    unedited (missing table or key falls back)."""
+    table = cfg.get("guard") if cfg else None
+    if isinstance(table, dict) and key in table:
+        try:
+            return int(table[key])
+        except (TypeError, ValueError):
+            return default
+    return default
+
+def _touch_wrap(root):
+    """The breadcrumb every real wrap leaves — O(1). seal reads it (transcript-free)
+    to tell a wrapped session from an unwrapped one. Errors swallowed: a missed
+    touch costs one seal warning, never state."""
+    try:
+        cdir = _cache_dir(root)
+        os.makedirs(cdir, exist_ok=True)
+        with open(os.path.join(cdir, "last-wrap"), "w", encoding="utf-8") as f:
+            f.write(now_iso())
+    except Exception:
+        pass
 
 # ------------------------------------------------------------------------ init
 
@@ -590,6 +667,12 @@ budget_tokens = 2000          # flux refuses to emit or store more than this
 design = "opus"
 mechanical = "sonnet"
 
+[guard]                       # session-boundary hooks (guard/seal). All optional —
+# warn_requests = 120         #   guard nudges to wrap past this request count
+# renudge       = 25          #   ...then stays quiet until this many more
+# stale_days    = 2           #   prime tags a state key ` [Nd]` older than this
+# substantive_seconds = 180   #   seal calls a session real (worth a wrap) past this
+
 [run]
 tail = 100                    # `flux run` keeps at most this many trailing lines
 filter = "elide"              # elide | failures | tail:80 | raw (--filter overrides)
@@ -681,10 +764,22 @@ def _prime_inner():
             % (cold / 3600.0)
         )
 
+    aged = winners(read_log(state_log_path(root)))  # {key: (ts, value)}, newest write
+    stale_days = _guard_cfg(cfg, "stale_days", 2)
     for key in ("phase", "position", "next", "routing", "open"):
         value = str(state.get(key, "")).strip()
         if value:
-            lines.append("%s: %s" % (key, value))
+            line = "%s: %s" % (key, value)
+            info = aged.get(key)
+            if info:
+                age = _key_age_days(info[0])
+                if age is not None and age > stale_days:
+                    line += " [%dd]" % age  # a key riding the pack past its shelf life
+            lines.append(line)
+    last_session = _read_cache_json(root, "last-session.json")
+    if last_session.get("warn"):
+        lines.append("warn: last session ended unwrapped — its next/open may be "
+                     "stale; verify before trusting the pack.")
     check_cfg = cfg.get("check") or {}
     check = check_cfg.get("command", "")
     if check:
@@ -782,6 +877,107 @@ def _latest_handoff(root):
     entries = sorted(e for e in os.listdir(hdir) if e.endswith(".md"))
     return os.path.join(hdir, entries[-1]) if entries else None
 
+# ------------------------------------------------------------------------ guard
+
+def _hook_transcript(data, root):
+    """This session's transcript, best-effort: prefer stdin's transcript_path, else
+    the reliable on-disk name PROJECTS_DIR/<slug>/<session_id>.jsonl. None if
+    neither resolves to a file — the caller no-ops."""
+    tp = data.get("transcript_path")
+    if tp and os.path.isfile(tp):
+        return tp
+    sid = data.get("session_id")
+    if sid:
+        cand = os.path.join(PROJECTS_DIR, _slug_for_path(root), str(sid) + ".jsonl")
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+def cmd_guard(_args):
+    """UserPromptSubmit hook target. Counts this session's main-thread requests the
+    way the ledger does and, past the threshold, injects one nudge to wrap+clear.
+    A nudge, never a gate: it never returns non-zero (exit 2 would block the
+    prompt) and no-ops silently in non-flux repos / on any failure."""
+    try:
+        return _guard_inner()
+    except Exception:
+        return 0
+
+def _guard_inner():
+    data = _hook_input()
+    root = repo_root()
+    cfg = read_config(root)
+    if cfg is None:
+        return 0  # not a flux repo — silent
+    path = _hook_transcript(data, root)
+    if not path:
+        return 0  # no resolvable transcript — silent (transcript_path is best-effort)
+    row = _scan_session(path)
+    count = row["requests"] if row else 0
+    warn_at = _guard_cfg(cfg, "warn_requests", 120)
+    renudge = _guard_cfg(cfg, "renudge", 25)
+    if count < warn_at:
+        return 0
+    sid = str(data.get("session_id", ""))
+    memo = _read_cache_json(root, "guard.json")
+    last = int(memo.get("last_warn", 0)) if memo.get("session_id") == sid else 0
+    if last and count < last + renudge:
+        return 0  # already warned this session; inside the re-nudge window
+    print("flux guard: this session is at %d requests (past the smart zone). "
+          "Wrap now — flux check && flux state set … && flux handoff — then /clear."
+          % count)
+    _write_cache_json(root, "guard.json", {"session_id": sid, "last_warn": count})
+    return 0
+
+# ------------------------------------------------------------------------- seal
+
+def cmd_seal(_args):
+    """SessionEnd hook target. O(1) and transcript-free — SessionEnd's teardown
+    budget is tight and its stdout is ignored. Decides wrapped/substantive from
+    cheap .flux/cache/ breadcrumbs, logs an unwrapped substantive session, and
+    leaves a marker prime warns on next start. Never returns non-zero."""
+    try:
+        return _seal_inner()
+    except Exception:
+        return 0
+
+def _seal_inner():
+    data = _hook_input()
+    root = repo_root()
+    cfg = read_config(root)
+    if cfg is None:
+        return 0  # not a flux repo — silent
+    reason = str(data.get("reason", "other")) or "other"
+    sub_secs = _guard_cfg(cfg, "substantive_seconds", 180)
+    try:
+        prime_at = os.path.getmtime(os.path.join(_cache_dir(root), "last-prime"))
+    except OSError:
+        # No SessionStart marker — nothing to measure this session against.
+        _write_cache_json(root, "last-session.json",
+                          {"warn": False, "wrapped": False, "reason": reason,
+                           "ts": now_iso()})
+        return 0
+    wrap_at = _iso_epoch(_read_last_wrap(root))
+    now = time.time()
+    wrapped = wrap_at is not None and wrap_at >= prime_at
+    substantive = (now - prime_at) >= sub_secs
+    warn = substantive and not wrapped
+    _write_cache_json(root, "last-session.json",
+                      {"warn": warn, "wrapped": wrapped, "reason": reason,
+                       "ts": now_iso()})
+    if warn:
+        minutes = int((now - prime_at) / 60)
+        _append_field_log(root, "unwrapped",
+                          "reason=%s, ~%dm session, no state write" % (reason, minutes))
+    return 0
+
+def _read_last_wrap(root):
+    try:
+        with open(os.path.join(_cache_dir(root), "last-wrap"), encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
 # ----------------------------------------------------------------------- state
 
 def cmd_state(args):
@@ -854,6 +1050,7 @@ def cmd_state(args):
             print("flux state: compacted %s — %d records -> %d, log was over "
                   "%d bytes (%dx the pack budget)"
                   % (STATE_LOG_NAME, before, after, cap, STATE_LOG_BUDGET_MULTIPLE))
+        _touch_wrap(root)  # a state write is the wrap breadcrumb seal reads
         return 0
     if args[0] == "log":
         return cmd_state_log(root, args[1:])
@@ -1086,6 +1283,7 @@ def cmd_handoff(_args):
     path = os.path.join(hdir, time.strftime("%Y-%m-%d-%H%M") + ".md")
     with open(path, "w", encoding="utf-8") as f:
         f.write(content)
+    _touch_wrap(root)  # a handoff is the wrap breadcrumb seal reads
     print(os.path.relpath(path, os.getcwd()))
     return 0
 
@@ -1672,6 +1870,8 @@ COMMANDS = {
     "run": cmd_run,
     "ledger": cmd_ledger,
     "log": cmd_log,
+    "guard": cmd_guard,
+    "seal": cmd_seal,
 }
 
 def main(argv):

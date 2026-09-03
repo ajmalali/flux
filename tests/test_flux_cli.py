@@ -1,6 +1,7 @@
 """Tests for bin/flux. Stdlib only: python3 -m unittest discover -s tests"""
 
 import importlib.machinery
+import json
 import os
 import re
 import shutil
@@ -22,12 +23,13 @@ def flux_module():
 FLUX = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin", "flux")
 
 
-def run_flux(args, cwd, env_extra=None):
+def run_flux(args, cwd, env_extra=None, stdin=None):
     env = dict(os.environ)
     if env_extra:
         env.update(env_extra)
     return subprocess.run(
-        [FLUX] + args, cwd=cwd, capture_output=True, text=True, env=env, timeout=60
+        [FLUX] + args, cwd=cwd, capture_output=True, text=True, env=env, timeout=60,
+        input=stdin,
     )
 
 
@@ -1043,6 +1045,235 @@ class TestHelp(unittest.TestCase):
     def test_unknown_command(self):
         out = subprocess.run([FLUX, "bogus"], capture_output=True, text=True)
         self.assertEqual(out.returncode, 2)
+
+
+def _transcript(path, n, model="claude-opus-4-8"):
+    """A synthetic transcript with n distinct main-thread assistant requests — the
+    ledger's request definition (deduped on message.id, sidechain excluded)."""
+    with open(path, "w") as f:
+        for i in range(n):
+            f.write(json.dumps({
+                "type": "assistant", "timestamp": "2026-08-21T09:00:00.000Z",
+                "message": {"id": "m%d" % i, "model": model,
+                            "usage": {"input_tokens": 1000,
+                                      "cache_creation_input_tokens": 0,
+                                      "cache_read_input_tokens": 1000,
+                                      "output_tokens": 50},
+                            "content": [{"type": "text", "text": "x"}]}}) + "\n")
+    return path
+
+
+class TestGuard(FluxRepoCase):
+    def setUp(self):
+        super().setUp()
+        run_flux(["init"], self.repo)
+
+    def _hook(self, tpath, sid):
+        return json.dumps({"transcript_path": tpath, "session_id": sid,
+                           "hook_event_name": "UserPromptSubmit"})
+
+    def _t(self, n, name="t.jsonl"):
+        return _transcript(os.path.join(self.repo, name), n)
+
+    def test_warns_at_threshold(self):
+        out = run_flux(["guard"], self.repo, stdin=self._hook(self._t(130), "A"))
+        self.assertEqual(out.returncode, 0)
+        self.assertIn("130 requests", out.stdout)
+        self.assertIn("Wrap now", out.stdout)
+
+    def test_silent_under_threshold(self):
+        out = run_flux(["guard"], self.repo, stdin=self._hook(self._t(100), "A"))
+        self.assertEqual(out.returncode, 0)
+        self.assertEqual(out.stdout, "")
+
+    def test_anti_nag_window_then_renudge(self):
+        run_flux(["guard"], self.repo, stdin=self._hook(self._t(130), "A"))  # warns
+        inside = run_flux(["guard"], self.repo, stdin=self._hook(self._t(145), "A"))
+        self.assertEqual(inside.stdout, "")  # 130..130+25 is silent
+        again = run_flux(["guard"], self.repo, stdin=self._hook(self._t(155), "A"))
+        self.assertIn("155 requests", again.stdout)  # 130+25 reached
+
+    def test_session_id_reset(self):
+        run_flux(["guard"], self.repo, stdin=self._hook(self._t(130), "A"))  # warns
+        fresh = run_flux(["guard"], self.repo, stdin=self._hook(self._t(130), "B"))
+        self.assertIn("130 requests", fresh.stdout)  # a new session warns on its own
+
+    def test_non_flux_repo_silent(self):
+        shutil.rmtree(os.path.join(self.repo, ".flux"))
+        out = run_flux(["guard"], self.repo, stdin=self._hook(self._t(130), "A"))
+        self.assertEqual(out.returncode, 0)
+        self.assertEqual(out.stdout, "")
+
+    def test_empty_stdin_silent(self):
+        out = run_flux(["guard"], self.repo, stdin="")
+        self.assertEqual(out.returncode, 0)
+        self.assertEqual(out.stdout, "")
+
+    def test_missing_transcript_silent(self):
+        j = json.dumps({"transcript_path": "/nonexistent/x.jsonl", "session_id": "A"})
+        out = run_flux(["guard"], self.repo, stdin=j)
+        self.assertEqual(out.returncode, 0)
+        self.assertEqual(out.stdout, "")
+
+    def test_never_returns_nonzero_on_garbage(self):
+        out = run_flux(["guard"], self.repo, stdin="{not json")
+        self.assertEqual(out.returncode, 0)
+
+
+class TestKeyAge(FluxRepoCase):
+    def setUp(self):
+        super().setUp()
+        run_flux(["init"], self.repo)
+
+    def _seed(self, pairs):
+        """pairs: (key, value, days_ago) — write raw state-log records with a ts."""
+        log = os.path.join(self.repo, ".flux", "state.jsonl")
+        with open(log, "w") as f:
+            for key, value, days in pairs:
+                t = time.time() - days * 86400
+                ts = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t)) + ".000Z"
+                f.write(json.dumps({"ts": ts, "k": key, "v": value}) + "\n")
+
+    def test_stale_key_wears_age_fresh_does_not(self):
+        self._seed([("open", "old blocker", 8), ("next", "today", 0)])
+        out = run_flux(["prime"], self.repo).stdout
+        lines = {ln.split(":")[0]: ln for ln in out.splitlines() if ":" in ln}
+        self.assertIn("open: old blocker [8d]", out)
+        self.assertIn("next: today", out)
+        self.assertNotIn("next: today [", out)  # no suffix on a same-day key
+
+    def test_within_stale_days_no_suffix(self):
+        self._seed([("open", "recent", 1)])  # 1 <= stale_days default 2
+        out = run_flux(["prime"], self.repo).stdout
+        self.assertIn("open: recent", out)
+        self.assertNotIn("[1d]", out)
+
+    def test_header_and_positions_unmoved(self):
+        self._seed([("phase", "P1", 8), ("next", "wire", 0)])
+        out = run_flux(["prime"], self.repo).stdout
+        self.assertIn("## flux prime", out.splitlines()[0])
+        self.assertIn("phase: P1 [8d]", out)
+        self.assertIn("next: wire", out)
+
+
+class TestSeal(FluxRepoCase):
+    def setUp(self):
+        super().setUp()
+        run_flux(["init"], self.repo)
+        self.cache = os.path.join(self.repo, ".flux", "cache")
+        os.makedirs(self.cache, exist_ok=True)
+
+    def _prime_age(self, seconds):
+        marker = os.path.join(self.cache, "last-prime")
+        with open(marker, "w") as f:
+            f.write("x")
+        os.utime(marker, (time.time() - seconds, time.time() - seconds))
+
+    def _wrap_at(self, iso):
+        with open(os.path.join(self.cache, "last-wrap"), "w") as f:
+            f.write(iso)
+
+    def _rm_wrap(self):
+        try:
+            os.remove(os.path.join(self.cache, "last-wrap"))
+        except OSError:
+            pass
+
+    def _seal(self, reason="clear"):
+        return run_flux(["seal"], self.repo,
+                        stdin=json.dumps({"reason": reason,
+                                          "hook_event_name": "SessionEnd"}))
+
+    def _marker(self):
+        with open(os.path.join(self.cache, "last-session.json")) as f:
+            return json.load(f)
+
+    def _fieldlog(self):
+        p = os.path.join(self.repo, ".flux", "field-log.md")
+        return open(p).read() if os.path.exists(p) else ""
+
+    def test_unwrapped_substantive_logs_and_warns(self):
+        self._prime_age(1500)  # 25 min
+        self._rm_wrap()
+        out = self._seal()
+        self.assertEqual(out.returncode, 0)
+        self.assertTrue(self._marker()["warn"])
+        self.assertIn("unwrapped", self._fieldlog())
+
+    def test_wrapped_session_no_log_no_warn(self):
+        self._prime_age(1500)
+        self._wrap_at("2099-01-01T00:00:00.000Z")  # newer than last-prime
+        before = self._fieldlog().count("unwrapped")
+        self._seal()
+        self.assertFalse(self._marker()["warn"])
+        self.assertTrue(self._marker()["wrapped"])
+        self.assertEqual(self._fieldlog().count("unwrapped"), before)
+
+    def test_quick_session_no_warn(self):
+        self._prime_age(30)  # under substantive_seconds (180)
+        self._rm_wrap()
+        before = self._fieldlog().count("unwrapped")
+        self._seal()
+        self.assertFalse(self._marker()["warn"])
+        self.assertEqual(self._fieldlog().count("unwrapped"), before)
+
+    def test_non_flux_repo_no_op(self):
+        shutil.rmtree(os.path.join(self.repo, ".flux"))
+        out = self._seal()
+        self.assertEqual(out.returncode, 0)
+        self.assertFalse(os.path.exists(os.path.join(self.cache, "last-session.json")))
+
+    def test_empty_stdin_no_op(self):
+        # no .flux/cache marker files; a flux repo but empty stdin still returns 0
+        out = run_flux(["seal"], self.repo, stdin="")
+        self.assertEqual(out.returncode, 0)
+
+    def test_prime_warns_after_unwrapped(self):
+        json.dump({"warn": True},
+                  open(os.path.join(self.cache, "last-session.json"), "w"))
+        out = run_flux(["prime"], self.repo).stdout
+        self.assertIn("ended unwrapped", out)
+
+    def test_prime_quiet_when_wrapped(self):
+        json.dump({"warn": False},
+                  open(os.path.join(self.cache, "last-session.json"), "w"))
+        out = run_flux(["prime"], self.repo).stdout
+        self.assertNotIn("ended unwrapped", out)
+
+    def test_state_set_drops_wrap_breadcrumb(self):
+        self._rm_wrap()
+        run_flux(["state", "set", "next", "x"], self.repo)
+        self.assertTrue(os.path.exists(os.path.join(self.cache, "last-wrap")))
+
+    def test_handoff_drops_wrap_breadcrumb(self):
+        self._rm_wrap()
+        run_flux(["handoff"], self.repo)
+        self.assertTrue(os.path.exists(os.path.join(self.cache, "last-wrap")))
+
+
+class TestGuardHookWiring(unittest.TestCase):
+    def test_hooks_json_registers_all_three_events(self):
+        hooks_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "hooks", "hooks.json")
+        with open(hooks_path) as f:
+            data = json.load(f)
+        for event in ("SessionStart", "UserPromptSubmit", "SessionEnd"):
+            self.assertIn(event, data["hooks"])
+        cmds = [h["command"] for event in data["hooks"].values()
+                for group in event for h in group["hooks"]]
+        self.assertTrue(any(c.endswith("bin/flux\" guard") for c in cmds), cmds)
+        self.assertTrue(any(c.endswith("bin/flux\" seal") for c in cmds), cmds)
+
+
+class TestGuardTemplate(FluxRepoCase):
+    def test_init_scaffolds_guard_block(self):
+        run_flux(["init"], self.repo)
+        with open(os.path.join(self.repo, ".flux", "flux.toml")) as f:
+            toml = f.read()
+        self.assertIn("[guard]", toml)
+        self.assertIn("warn_requests", toml)
+        self.assertIn("substantive_seconds", toml)
 
 
 if __name__ == "__main__":

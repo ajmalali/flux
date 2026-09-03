@@ -25,7 +25,9 @@ plugin is enabled.
 | Command | Does |
 |---|---|
 | `flux init` | Detect repo type, write `.flux/flux.toml` + state scaffold |
-| `flux prime` | Session context pack (branch, phase, next, check cmd) — ≤2k tokens, SessionStart hook, silent no-op without `.flux/` |
+| `flux prime` | Session context pack (branch, phase, next, check cmd) — ≤2k tokens, SessionStart hook, silent no-op without `.flux/`. Stamps a stale state key ` [Nd]` with its age; warns when the last session ended unwrapped |
+| `flux guard` | UserPromptSubmit hook — counts this session's requests the way `flux ledger` does and, past `[guard].warn_requests` (120), injects one line nudging you to wrap + `/clear`. A nudge, never a gate; silent no-op without `.flux/` |
+| `flux seal` | SessionEnd hook — transcript-free: from `.flux/cache/` breadcrumbs it detects a substantive session that ended without a wrap, logs it `unwrapped` to the field log, and leaves the marker `flux prime` warns on next start |
 | `flux state get\|set` | Tiny TOML state; writes over budget are refused |
 | `flux init --scan` | Inventory prior project state (PAUL, agent-os, hand-kept STATE/ROADMAP, CLAUDE.md) — finds and sizes it, parses none of it, writes nothing |
 | `flux check` | Run the repo's configured verification; print failures only; exit-code semantics |

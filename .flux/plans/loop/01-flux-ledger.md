@@ -1,7 +1,7 @@
 ---
 phase: 01-flux-ledger
 routing: design
-status: planned
+status: done
 files:
   - bin/flux                      # cmd_ledger + COMMANDS entry + help text
   - tests/test_ledger.py          # synthetic transcripts; table, void rules, budget
@@ -108,3 +108,32 @@ hook (04); reading the field log (03 creates it, 05 tallies it).
 `flux check` green, plus: run `--fleet` once and paste the table into
 `.flux/plans/loop/01-flux-ledger.status.md` next to the read-out's table with the
 deltas — that side-by-side is the AC-1 evidence and the phase's `## outcome`.
+
+## outcome — 2026-09-03
+shipped: `flux ledger [--since] [--fleet] [--json]` in `bin/flux` (`_scan_session`
+  scanner, `cmd_ledger` per-cycle table, `_ledger_fleet` + meta-tax, budget clip via
+  the existing `clip()`, void rules mirroring bench's RETRYABLE_API_STATUSES). 23 new
+  tests in `tests/test_ledger.py` + a checked-in 20-record golden fixture; 207 green
+  (was 184). README paragraph. Full AC-1/AC-3 evidence in `01-flux-ledger.status.md`.
+  - AC-1 (rpi TOTAL): MET on every reproducible metric — 16 substantive, ctx p50 87k,
+    0 sessions >150, wrap 11/16, est $193, calls-before-first-edit 11.
+  - AC-2 (void): MET — zero-turn and all-retryable-error sessions voided, out of every
+    denominator, footer counts them. Pinned by tests.
+  - AC-3 (fleet + meta-tax + budget): MET — one row per adopting repo, `meta-tax
+    0.48x`, 754 B < budget, 1.5 s over 330 MB.
+  - AC-4 (non-flux repo): MET — one line, exit 0.
+deviated:
+  - AC-1 gate ratio prints 16/25 (flux-check / raw-gate), not the read-out's "24/35".
+    That oracle was an unsaved ad-hoc grep counting cross-repo greps + backend pytest
+    over a wider set; the scanner counts only executed in-repo runners. Direction
+    holds (raw > filtered). No work remains — the historical number is unreproducible,
+    not unbuilt. Documented in the status doc's side-by-side.
+  - Medians taken over substantive sessions only (AC-2's "excluded from every
+    denominator"), where the read-out's agg() took medians over all size>=5KB
+    sessions. This moves bash (21k vs 18.6k), re-reads (1 vs 0), $/sess (7.9 vs 6.8);
+    over the all-sessions set the ledger reproduces those exactly. Deliberate.
+  - Fleet discovery resolves each repo by the transcript's own `cwd`; the slug-reversal
+    DFS is kept but bounded (`_PATH_REVERSAL_BUDGET`) as a fallback — a scratchpad
+    worktree slug fans out combinatorially and would otherwise hang. Not in the plan;
+    required to meet AC-3's <10 s. Benchmark clones under `.flux-bench/runs/` excluded.
+deferred: nothing from this phase. Phase 02 (status diet) plan is not yet written.

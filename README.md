@@ -31,6 +31,7 @@ plugin is enabled.
 | `flux check` | Run the repo's configured verification; print failures only; exit-code semantics |
 | `flux handoff` | Deterministic, capped handoff from git status + state + commits |
 | `flux run -- <cmd>` | Output filter for noisy commands: dedupe + truncate, then `--filter elide` (default, head+tail), `failures` (check's failure extractor), `tail:N`, or `raw`; default from `[run].filter` |
+| `flux ledger` | Reads the Claude Code transcripts on disk and prints the field read-out's targets table — per cycle (ten substantive sessions), budgeted: context p50, cache-write share, sessions over 150 requests, re-reads, Bash bytes, calls before first edit, wrap coverage, raw-gate vs `flux check`, cached-skill reads, est \$/session. `--since DATE` bounds the window (default the v2 rebuild); `--fleet` prints one row per adopting repo plus a `meta-tax` line (flux-repo \$ ÷ adopting-repo \$); `--json` dumps the raw per-session rows uncapped. Est \$ are API-equivalent at list price on a subscription — a token proxy, not a bill. Zero-turn and all-retryable-error sessions are voided and excluded from every denominator |
 
 ## Skills
 

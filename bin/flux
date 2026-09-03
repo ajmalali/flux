@@ -6,11 +6,16 @@ call it as a bare command with zero install latency. Everything it injects into
 model context has a hard byte budget it enforces itself (tokens ~= bytes / 4).
 
 Commands: init | prime | state get/set/log/compact | check | handoff | run -- <cmd>
+          | ledger
 
   flux init [--force] [--scan]   --scan: inventory prior project state, write nothing
   flux state log [N]             recent writes, newest first (default 20)
   flux state compact             collapse the log to one record per live key
   flux run [--tail N] [--filter elide|failures|tail:N|raw] -- <command...>
+  flux ledger [--since DATE] [--fleet] [--json]
+                                 transcripts -> the read-out's targets table, per
+                                 cycle, budgeted; --fleet: one row per adopting repo
+                                 + meta-tax; --json: raw session rows, uncapped
 """
 
 import calendar
@@ -1111,6 +1116,504 @@ def cmd_run(args):
               % (total, len(shown), mode, proc.returncode))
     return proc.returncode
 
+# ------------------------------------------------------------------- ledger
+#
+# `flux ledger` reads the Claude Code transcripts on disk and prints the targets
+# table the 2026-09-03 field read-out computed by hand, per repo, per cycle,
+# budgeted -- so principle 5 (every feature names the ledger metric it moves)
+# runs from data a session did not have to derive. The 2026-09-03 analyzer is the
+# reference; this reproduces it in-process, it does not import it. Dollar figures
+# are API-equivalent at list price on a subscription -- a token proxy, labelled so.
+
+PROJECTS_DIR = os.path.expanduser("~/.claude/projects")
+# Mirror bench's driver.RETRYABLE_API_STATUSES: a turn that only ever errored on a
+# retryable status did no work and must not weigh on any denominator.
+RETRYABLE_API_STATUSES = frozenset({"429", "500", "502", "503", "504", "529"})
+LEDGER_SUBSTANTIVE_MIN = 5      # main-thread requests for a session to count
+LEDGER_CYCLE = 10               # substantive sessions per cycle -- the clock
+LEDGER_REQ_CAP = 150            # the runaway-session target line
+FLUX_V2_EPOCH = "2026-08-20"    # default --since: the v2 rebuild
+
+_LEDGER_SUB_RE = re.compile(
+    r"(?:^|[\s;&|(])(?:\S*/)?flux\s+(init|prime|state|check|handoff|run|ledger|--help|-h)\b")
+_LEDGER_STATE_SET_RE = re.compile(r"(?:^|[\s;&|(])(?:\S*/)?flux\s+state\s+set\b")
+# A raw-gate call: the repo's test runner invoked directly, bypassing `flux check`
+# / `flux run`. Guarded against greps/echoes that merely mention a runner.
+_LEDGER_RAW_RE = re.compile(
+    r"(?<![\w/=])(?:pytest|py\.test)\b"
+    r"|python[0-9.]*\s+-m\s+(?:pytest|unittest)"
+    r"|npm\s+run\s+(?:check|test)\b|pnpm\s+(?:test|check)\b|yarn\s+(?:test|check)\b"
+    r"|astro\s+build\b|go\s+test\b|cargo\s+test\b|\bmake\s+(?:check|test)\b")
+_LEDGER_NONEXEC_RE = re.compile(r"^\s*(?:grep|rg|echo|sed|awk|cat|ls|which|find|#)\b")
+_LEDGER_CMDNAME_RE = re.compile(r"<command-name>(/[^<]+)</command-name>")
+_PLUGIN_SKILL_MARK = "plugins/cache/marketplace/flux"
+
+
+def _ledger_price(model, inp, cw, cr, out):
+    m = model or ""
+    if "haiku" in m:
+        rin, rout = 1, 5
+    elif "sonnet" in m:
+        rin, rout = 3, 15
+    else:                       # opus / fable tier
+        rin, rout = 15, 75
+    return (inp * rin + cw * rin * 1.25 + cr * rin * 0.10 + out * rout) / 1e6
+
+
+def _median(values):
+    xs = sorted(v for v in values if v is not None)
+    if not xs:
+        return 0
+    n = len(xs)
+    mid = n // 2
+    return xs[mid] if n % 2 else (xs[mid - 1] + xs[mid]) / 2.0
+
+
+def _slug_for_path(path):
+    """Absolute path -> transcript-dir slug: every '/' and '.' becomes '-'."""
+    return path.replace("/", "-").replace(".", "-")
+
+
+_PATH_REVERSAL_BUDGET = 4000     # isdir probes before a slug is declared ambiguous
+
+
+def _path_for_slug(slug):
+    """Reverse the slug rule against the filesystem. '/' and '.' both became '-',
+    and path segments carry their own '-', so the split is ambiguous; resolve it by
+    testing candidates against real directories. Returns the path, or None if it
+    does not resolve to a single existing directory. A pathological slug (many
+    dash-separated tokens under a real tree, e.g. a scratchpad worktree) can fan out
+    combinatorially, so the probe count is capped — over budget, we give up (None)
+    rather than hang; fleet discovery leans on the transcript's `cwd` instead."""
+    body = slug[1:] if slug.startswith("-") else slug
+    tokens = body.split("-")
+    budget = [_PATH_REVERSAL_BUDGET]
+
+    def seg_variants(parts):
+        variants = [parts[0]]
+        for tok in parts[1:]:
+            variants = [v + sep + tok for v in variants for sep in ("-", ".")]
+        return variants
+
+    def build(i, base):
+        if i == len(tokens):
+            return [base]
+        found = []
+        for k in range(i, len(tokens)):
+            for seg in seg_variants(tokens[i:k + 1]):
+                budget[0] -= 1
+                if budget[0] <= 0:
+                    return found
+                child = os.path.join(base, seg)
+                if os.path.isdir(child):
+                    found.extend(build(k + 1, child))
+            if len(found) > 1:
+                return found          # ambiguous -- bail early
+        return found
+
+    hits = build(0, "/")
+    if budget[0] <= 0:
+        return None
+    return hits[0] if len(hits) == 1 else None
+
+
+def _cwd_from_transcript(sample_file, slug):
+    """The exact repo path, read from the transcript's own `cwd` — no reversal
+    guessing. Only trusted when it exists and round-trips to this slug."""
+    if not sample_file:
+        return None
+    try:
+        with open(sample_file, errors="replace") as fh:
+            for _ in range(20):
+                line = fh.readline()
+                if not line:
+                    break
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                cwd = rec.get("cwd")
+                if cwd and os.path.isdir(cwd) and _slug_for_path(cwd) == slug:
+                    return cwd
+    except OSError:
+        pass
+    return None
+
+
+def _repo_path_for_slug(slug, sample_file=None):
+    """Prefer the transcript's own `cwd` (exact, unambiguous, fast); fall back to
+    the bounded slug-reversal rule only when the cwd is unusable."""
+    return _cwd_from_transcript(sample_file, slug) or _path_for_slug(slug)
+
+
+# Throwaway trees that carry a .flux/flux.toml but are not adopted projects:
+# benchmark fixture clones and anything under a temp root. Kept out of the fleet.
+_LEDGER_EXCLUDE_PARTS = (".flux-bench", "bench-runs")
+_LEDGER_TMP_ROOTS = ("/private/tmp/", "/private/var/folders/", "/tmp/", "/var/folders/")
+
+
+def _is_adopting_repo(path):
+    if not path or not os.path.isfile(os.path.join(path, ".flux", "flux.toml")):
+        return False
+    if any(root in path + "/" for root in _LEDGER_TMP_ROOTS):
+        return False
+    parts = set(path.split(os.sep))
+    return not any(p in parts for p in _LEDGER_EXCLUDE_PARTS)
+
+
+def _scan_session(path, check_command=""):
+    """One transcript -> one row dict. Dedupe requests on message.id; never mix
+    sidechain (subagent) traffic into main-thread context; count skill invocations
+    on both the slash path and the Skill tool path."""
+    reqs, order = {}, []
+    pending = {}                 # tool_use_id -> tool name
+    tool_names = {}
+    read_paths = {}
+    bash_bytes = 0
+    first_edit_req = None
+    n_req = 0
+    flux_sub = {}
+    raw_gate = 0
+    help_reads = 0               # `flux --help` + skill-file reads out of the cache
+    skills = {}
+    state_set = handoff_call = False
+    prime_fired = False
+    first_ts = last_ts = None
+    try:
+        fh = open(path, errors="replace")
+    except OSError:
+        return None
+    with fh:
+        for line in fh:
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            typ = rec.get("type")
+            stamp = rec.get("timestamp")
+            if stamp:
+                first_ts = first_ts or stamp
+                last_ts = stamp
+            if typ == "attachment":
+                att = rec.get("attachment", {})
+                if (att.get("type") == "hook_success"
+                        and str(att.get("hookName", "")).startswith("SessionStart")
+                        and "flux prime" in (att.get("content") or "")):
+                    prime_fired = True
+                continue
+            if typ == "user":
+                msg = rec.get("message", {})
+                content = msg.get("content")
+                if isinstance(content, str):
+                    if not rec.get("isMeta") and not rec.get("isSidechain"):
+                        hit = _LEDGER_CMDNAME_RE.search(content)
+                        if hit:
+                            skills[hit.group(1)] = skills.get(hit.group(1), 0) + 1
+                elif isinstance(content, list):
+                    for blk in content:
+                        btype = blk.get("type")
+                        if btype == "tool_result":
+                            name = pending.get(blk.get("tool_use_id"), "?")
+                            body = blk.get("content")
+                            text = body if isinstance(body, str) else "".join(
+                                x.get("text", "") for x in body if isinstance(x, dict))
+                            if name == "Bash":
+                                bash_bytes += len(text)
+                        elif (btype == "text" and not rec.get("isSidechain")
+                              and not rec.get("isMeta")):
+                            hit = _LEDGER_CMDNAME_RE.search(blk.get("text", ""))
+                            if hit:
+                                skills[hit.group(1)] = skills.get(hit.group(1), 0) + 1
+            elif typ == "assistant":
+                msg = rec.get("message", {})
+                mid = msg.get("id")
+                usage = msg.get("usage") or {}
+                sidechain = bool(rec.get("isSidechain"))
+                err = str(rec.get("api_error_status")
+                          or msg.get("api_error_status") or "")
+                if mid and mid not in reqs:
+                    reqs[mid] = dict(
+                        model=msg.get("model"), sidechain=sidechain,
+                        inp=usage.get("input_tokens", 0),
+                        cw=usage.get("cache_creation_input_tokens", 0),
+                        cr=usage.get("cache_read_input_tokens", 0),
+                        out=usage.get("output_tokens", 0),
+                        errored=err in RETRYABLE_API_STATUSES)
+                    order.append(mid)
+                    if not sidechain:
+                        n_req += 1
+                for blk in msg.get("content") or []:
+                    if blk.get("type") != "tool_use":
+                        continue
+                    name = blk.get("name")
+                    inp = blk.get("input") or {}
+                    tool_names[name] = tool_names.get(name, 0) + 1
+                    pending[blk.get("id")] = name
+                    if name == "Read" and not sidechain:
+                        fp = inp.get("file_path", "")
+                        read_paths[fp] = read_paths.get(fp, 0) + 1
+                        if _PLUGIN_SKILL_MARK in fp:
+                            help_reads += 1
+                    elif name == "Skill":
+                        key = "Skill:" + str(inp.get("skill"))
+                        skills[key] = skills.get(key, 0) + 1
+                    elif (name in ("Edit", "Write", "MultiEdit", "NotebookEdit")
+                          and not sidechain and first_edit_req is None):
+                        first_edit_req = n_req
+                    elif name == "Bash":
+                        cmd = inp.get("command", "")
+                        sub = _LEDGER_SUB_RE.search(cmd)
+                        if sub:
+                            key = sub.group(1)
+                            flux_sub[key] = flux_sub.get(key, 0) + 1
+                            if key in ("--help", "-h"):
+                                help_reads += 1
+                            if key == "handoff":
+                                handoff_call = True
+                            if _LEDGER_STATE_SET_RE.search(cmd):
+                                state_set = True
+                        elif (_LEDGER_RAW_RE.search(cmd)
+                              and not _LEDGER_NONEXEC_RE.match(cmd)):
+                            raw_gate += 1
+                        if _PLUGIN_SKILL_MARK in cmd and (".md" in cmd or "SKILL" in cmd):
+                            help_reads += 1
+    main = [reqs[i] for i in order if not reqs[i]["sidechain"]]
+    ctx = [x["inp"] + x["cw"] + x["cr"] for x in main]
+    cost = sum(_ledger_price(x["model"], x["inp"], x["cw"], x["cr"], x["out"])
+               for x in reqs.values())
+    cw_cost = sum(_ledger_price(x["model"], 0, x["cw"], 0, 0) for x in reqs.values())
+    rereads = sum(v - 1 for v in read_paths.values() if v > 1)
+    void = (not main) or all(x["errored"] for x in main)
+    wrapped = (state_set or handoff_call
+               or "/flux:wrap" in skills or "Skill:flux:wrap" in skills)
+    return dict(
+        id=os.path.basename(path)[:8], start=(first_ts or "")[:16],
+        end=(last_ts or "")[:16], requests=len(main), void=void,
+        ctx_p50=int(_median(ctx)) if ctx else 0,
+        cost=cost, cw_share=round(cw_cost / cost, 2) if cost else 0.0,
+        rereads=rereads, bash_bytes=bash_bytes, first_edit_req=first_edit_req,
+        flux_check=flux_sub.get("check", 0) + flux_sub.get("run", 0),
+        raw_gate=raw_gate, help_reads=help_reads, wrapped=wrapped, prime=prime_fired)
+
+
+def _ledger_sessions(slug_dir, since):
+    """Every transcript in a slug dir with a start >= since, scanned. Skips the
+    tiny stubs the reference analyzer skipped (< 5 KB = no real turn)."""
+    rows = []
+    check_command = ""
+    for path in sorted(glob_jsonl(slug_dir)):
+        try:
+            if os.path.getsize(path) < 5000:
+                continue
+        except OSError:
+            continue
+        row = _scan_session(path, check_command)
+        if row and row["start"] >= since:
+            rows.append(row)
+    rows.sort(key=lambda r: r["start"])
+    return rows
+
+
+def glob_jsonl(slug_dir):
+    try:
+        return [os.path.join(slug_dir, f) for f in os.listdir(slug_dir)
+                if f.endswith(".jsonl")]
+    except OSError:
+        return []
+
+
+def _aggregate(sessions):
+    """Fold substantive sessions into one row of the targets table."""
+    n = len(sessions)
+    edits = [s["first_edit_req"] for s in sessions if s["first_edit_req"] is not None]
+    return dict(
+        sessions=n,
+        ctx_p50=int(_median([s["ctx_p50"] for s in sessions])),
+        cw_share=_median([s["cw_share"] for s in sessions]),
+        over_cap=sum(1 for s in sessions if s["requests"] > LEDGER_REQ_CAP),
+        rereads=_median([s["rereads"] for s in sessions]),
+        bash_bytes=int(_median([s["bash_bytes"] for s in sessions])),
+        first_edit=int(_median(edits)) if edits else None,
+        wrapped=sum(1 for s in sessions if s["wrapped"]),
+        raw_gate=sum(s["raw_gate"] for s in sessions),
+        flux_check=sum(s["flux_check"] for s in sessions),
+        help_reads=sum(s["help_reads"] for s in sessions),
+        dollars=sum(s["cost"] for s in sessions),
+        per_session=_median([s["cost"] for s in sessions]),
+    )
+
+
+def _fmt_k(n):
+    if n >= 1000:
+        return "%.0fk" % (n / 1000.0)
+    return str(int(n))
+
+
+_LEDGER_COHORT_W = 14
+_LEDGER_HEADER = ("%-14s %4s %8s %5s %5s %5s %7s %6s %7s %11s %6s %7s %6s"
+                  % ("cohort", "sess", "ctx_p50", "cw%", ">150", "rerd", "bash",
+                     "->edit", "wrap", "gate r/flx", "reads", "$/sess", "est$"))
+
+
+def _ledger_row(label, agg):
+    if len(label) > _LEDGER_COHORT_W:
+        label = label[:_LEDGER_COHORT_W - 1] + "…"
+    return ("%-14s %4d %8s %4.0f%% %5d %5s %7s %6s %5d/%-2d %5d/%-4d %6d %7.1f %6.0f"
+            % (label, agg["sessions"], _fmt_k(agg["ctx_p50"]),
+               agg["cw_share"] * 100, agg["over_cap"], _fmt_k(agg["rereads"]),
+               _fmt_k(agg["bash_bytes"]),
+               ("-" if agg["first_edit"] is None else str(agg["first_edit"])),
+               agg["wrapped"], agg["sessions"], agg["raw_gate"], agg["flux_check"],
+               agg["help_reads"], agg["per_session"], agg["dollars"]))
+
+
+def _is_flux_repo(path):
+    manifest = os.path.join(path, ".claude-plugin", "plugin.json")
+    try:
+        with open(manifest, encoding="utf-8") as fh:
+            return json.load(fh).get("name") == "flux"
+    except (OSError, ValueError):
+        return False
+
+
+def _fit_to_budget(header_lines, rows, footer_lines, budget):
+    """Render header + rows + footer; if over budget, drop the oldest rows (rows
+    are newest-last) and mark how many went, so the output never exceeds the cap."""
+    def render(rs, elided):
+        body = list(header_lines) + rs[:]
+        if elided:
+            body.append("... %d rows elided (oldest cycles dropped for budget)" % elided)
+        body += footer_lines
+        return "\n".join(body)
+
+    elided = 0
+    keep = rows[:]
+    while keep and len(render(keep, elided).encode("utf-8")) > budget:
+        keep = keep[1:]
+        elided += 1
+    text = render(keep, elided)
+    # Last resort: rows all dropped and header/footer still overflow -> hard clip.
+    if len(text.encode("utf-8")) > budget:
+        text = clip(text, budget)
+    return text
+
+
+def _ledger_scope(args):
+    since = FLUX_V2_EPOCH
+    fleet = as_json = False
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--since" and i + 1 < len(args):
+            since = args[i + 1]
+            i += 2
+        elif a == "--fleet":
+            fleet = True
+            i += 1
+        elif a == "--json":
+            as_json = True
+            i += 1
+        else:
+            i += 1
+    return since, fleet, as_json
+
+
+def cmd_ledger(args):
+    since, fleet, as_json = _ledger_scope(args)
+    root = repo_root()
+
+    if fleet:
+        return _ledger_fleet(since, as_json)
+
+    if read_config(root) is None:
+        print("flux ledger: no .flux/ here — nothing to measure")
+        return 0
+
+    slug_dir = os.path.join(PROJECTS_DIR, _slug_for_path(root))
+    sessions = _ledger_sessions(slug_dir, since)
+    if as_json:
+        json.dump(sessions, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return 0
+
+    sub = [s for s in sessions if s["requests"] >= LEDGER_SUBSTANTIVE_MIN and not s["void"]]
+    voided = sum(1 for s in sessions if s["void"])
+    minor = len(sessions) - len(sub) - voided
+
+    header = [
+        "flux ledger — %s · since %s · est $ API-equivalent (subscription proxy)"
+        % (os.path.basename(root), since),
+        _LEDGER_HEADER,
+    ]
+    rows = []
+    for idx in range(0, len(sub), LEDGER_CYCLE):
+        chunk = sub[idx:idx + LEDGER_CYCLE]
+        partial = len(chunk) < LEDGER_CYCLE
+        label = "cycle %d%s" % (idx // LEDGER_CYCLE + 1, "·part" if partial else "")
+        rows.append(_ledger_row(label, _aggregate(chunk)))
+    footer = []
+    if sub:
+        footer.append(_ledger_row("TOTAL", _aggregate(sub)))
+    footer.append("%d substantive · %d voided · %d minor (<%d req)"
+                  % (len(sub), voided, minor, LEDGER_SUBSTANTIVE_MIN))
+    budget = state_budget_bytes(read_config(root))
+    print(_fit_to_budget(header, rows, footer, budget))
+    return 0
+
+
+def _ledger_fleet(since, as_json):
+    root = repo_root()
+    repos = []                   # (name, path, is_flux, sessions)
+    try:
+        slugs = sorted(os.listdir(PROJECTS_DIR))
+    except OSError:
+        slugs = []
+    for slug in slugs:
+        slug_dir = os.path.join(PROJECTS_DIR, slug)
+        if not os.path.isdir(slug_dir):
+            continue
+        sample = next(iter(sorted(glob_jsonl(slug_dir))), None)
+        path = _repo_path_for_slug(slug, sample)
+        if not _is_adopting_repo(path):
+            continue
+        sessions = _ledger_sessions(slug_dir, since)
+        sub = [s for s in sessions
+               if s["requests"] >= LEDGER_SUBSTANTIVE_MIN and not s["void"]]
+        if not sub:
+            continue
+        repos.append((os.path.basename(path), path, _is_flux_repo(path), sub))
+
+    if as_json:
+        json.dump({name: _aggregate(sub) for name, _p, _f, sub in repos},
+                  sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return 0
+
+    if not repos:
+        print("flux ledger --fleet: no adopting repos found under %s" % PROJECTS_DIR)
+        return 0
+
+    repos.sort(key=lambda r: r[3][-1]["start"])   # oldest activity first
+    header = [
+        "flux ledger --fleet · since %s · est $ API-equivalent (subscription proxy)"
+        % since,
+        _LEDGER_HEADER,
+    ]
+    rows = [_ledger_row(name, _aggregate(sub)) for name, _p, is_flux, sub in repos]
+
+    flux_dollars = sum(_aggregate(sub)["dollars"] for _n, _p, is_flux, sub in repos if is_flux)
+    adopt_dollars = sum(_aggregate(sub)["dollars"] for _n, _p, is_flux, sub in repos if not is_flux)
+    footer = []
+    if flux_dollars:
+        ratio = (flux_dollars / adopt_dollars) if adopt_dollars else float("inf")
+        footer.append("meta-tax: flux $%.0f / adopting $%.0f = %s"
+                      % (flux_dollars, adopt_dollars,
+                         ("%.2fx" % ratio) if adopt_dollars else "n/a (no adopting spend)"))
+    budget = state_budget_bytes(read_config(root)) if read_config(root) else (
+        DEFAULT_STATE_BUDGET_TOKENS * BYTES_PER_TOKEN)
+    print(_fit_to_budget(header, rows, footer, budget))
+    return 0
+
 # ------------------------------------------------------------------------ main
 
 COMMANDS = {
@@ -1120,6 +1623,7 @@ COMMANDS = {
     "check": cmd_check,
     "handoff": cmd_handoff,
     "run": cmd_run,
+    "ledger": cmd_ledger,
 }
 
 def main(argv):

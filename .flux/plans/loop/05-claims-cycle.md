@@ -1,7 +1,7 @@
 ---
 phase: 05-claims-cycle
 routing: design
-status: planned
+status: done
 files:
   - bin/flux                       # cmd_claim; _fleet_scan extraction; ledger --verdict path; prime cycle line; FLUX_LEDGER_ALLOW_TMP bypass; COMMANDS + __doc__
   - .flux/claims.jsonl             # NEW append-only claim store (created by this phase, seeded T4)
@@ -395,3 +395,44 @@ deferred:
   duplicate is visible in `--verdict`, not silent.
 - Behavioural verification that the seeded claims actually move — by design read next cycle
   (phases 02–04 pattern); recorded in `open`.
+
+## outcome — 2026-09-04
+shipped:
+- `flux claim add <feature> <metric> <bar> [--scope S] [--cycles N]` → append-only
+  `.flux/claims.jsonl` (`{ts,feature,metric,bar,scope,cycles}`); rejects unknown metric
+  / unparseable bar (exit 2, no write), warns-but-appends on a duplicate open
+  feature+metric. `read_claims` reuses read_log's tolerant loop, own record shape.
+- `flux ledger --verdict` → one budgeted line per open claim: `pending / moved /
+  unmoved N`, scored only over complete cycles whose `start` (minute-normalized) is
+  strictly after the claim ts. `_fleet_scan(since)` extracted from `_ledger_fleet`
+  (both share it now); `meta_tax` special-cased as a fleet window ratio (flux$/adopt$),
+  not per-chunk; None (`first_edit` edit-free) and inf (no adopting spend) → `pending`.
+  Verdict is the first branch in `cmd_ledger` (before `if fleet` and the config check);
+  `--json` is ignored (text only).
+- Flux-repo-only prime cycle line: `.flux/cache/cycle.json` (`cycle_refresh_hours`,
+  default 6, keyed on newest-claim ack) counts fleet substantive sessions since the
+  newest claim ts; ≥`LEDGER_CYCLE` prints one line pointing at `flux ledger --verdict`.
+  The block owns its try/except so a bad cache never blanks the pack.
+- `FLUX_LEDGER_ALLOW_TMP=1` bypass in `_is_adopting_repo` (off by default, test-only).
+- Five claims seeded (02 ctx_p50<75000 repo · 03 help_reads==0 fleet · 04-guard
+  over_cap==0 fleet · 04-seal wrap_coverage>=0.8 fleet · 00-loop meta_tax<0.5 fleet) —
+  all read `pending` today (ts=now). README "Claims — attribution as data" paragraph.
+- T0 test harness: `_transcript` extended (`ts`/`cwd`/`pad`/`raw_gate`/`wrapped`);
+  `LedgerHarness` plants timestamped sessions under a redirected HOME at the git-toplevel
+  slug (avoids the macOS `/private` symlink trap). 26 new tests; `flux check` 264 green.
+deviated:
+- The `_ledger_fleet` "byte-identical after extraction" boundary is guarded
+  behaviorally (a test asserts the fleet table still renders both repos + meta-tax),
+  not by a byte-for-byte diff against a pre-extraction capture — none exists in-repo and
+  the extraction is a pure code move (identical tuple, unchanged render/JSON paths).
+- `cycle.json` cache keyed on `ack` (newest claim ts) in addition to the planned
+  `{n,computed_at}`, so a newly-added claim invalidates a stale count. Additive.
+deferred:
+- Whether the five seeded claims actually move is read NEXT cycle by `flux ledger
+  --verdict`, once ≥10 fleet substantive sessions postdate the 2026-09-04 seed (phases
+  02–04 pattern). `pending` today is correct, not a bug. This phase's own ADR-0003 claim
+  (no claim survives two unmoved cycles unexamined; meta-tax < 0.5) is judged two cycles
+  out.
+- JSON form of `--verdict`, `flux claim close|list|edit`, and auto-proposing add/remove
+  from verdicts — all out of scope by ADR 0003 (claim retirement stays a user+queue
+  decision). Phase-04's stale-key-days≤2 is structural (key-age code path), not a claim.

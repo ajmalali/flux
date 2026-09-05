@@ -33,7 +33,20 @@ plugin is enabled.
 | `flux check` | Run the repo's configured verification; print failures only; exit-code semantics |
 | `flux handoff` | Deterministic, capped handoff from git status + state + commits |
 | `flux run -- <cmd>` | Output filter for noisy commands: dedupe + truncate, then `--filter elide` (default, head+tail), `failures` (check's failure extractor), `tail:N`, or `raw`; default from `[run].filter` |
-| `flux ledger` | Reads the Claude Code transcripts on disk and prints the field read-out's targets table — per cycle (ten substantive sessions), budgeted: context p50, cache-write share, sessions over 150 requests, re-reads, Bash bytes, calls before first edit, wrap coverage, raw-gate vs `flux check`, cached-skill reads, est \$/session. `--since DATE` bounds the window (default the v2 rebuild); `--fleet` prints one row per adopting repo plus a `meta-tax` line (flux-repo \$ ÷ adopting-repo \$); `--json` dumps the raw per-session rows uncapped. Est \$ are API-equivalent at list price on a subscription — a token proxy, not a bill. Zero-turn and all-retryable-error sessions are voided and excluded from every denominator |
+| `flux ledger` | Reads the Claude Code transcripts on disk and prints the field read-out's targets table — per cycle (ten substantive sessions), budgeted: context p50, cache-write share, sessions over 150 requests, re-reads, Bash bytes, calls before first edit, wrap coverage, raw-gate vs `flux check`, cached-skill reads, est \$/session. `--since DATE` bounds the window (default the v2 rebuild); `--fleet` prints one row per adopting repo plus a `meta-tax` line (flux-repo \$ ÷ adopting-repo \$); `--json` dumps the raw per-session rows uncapped; `--verdict` scores each open claim (see below). Est \$ are API-equivalent at list price on a subscription — a token proxy, not a bill. Zero-turn and all-retryable-error sessions are voided and excluded from every denominator |
+| `flux claim add` | `flux claim add <feature> <metric> <bar> [--scope repo\|fleet\|<name>] [--cycles N]` — append a falsifiable claim to `.flux/claims.jsonl` (append-only). `metric` is a ledger key or a derived ratio (`wrap_coverage`, `meta_tax`); `bar` is an explicit `<op><number>` (`==0`, `<75000`, `>=0.8`) so direction is per-metric. Rejects an unknown metric or unparseable bar |
+
+## Claims — attribution as data
+
+Every feature names the ledger metric it is supposed to move, and that claim lives as a
+record in `.flux/claims.jsonl`, not in a session's memory. `flux claim add` registers one;
+`flux ledger --verdict` scores each open claim against the cycles that postdate its
+timestamp (never against older data), reporting `pending`, `moved`, or `unmoved N` — where
+`unmoved 2` is the escalation that says a feature has missed its bar two cycles running and
+owes an explanation. In the flux repo only, `flux prime` adds one line when a cycle has
+closed since the last claim, so the next loop session reads the verdict and registers the
+next cycle's claims before it changes anything. Nothing auto-edits from a verdict; retiring
+a claim stays a human decision.
 
 ## Skills
 

@@ -6,7 +6,7 @@ call it as a bare command with zero install latency. Everything it injects into
 model context has a hard byte budget it enforces itself (tokens ~= bytes / 4).
 
 Commands: init | prime | state get/set/log/compact | check | handoff | run -- <cmd>
-          | ledger | log <tag> "…" | guard | seal
+          | ledger | log <tag> "…" | guard | seal | claim add
 
   flux guard / flux seal          hook targets (UserPromptSubmit / SessionEnd),
                                   not called by hand: guard nudges a runaway
@@ -14,18 +14,23 @@ Commands: init | prime | state get/set/log/compact | check | handoff | run -- <c
 
   flux init [--force] [--scan]   --scan: inventory prior project state, write nothing
   flux log <tag> "…"             append a field-log entry (tags: audit-hit|pack-miss|want)
+  flux claim add <feat> <metric> <bar> [--scope repo|fleet|<name>] [--cycles N]
+                                 register a falsifiable claim in .flux/claims.jsonl
   flux state log [N]             recent writes, newest first (default 20)
   flux state compact             collapse the log to one record per live key
   flux run [--tail N] [--filter elide|failures|tail:N|raw] -- <command...>
-  flux ledger [--since DATE] [--fleet] [--json]
+  flux ledger [--since DATE] [--fleet] [--json] [--verdict]
                                  transcripts -> the read-out's targets table, per
                                  cycle, budgeted; --fleet: one row per adopting repo
-                                 + meta-tax; --json: raw session rows, uncapped
+                                 + meta-tax; --json: raw session rows, uncapped;
+                                 --verdict: score each open claim (pending/moved/
+                                 unmoved N) over the cycles that postdate it
 """
 
 import calendar
 import fnmatch
 import json
+import operator
 import os
 import re
 import subprocess
@@ -672,6 +677,7 @@ mechanical = "sonnet"
 # renudge       = 25          #   ...then stays quiet until this many more
 # stale_days    = 2           #   prime tags a state key ` [Nd]` older than this
 # substantive_seconds = 180   #   seal calls a session real (worth a wrap) past this
+# cycle_refresh_hours = 6      #   flux repo: prime recomputes the fleet cycle count past this
 
 [run]
 tail = 100                    # `flux run` keeps at most this many trailing lines
@@ -790,6 +796,8 @@ def _prime_inner():
         lines.append("last handoff: %s" % os.path.relpath(latest, root))
     if not state.get("next"):
         lines.append("next: (unset — `flux state set next \"...\"` at wrap)")
+
+    _append_cycle_line(root, cfg, lines)  # flux-repo-only; owns its try/except (A2)
 
     lines.append(PACK_FOOTER)  # the verbs, so a cold session need not rediscover them
 
@@ -1500,8 +1508,11 @@ _LEDGER_TMP_ROOTS = ("/private/tmp/", "/private/var/folders/", "/tmp/", "/var/fo
 def _is_adopting_repo(path):
     if not path or not os.path.isfile(os.path.join(path, ".flux", "flux.toml")):
         return False
-    if any(root in path + "/" for root in _LEDGER_TMP_ROOTS):
-        return False
+    # FLUX_LEDGER_ALLOW_TMP=1 lets tests fabricate a fleet under a temp root; off by
+    # default, invisible in production (real fleets never live under /tmp).
+    if os.environ.get("FLUX_LEDGER_ALLOW_TMP") != "1":
+        if any(root in path + "/" for root in _LEDGER_TMP_ROOTS):
+            return False
     parts = set(path.split(os.sep))
     return not any(p in parts for p in _LEDGER_EXCLUDE_PARTS)
 
@@ -1745,7 +1756,7 @@ def _fit_to_budget(header_lines, rows, footer_lines, budget):
 
 def _ledger_scope(args):
     since = FLUX_V2_EPOCH
-    fleet = as_json = False
+    fleet = as_json = verdict = False
     i = 0
     while i < len(args):
         a = args[i]
@@ -1758,14 +1769,24 @@ def _ledger_scope(args):
         elif a == "--json":
             as_json = True
             i += 1
+        elif a == "--verdict":
+            verdict = True
+            i += 1
         else:
             i += 1
-    return since, fleet, as_json
+    return since, fleet, as_json, verdict
 
 
 def cmd_ledger(args):
-    since, fleet, as_json = _ledger_scope(args)
+    since, fleet, as_json, verdict = _ledger_scope(args)
     root = repo_root()
+
+    # The verdict is the FIRST branch after arg-parse — before `if fleet` (or
+    # `--verdict --fleet` would silently fall to the fleet table) and before the
+    # config check. `--verdict` is text-only; it ignores `--json` (nothing reads a
+    # JSON verdict yet).
+    if verdict:
+        return _ledger_verdict(root, since)
 
     if fleet:
         return _ledger_fleet(since, as_json)
@@ -1806,9 +1827,13 @@ def cmd_ledger(args):
     return 0
 
 
-def _ledger_fleet(since, as_json):
-    root = repo_root()
-    repos = []                   # (name, path, is_flux, sessions)
+def _fleet_scan(since):
+    """Every adopting repo's substantive sessions, one entry each:
+    [(name, path, is_flux, sub_sessions), …]. The single pooled source both
+    `_ledger_fleet` (the table) and the verdict (fleet-scoped claims, meta-tax)
+    read — so there is never a second definition of the fleet. Repos with no
+    substantive session drop out, exactly as the table always did."""
+    repos = []                   # (name, path, is_flux, sub_sessions)
     try:
         slugs = sorted(os.listdir(PROJECTS_DIR))
     except OSError:
@@ -1827,6 +1852,12 @@ def _ledger_fleet(since, as_json):
         if not sub:
             continue
         repos.append((os.path.basename(path), path, _is_flux_repo(path), sub))
+    return repos
+
+
+def _ledger_fleet(since, as_json):
+    root = repo_root()
+    repos = _fleet_scan(since)
 
     if as_json:
         json.dump({name: _aggregate(sub) for name, _p, _f, sub in repos},
@@ -1859,6 +1890,314 @@ def _ledger_fleet(since, as_json):
     print(_fit_to_budget(header, rows, footer, budget))
     return 0
 
+# ------------------------------------------------------------------- claims
+#
+# ADR 0003's loop closer: attribution becomes *data*, not a session's memory.
+# Every feature's claim is a record in .flux/claims.jsonl; `flux ledger --verdict`
+# scores each open claim against the cycles that postdate it (moved / unmoved N),
+# reusing the ledger's own chunking and meta-tax — never a second definition of
+# "substantive" or "cycle". A flux-repo-only prime line says when a cycle has
+# closed so the next loop session reads the verdict before it changes anything.
+
+CLAIMS_LOG_NAME = "claims.jsonl"
+
+# The vocabulary a claim's `metric` may name: every raw key `_aggregate` produces
+# (bin/flux _aggregate) plus two derived ratios the read-out states as fractions.
+# `sessions` is a denominator, not a claimable target, so it is deliberately out.
+_CLAIM_METRICS = frozenset({
+    "ctx_p50", "cw_share", "over_cap", "rereads", "bash_bytes", "first_edit",
+    "wrapped", "raw_gate", "flux_check", "help_reads", "dollars", "per_session",
+    "wrap_coverage", "meta_tax",
+})
+
+# `bar` is an explicit <op><number>: direction is per-metric (ctx/meta-tax lower is
+# better, wrap coverage higher, over_cap/help_reads want ==0), so it cannot be
+# implied. `<=`/`>=` sit before `<`/`>` in the alternation so the two-char ops win.
+_CLAIM_BAR_RE = re.compile(r"^(==|!=|<=|>=|<|>)(-?\d+(?:\.\d+)?)$")
+_CLAIM_OPS = {"==": operator.eq, "!=": operator.ne, "<": operator.lt,
+              "<=": operator.le, ">": operator.gt, ">=": operator.ge}
+
+
+def _parse_bar(bar):
+    """'<op><number>' -> (op_str, threshold_float), or None if unparseable."""
+    m = _CLAIM_BAR_RE.match(bar or "")
+    if not m:
+        return None
+    return m.group(1), float(m.group(2))
+
+
+def claims_path(root):
+    return os.path.join(flux_dir(root), CLAIMS_LOG_NAME)
+
+
+def read_claims(root):
+    """Open claims in file order. Reuses read_log's tolerant line loop (skip any
+    line not starting '{', skip anything unparseable) but keeps its own record
+    shape — a dict carrying both `feature` and `metric`, not the state log's `k`."""
+    records = []
+    try:
+        with open(claims_path(root), encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line.startswith("{"):
+                    continue
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if (isinstance(rec, dict) and isinstance(rec.get("feature"), str)
+                        and isinstance(rec.get("metric"), str)):
+                    records.append(rec)
+    except OSError:
+        return []
+    return records
+
+
+def _claim_cycles(claim):
+    try:
+        return int(claim.get("cycles", 2))
+    except (TypeError, ValueError):
+        return 2
+
+
+def cmd_claim(args):
+    """`flux claim add <feature> <metric> <bar> [--scope S] [--cycles N]`.
+
+    Append-only: no close/list/edit (ADR 0003 keeps claim retirement a user+queue
+    decision). Re-adding the same feature+metric warns (it resets the eligibility
+    clock) but still appends — the store's integrity is that it is never rewritten."""
+    if not args or args[0] != "add":
+        print("flux claim: usage: flux claim add <feature> <metric> <bar> "
+              "[--scope repo|fleet|<name>] [--cycles N]", file=sys.stderr)
+        return 2
+    scope, cycles, pos = "repo", 2, []
+    i = 1
+    while i < len(args):
+        a = args[i]
+        if a == "--scope" and i + 1 < len(args):
+            scope = args[i + 1]
+            i += 2
+        elif a == "--cycles" and i + 1 < len(args):
+            try:
+                cycles = int(args[i + 1])
+            except ValueError:
+                print("flux claim: --cycles must be an integer", file=sys.stderr)
+                return 2
+            i += 2
+        else:
+            pos.append(a)
+            i += 1
+    if len(pos) != 3:
+        print("flux claim: add takes <feature> <metric> <bar>", file=sys.stderr)
+        return 2
+    feature, metric, bar = pos
+    if metric not in _CLAIM_METRICS:
+        print("flux claim: unknown metric %r — one of %s"
+              % (metric, ", ".join(sorted(_CLAIM_METRICS))), file=sys.stderr)
+        return 2
+    if _parse_bar(bar) is None:
+        print("flux claim: unparseable bar %r — need <op><number>, "
+              "op in == != < <= > >=" % bar, file=sys.stderr)
+        return 2
+    root = repo_root()
+    for c in read_claims(root):
+        if c.get("feature") == feature and c.get("metric") == metric:
+            print("claim add: %s/%s already open — appending supersedes its clock"
+                  % (feature, metric), file=sys.stderr)
+            break
+    rec = {"ts": now_iso(), "feature": feature, "metric": metric,
+           "bar": bar, "scope": scope, "cycles": cycles}
+    path = claims_path(root)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    print("claim added: %s %s %s [%s, cycles=%d]" % (feature, metric, bar, scope, cycles))
+    return 0
+
+
+def _cycle_count(root, cfg, ack_ts):
+    """Fleet substantive sessions started after ack_ts, cached in
+    .flux/cache/cycle.json. Recompute (a full fleet scan — too heavy for every
+    SessionStart) only when the cache is missing, keyed to a different ack, or older
+    than the cycle_refresh_hours freshness window."""
+    hours = _guard_cfg(cfg, "cycle_refresh_hours", 6)
+    cache = _read_cache_json(root, "cycle.json")
+    now = time.time()
+    if (cache.get("ack") == ack_ts and isinstance(cache.get("n"), int)
+            and isinstance(cache.get("computed_at"), (int, float))
+            and now - cache["computed_at"] < hours * 3600):
+        return cache["n"]
+    ack_min = ack_ts[:16]
+    n = sum(1 for _name, _p, _f, sub in _fleet_scan(FLUX_V2_EPOCH)
+            for s in sub if s["start"] > ack_min)
+    _write_cache_json(root, "cycle.json", {"ack": ack_ts, "n": n, "computed_at": now})
+    return n
+
+
+def _append_cycle_line(root, cfg, lines):
+    """Flux-repo-only (ADR 0003): append one line to the prime pack when a cycle has
+    closed since the newest claim ts — claims.jsonl *is* the ack clock, no separate
+    marker. Owns its try/except: cmd_prime's blanket `except: return 0` would blank
+    the WHOLE pack on an unguarded raise here, not just this line (A2)."""
+    try:
+        if not _is_flux_repo(root):
+            return
+        claims = read_claims(root)
+        if not claims:
+            return
+        newest = max((str(c.get("ts", "")) for c in claims), default="")
+        if not newest:
+            return
+        n = _cycle_count(root, cfg, newest)
+        if n >= LEDGER_CYCLE:
+            lines.append(
+                "cycle closed — %d substantive sessions since %s; read "
+                "`flux ledger --verdict`, then `flux claim add …` before the next change."
+                % (n, newest[:10]))
+    except Exception:
+        return
+
+
+def _fmt_val(v):
+    if v is None:
+        return "n/a"
+    if isinstance(v, float):
+        return "%.2f" % v
+    return str(v)
+
+
+def _chunk_metric(metric, chunk):
+    """One claim's metric over one cycle chunk. Raw metrics come straight from
+    `_aggregate` (reused, never re-derived); `wrap_coverage` is the wrapped/sessions
+    ratio the read-out states. `first_edit` is None for an edit-free chunk — the
+    caller skips such chunks (no signal), it is not a miss."""
+    agg = _aggregate(chunk)
+    if metric == "wrap_coverage":
+        return agg["wrapped"] / agg["sessions"] if agg["sessions"] else None
+    return agg.get(metric)
+
+
+def _verdict_sessions(root, since, scope):
+    """The substantive sessions a claim's scope is judged over — the ledger's own
+    `sub` filter, never a second definition. `repo` = this slug; `fleet` = every
+    adopting repo pooled; a bare name = that repo."""
+    if scope == "fleet":
+        return [s for _n, _p, _f, sub in _fleet_scan(since) for s in sub]
+    if scope == "repo":
+        slug_dir = os.path.join(PROJECTS_DIR, _slug_for_path(root))
+        sessions = _ledger_sessions(slug_dir, since)
+        return [s for s in sessions
+                if s["requests"] >= LEDGER_SUBSTANTIVE_MIN and not s["void"]]
+    return [s for name, _p, _f, sub in _fleet_scan(since) if name == scope
+            for s in sub]
+
+
+def _verdict_general(claim, op, threshold, sub):
+    """Per-cycle verdict for every metric but meta_tax. Eligible = sessions whose
+    start (minute-normalized) is strictly after the claim ts; chunk by LEDGER_CYCLE;
+    only complete chunks count. State: pending (<1 valued cycle) / moved (latest
+    complete cycle meets the bar) / unmoved K (K consecutive trailing complete
+    cycles miss, capped at the claim's patience)."""
+    metric = claim["metric"]
+    scope = claim.get("scope", "repo")
+    prefix = "%s %s %s [%s]" % (claim.get("feature", "?"), metric,
+                                claim.get("bar", ""), scope)
+    cycles = _claim_cycles(claim)
+    claim_ts = str(claim.get("ts", ""))[:16]
+    elig = sorted((s for s in sub if s["start"] > claim_ts), key=lambda s: s["start"])
+    chunks = [elig[i:i + LEDGER_CYCLE] for i in range(0, len(elig), LEDGER_CYCLE)]
+    complete = [ch for ch in chunks if len(ch) == LEDGER_CYCLE]
+    if not complete:
+        return "%s — pending (%d eligible session%s, <1 cycle)" % (
+            prefix, len(elig), "" if len(elig) == 1 else "s")
+    values = [_chunk_metric(metric, ch) for ch in complete]
+    if all(v is None for v in values):        # e.g. first_edit over edit-free cycles
+        return "%s — pending (no signal in %d cycle%s)" % (
+            prefix, len(complete), "" if len(complete) == 1 else "s")
+    latest = next(v for v in reversed(values) if v is not None)
+    if op(latest, threshold):
+        state = "moved"
+    else:
+        missed = 0
+        for v in reversed(values):
+            if v is None:
+                continue
+            if op(v, threshold):
+                break
+            missed += 1
+        state = "unmoved %d" % min(missed, cycles)
+    return "%s — %s (latest=%s, %d cycles)" % (
+        prefix, state, _fmt_val(latest), len(complete))
+
+
+def _verdict_meta_tax(since, claim, op, threshold):
+    """meta_tax is a fleet window ratio (flux$ / adopting$), NOT a per-chunk metric:
+    a session carries no repo tag, so the ratio can only be summed across the whole
+    eligible window via `_fleet_scan`'s is_flux split. Patience is the window
+    spanning ≥ cycles×LEDGER_CYCLE eligible sessions. Divergence from the per-cycle
+    model is stated in the line so it is not read as a bug."""
+    scope = claim.get("scope", "fleet")
+    prefix = "%s meta_tax %s [%s]" % (claim.get("feature", "?"),
+                                      claim.get("bar", ""), scope)
+    cycles = _claim_cycles(claim)
+    claim_ts = str(claim.get("ts", ""))[:16]
+    scan = _fleet_scan(since)
+    n_elig = 0
+    flux_d = adopt_d = 0.0
+    for _n, _p, is_flux, sub in scan:
+        esub = [s for s in sub if s["start"] > claim_ts]
+        n_elig += len(esub)
+        if not esub:
+            continue
+        d = _aggregate(esub)["dollars"]
+        if is_flux:
+            flux_d += d
+        else:
+            adopt_d += d
+    if n_elig < LEDGER_CYCLE:
+        return "%s — pending (%d eligible fleet session%s, <1 cycle)" % (
+            prefix, n_elig, "" if n_elig == 1 else "s")
+    if adopt_d <= 0:
+        return "%s — pending (n/a — no adopting spend)" % prefix
+    ratio = flux_d / adopt_d
+    if op(ratio, threshold):
+        state = "moved"
+    else:
+        state = "unmoved %d" % (cycles if n_elig >= cycles * LEDGER_CYCLE else 1)
+    return "%s — %s (ratio=%.2f, window sum over %d sessions; window-ratio, not per-cycle)" % (
+        prefix, state, ratio, n_elig)
+
+
+def _verdict_line(root, since, claim):
+    bar = claim.get("bar", "")
+    parsed = _parse_bar(bar)
+    prefix = "%s %s %s [%s]" % (claim.get("feature", "?"), claim.get("metric", "?"),
+                                bar, claim.get("scope", "repo"))
+    if parsed is None:
+        return "%s — invalid bar (skip)" % prefix
+    op_str, threshold = parsed
+    op = _CLAIM_OPS[op_str]
+    if claim.get("metric") == "meta_tax":
+        return _verdict_meta_tax(since, claim, op, threshold)
+    sub = _verdict_sessions(root, since, claim.get("scope", "repo"))
+    return _verdict_general(claim, op, threshold, sub)
+
+
+def _ledger_verdict(root, since):
+    """`flux ledger --verdict` — one budgeted line per open claim, scoring it
+    against the cycles that postdate it. Text only (ignores --json)."""
+    claims = read_claims(root)
+    if not claims:
+        print("flux ledger --verdict: no claims yet — `flux claim add …`")
+        return 0
+    header = ["flux ledger --verdict — %s · one line per open claim"
+              % os.path.basename(root)]
+    rows = [_verdict_line(root, since, c) for c in claims]
+    cfg = read_config(root)
+    budget = state_budget_bytes(cfg) if cfg else DEFAULT_STATE_BUDGET_TOKENS * BYTES_PER_TOKEN
+    print(_fit_to_budget(header, rows, [], budget))
+    return 0
+
 # ------------------------------------------------------------------------ main
 
 COMMANDS = {
@@ -1872,6 +2211,7 @@ COMMANDS = {
     "log": cmd_log,
     "guard": cmd_guard,
     "seal": cmd_seal,
+    "claim": cmd_claim,
 }
 
 def main(argv):

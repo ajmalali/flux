@@ -1,9 +1,11 @@
 # flux-v2 — status & next task
 
-Updated: 2026-09-03 — loop phases 01 (`flux ledger`), 02 (status diet), 03 (`flux log`
-+ pack footer), and 04 (guard/age/seal hooks) shipped, gated, wrapped (238 green); phase 05
-(claims + cycle line) is **planned** (`.flux/plans/loop/05-claims-cycle.md`, design, 4
-tasks, unbuilt) — next is `/flux:apply` it (audit recommended first). Where we are: the v1→v2 pivot is done, `bin/flux` is the single-file stdlib CLI,
+Updated: 2026-09-04 — loop phases 01 (`flux ledger`), 02 (status diet), 03 (`flux log`
++ pack footer), 04 (guard/age/seal hooks), and **05 (claims + cycle line)** shipped, gated,
+wrapped (**264 green**); phase 05 closed `.flux/plans/loop/05-claims-cycle.md` (`status:
+done`) — `flux claim add` → `.flux/claims.jsonl`, `flux ledger --verdict`, flux-repo prime
+cycle line; five real claims seeded, all read `pending` (judged next cycle). Next is
+`/flux:plan` loop phase 06 (handoff inline, mechanical). Where we are: the v1→v2 pivot is done, `bin/flux` is the single-file stdlib CLI,
 phase 01's `flux ledger` mines transcripts into the field read-out's targets table, and
 phase 03 added `flux log <tag> "…"` → `.flux/field-log.md` plus a prime pack footer naming
 the four session verbs. History moved to `.flux/analysis/2026-09-03-status-history.md`;
@@ -45,15 +47,21 @@ this file is live state only.
   on SessionEnd is transcript-free — reads `cache/last-wrap` (dropped by `_touch_wrap` on
   every `state set`/`handoff`) vs `cache/last-prime` mtime to log `unwrapped` + set the seal
   marker. Adopting repos get the two new hooks on their next session (plugin update). **05
-  (claims + cycle line) PLANNED** (`.flux/plans/loop/05-claims-cycle.md`, design, 4 tasks):
-  `.flux/claims.jsonl` (append-only, `{ts,feature,metric,bar,scope,cycles}`), `flux claim
-  add`, `flux ledger --verdict` (scores each claim over post-claim cycles →
-  pending/moved/unmoved-N, reusing the ledger's own chunking + meta-tax, never a second
-  definition), and a flux-repo-only cached prime cycle line. T4 seeds this cycle's real
-  claims (02 ctx_p50, 03 help_reads, 04 over_cap + wrap_coverage, 00 meta_tax) — they read
-  `pending` at apply, judged 2 cycles out. **Next: `/flux:apply` (audit recommended first —
-  verdict chunking + prime cache have trap surface).** Then 06 handoff inline, 07 deletions
-  (user decides), 08 optional. One phase per session; wrap every session.
+  (claims + cycle line) DONE** (`.flux/plans/loop/05-claims-cycle.md`, `status: done`; 264
+  green): `.flux/claims.jsonl` (append-only, `{ts,feature,metric,bar,scope,cycles}`), `flux
+  claim add` (rejects unknown metric / bad bar; warns-but-appends on a duplicate open
+  feature+metric), `flux ledger --verdict` (scores each claim over post-claim cycles →
+  pending/moved/unmoved-N; `_fleet_scan` extracted from `_ledger_fleet` and shared;
+  `meta_tax` special-cased as a fleet window ratio, not per-chunk; None/inf → pending;
+  minute-normalized eligibility; verdict is the first branch in `cmd_ledger`, `--json`
+  ignored), and a flux-repo-only cached prime cycle line (`.flux/cache/cycle.json`,
+  `cycle_refresh_hours`=6, own try/except so a bad cache never blanks the pack).
+  `FLUX_LEDGER_ALLOW_TMP=1` bypass in `_is_adopting_repo` (test-only, off by default). Five
+  claims seeded (02 ctx_p50<75000 repo · 03 help_reads==0 fleet · 04-guard over_cap==0 fleet
+  · 04-seal wrap_coverage>=0.8 fleet · 00 meta_tax<0.5 fleet) — all `pending` today, judged 2
+  cycles out (unproven → tracked in `open`). **Next: `/flux:plan` 06 handoff inline
+  (mechanical)** — prime inlines latest handoff under its own cap, `flux handoff` clips. Then
+  07 deletions (user decides), 08 optional. One phase per session; wrap every session.
 - [ ] **Execution index (ADR 0001) revival — design filed, nothing built.** Design doc
   `.flux/analysis/2026-08-26-execution-index-revival-design.md`. Revive the suspended ADR 0001
   as `flux task add|start|done|block|next|list` over a `tasks.jsonl` op-log (ADR 0002's

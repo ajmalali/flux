@@ -1,0 +1,5 @@
+{"ts": "2026-09-03T23:08:58.513Z", "feature": "02-status-diet", "metric": "ctx_p50", "bar": "<75000", "scope": "repo", "cycles": 2}
+{"ts": "2026-09-03T23:08:58.562Z", "feature": "03-log", "metric": "help_reads", "bar": "==0", "scope": "fleet", "cycles": 2}
+{"ts": "2026-09-03T23:08:58.610Z", "feature": "04-guard", "metric": "over_cap", "bar": "==0", "scope": "fleet", "cycles": 2}
+{"ts": "2026-09-03T23:08:58.655Z", "feature": "04-seal", "metric": "wrap_coverage", "bar": ">=0.8", "scope": "fleet", "cycles": 2}
+{"ts": "2026-09-03T23:08:58.700Z", "feature": "00-loop", "metric": "meta_tax", "bar": "<0.5", "scope": "fleet", "cycles": 2}

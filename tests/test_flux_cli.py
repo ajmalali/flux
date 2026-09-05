@@ -1,5 +1,6 @@
 """Tests for bin/flux. Stdlib only: python3 -m unittest discover -s tests"""
 
+import calendar
 import importlib.machinery
 import json
 import os
@@ -1047,20 +1048,409 @@ class TestHelp(unittest.TestCase):
         self.assertEqual(out.returncode, 2)
 
 
-def _transcript(path, n, model="claude-opus-4-8"):
+def _transcript(path, n, model="claude-opus-4-8",
+                ts="2026-08-21T09:00:00.000Z", cwd=None, pad=0, raw_gate=0,
+                wrapped=False):
     """A synthetic transcript with n distinct main-thread assistant requests — the
-    ledger's request definition (deduped on message.id, sidechain excluded)."""
+    ledger's request definition (deduped on message.id, sidechain excluded).
+
+    ts     — the timestamp on every record; sets the session's start (=[:16]).
+    cwd    — written on each record so the fleet scan can reverse the slug to a path.
+    pad    — text length per request, to clear _ledger_sessions' 5 KB floor.
+    raw_gate — extra Bash(`pytest`) requests, one raw-gate hit each (a miss knob).
+    wrapped  — inject a Bash(`flux state set …`) request so the session counts wrapped."""
     with open(path, "w") as f:
+        def emit(rec):
+            if cwd:
+                rec["cwd"] = cwd
+            f.write(json.dumps(rec) + "\n")
+        usage = {"input_tokens": 1000, "cache_creation_input_tokens": 0,
+                 "cache_read_input_tokens": 1000, "output_tokens": 50}
         for i in range(n):
-            f.write(json.dumps({
-                "type": "assistant", "timestamp": "2026-08-21T09:00:00.000Z",
-                "message": {"id": "m%d" % i, "model": model,
-                            "usage": {"input_tokens": 1000,
-                                      "cache_creation_input_tokens": 0,
-                                      "cache_read_input_tokens": 1000,
-                                      "output_tokens": 50},
-                            "content": [{"type": "text", "text": "x"}]}}) + "\n")
+            emit({"type": "assistant", "timestamp": ts,
+                  "message": {"id": "m%d" % i, "model": model, "usage": usage,
+                              "content": [{"type": "text", "text": "x" * pad or "x"}]}})
+        for j in range(raw_gate):
+            emit({"type": "assistant", "timestamp": ts,
+                  "message": {"id": "rg%d" % j, "model": model, "usage": usage,
+                              "content": [{"type": "tool_use", "id": "tu%d" % j,
+                                           "name": "Bash",
+                                           "input": {"command": "pytest tests/"}}]}})
+        if wrapped:
+            emit({"type": "assistant", "timestamp": ts,
+                  "message": {"id": "wrap", "model": model, "usage": usage,
+                              "content": [{"type": "tool_use", "id": "tuw",
+                                           "name": "Bash",
+                                           "input": {"command": "flux state set next x"}}]}})
     return path
+
+
+def _iso_minute(i, base_day="2026-08-21"):
+    """Distinct minute-spaced ISO stamp for session index i (ordered starts)."""
+    y, mo, d = (int(x) for x in base_day.split("-"))
+    epoch = calendar.timegm((y, mo, d, 0, 0, 0, 0, 0, 0)) + i * 60
+    return time.strftime("%Y-%m-%dT%H:%M:00.000Z", time.gmtime(epoch))
+
+
+class LedgerHarness(FluxRepoCase):
+    """Feeds the HOME-derived ledger: transcripts under a redirected HOME at
+    <HOME>/.claude/projects/<slug>/, where slug is the *git toplevel* of the repo
+    as the subprocess sees it (tempfile paths symlink through /private on macOS, so
+    the slug must come from `git rev-parse`, not self.repo)."""
+
+    def setUp(self):
+        super().setUp()
+        run_flux(["init"], self.repo)
+        self.home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.home, ignore_errors=True)
+        self.top = subprocess.run(
+            ["git", "-C", self.repo, "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True).stdout.strip()
+
+    def _env(self, allow_tmp=False):
+        env = {"HOME": self.home}
+        if allow_tmp:
+            env["FLUX_LEDGER_ALLOW_TMP"] = "1"
+        return env
+
+    @staticmethod
+    def _slug(path):
+        return path.replace("/", "-").replace(".", "-")
+
+    def _slug_dir(self, repo_path):
+        d = os.path.join(self.home, ".claude", "projects", self._slug(repo_path))
+        os.makedirs(d, exist_ok=True)
+        return d
+
+    def plant(self, repo_path, idx, requests=6, raw_gate=0, wrapped=False,
+              cwd=None, day="2026-08-21"):
+        """One substantive session (padded past the 5 KB floor) at a distinct
+        minute keyed by idx, under repo_path's slug."""
+        d = self._slug_dir(repo_path)
+        _transcript(os.path.join(d, "s%s.jsonl" % idx), requests,
+                    ts=_iso_minute(idx, day), cwd=cwd, pad=1000,
+                    raw_gate=raw_gate, wrapped=wrapped)
+
+    def write_claim(self, feature, metric, bar, scope="repo", cycles=2,
+                    ts="2026-08-20T00:00:00.000Z"):
+        """Write a claim record directly with a chosen ts — the CLI's `claim add`
+        always stamps `now`, which would postdate the dated fixtures."""
+        path = os.path.join(self.repo, ".flux", "claims.jsonl")
+        with open(path, "a") as f:
+            f.write(json.dumps({"ts": ts, "feature": feature, "metric": metric,
+                                "bar": bar, "scope": scope, "cycles": cycles}) + "\n")
+
+    def make_fleet_repo(self, name, is_flux=False):
+        """A fabricated adopting repo under a temp root (needs FLUX_LEDGER_ALLOW_TMP=1
+        to be seen). Returns its realpath, which is both the transcript `cwd` and the
+        slug source, so the fleet scan reverses it cleanly."""
+        p = os.path.realpath(os.path.join(self.home, "fleet", name))
+        os.makedirs(os.path.join(p, ".flux"), exist_ok=True)
+        with open(os.path.join(p, ".flux", "flux.toml"), "w") as f:
+            f.write('[check]\ncommand = "true"\n')
+        if is_flux:
+            os.makedirs(os.path.join(p, ".claude-plugin"), exist_ok=True)
+            with open(os.path.join(p, ".claude-plugin", "plugin.json"), "w") as f:
+                json.dump({"name": "flux"}, f)
+        return p
+
+
+class TestClaimAdd(FluxRepoCase):
+    def setUp(self):
+        super().setUp()
+        run_flux(["init"], self.repo)
+
+    def _claims(self):
+        return os.path.join(self.repo, ".flux", "claims.jsonl")
+
+    def _size(self):
+        try:
+            return os.path.getsize(self._claims())
+        except OSError:
+            return 0
+
+    def test_append_shape_and_defaults(self):
+        out = run_flux(["claim", "add", "04-guard", "over_cap", "==0"], self.repo)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        with open(self._claims()) as f:
+            lines = [l for l in f if l.strip()]
+        self.assertEqual(len(lines), 1)
+        rec = json.loads(lines[0])
+        self.assertEqual(rec["feature"], "04-guard")
+        self.assertEqual(rec["metric"], "over_cap")
+        self.assertEqual(rec["bar"], "==0")
+        self.assertEqual(rec["scope"], "repo")     # default
+        self.assertEqual(rec["cycles"], 2)         # default
+        self.assertTrue(rec["ts"].endswith("Z") and "T" in rec["ts"])
+
+    def test_scope_and_cycles_flags(self):
+        run_flux(["claim", "add", "00-loop", "meta_tax", "<0.5",
+                  "--scope", "fleet", "--cycles", "3"], self.repo)
+        with open(self._claims()) as f:
+            rec = json.loads(f.readline())
+        self.assertEqual(rec["scope"], "fleet")
+        self.assertEqual(rec["cycles"], 3)
+
+    def test_unknown_metric_rejected_no_write(self):
+        before = self._size()
+        out = run_flux(["claim", "add", "x", "bogus", "==0"], self.repo)
+        self.assertEqual(out.returncode, 2)
+        self.assertIn("unknown metric", out.stderr)
+        self.assertEqual(self._size(), before)      # nothing appended
+
+    def test_unparseable_bar_rejected_no_write(self):
+        before = self._size()
+        out = run_flux(["claim", "add", "x", "over_cap", "nonsense"], self.repo)
+        self.assertEqual(out.returncode, 2)
+        self.assertIn("bar", out.stderr)
+        self.assertEqual(self._size(), before)
+
+    def test_duplicate_warns_but_appends(self):
+        run_flux(["claim", "add", "04-guard", "over_cap", "==0"], self.repo)
+        out = run_flux(["claim", "add", "04-guard", "over_cap", "==0"], self.repo)
+        self.assertEqual(out.returncode, 0)
+        self.assertIn("already open", out.stderr)
+        with open(self._claims()) as f:
+            self.assertEqual(len([l for l in f if l.strip()]), 2)
+
+    def test_bar_grammar(self):
+        mod = flux_module()
+        self.assertEqual(mod._parse_bar("==0"), ("==", 0.0))
+        self.assertEqual(mod._parse_bar("<0.5"), ("<", 0.5))
+        self.assertEqual(mod._parse_bar(">=0.8"), (">=", 0.8))
+        self.assertEqual(mod._parse_bar("<=75000"), ("<=", 75000.0))
+        self.assertIsNone(mod._parse_bar("nonsense"))
+        self.assertIsNone(mod._parse_bar("=0"))
+        self.assertIsNone(mod._parse_bar(""))
+
+
+class TestLedgerHarness(LedgerHarness):
+    def test_harness_feeds_two_cycles(self):
+        for i in range(20):
+            self.plant(self.top, i)
+        out = run_flux(["ledger"], self.repo, env_extra=self._env())
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("cycle 1", out.stdout)
+        self.assertIn("cycle 2", out.stdout)
+        self.assertNotIn("cycle 3", out.stdout)
+        self.assertIn("20 substantive", out.stdout)
+
+
+class TestVerdict(LedgerHarness):
+    """Repo-scoped verdicts, driven by the T0 harness (no fleet, so the tmp-root
+    exclusion never applies). The `raw_gate ==0` bar is the knob: a cycle meets it
+    when no session ran a raw gate, misses when one did."""
+
+    def _verdict(self):
+        return run_flux(["ledger", "--verdict"], self.repo, env_extra=self._env())
+
+    def test_no_claims_message(self):
+        out = self._verdict()
+        self.assertEqual(out.returncode, 0)
+        self.assertIn("no claims yet", out.stdout)
+
+    def test_pending_before_one_cycle(self):
+        for i in range(9):                    # < LEDGER_CYCLE
+            self.plant(self.top, i)
+        self.write_claim("f", "raw_gate", "==0")
+        out = self._verdict()
+        self.assertIn("pending", out.stdout)
+        self.assertIn("<1 cycle", out.stdout)
+
+    def test_moved_latest_cycle_meets(self):
+        for i in range(10):                   # one clean cycle
+            self.plant(self.top, i)
+        self.write_claim("f", "raw_gate", "==0")
+        out = self._verdict()
+        self.assertRegex(out.stdout, r"f raw_gate ==0 \[repo\] — moved \(latest=0, 1 cycles\)")
+
+    def test_unmoved_1_single_missed_cycle(self):
+        for i in range(10):
+            self.plant(self.top, i, raw_gate=(1 if i == 3 else 0))
+        self.write_claim("f", "raw_gate", "==0")
+        out = self._verdict()
+        self.assertIn("unmoved 1", out.stdout)
+        self.assertIn("1 cycles", out.stdout)
+
+    def test_unmoved_2_two_missed_cycles(self):
+        for i in range(20):                   # two cycles, each carries one raw gate
+            self.plant(self.top, i, raw_gate=(1 if i in (2, 12) else 0))
+        self.write_claim("f", "raw_gate", "==0")
+        out = self._verdict()
+        self.assertIn("unmoved 2", out.stdout)
+        self.assertIn("2 cycles", out.stdout)
+
+    def test_moved_when_latest_clean_after_dirty(self):
+        # cycle 1 dirty, cycle 2 clean -> latest meets -> moved (not unmoved)
+        for i in range(20):
+            self.plant(self.top, i, raw_gate=(1 if i == 4 else 0))
+        self.write_claim("f", "raw_gate", "==0")
+        out = self._verdict()
+        self.assertIn("moved (latest=0, 2 cycles)", out.stdout)
+
+    def test_pre_claim_session_does_not_change_verdict(self):
+        # AC-3: "never score against data older than the claim." A pre-claim losing
+        # session (here also same-minute as the claim, so the minute-normalized
+        # boundary is exercised) must not contribute to any cycle.
+        for i in range(1, 11):                 # clean, eligible (minutes 01..10)
+            self.plant(self.top, i)
+        self.write_claim("f", "raw_gate", "==0", ts="2026-08-21T00:00:30.000Z")
+        before = self._verdict().stdout
+        self.assertIn("moved", before)
+        self.plant(self.top, 0, raw_gate=1)    # pre-claim loser at minute 00
+        after = self._verdict().stdout
+        self.assertEqual(before, after)
+
+    def test_first_edit_edit_free_is_pending_not_crash(self):
+        for i in range(10):                   # no Edit tool -> first_edit is None
+            self.plant(self.top, i)
+        self.write_claim("f", "first_edit", "<5")
+        out = self._verdict()
+        self.assertEqual(out.returncode, 0)
+        self.assertIn("pending", out.stdout)
+        self.assertIn("no signal", out.stdout)
+
+    def test_verdict_json_is_text_only(self):
+        for i in range(10):
+            self.plant(self.top, i)
+        self.write_claim("f", "raw_gate", "==0")
+        out = run_flux(["ledger", "--verdict", "--json"], self.repo,
+                       env_extra=self._env())
+        self.assertEqual(out.returncode, 0)
+        self.assertIn("one line per open claim", out.stdout)   # the text header
+        with self.assertRaises(ValueError):                    # not JSON
+            json.loads(out.stdout)
+
+
+class TestVerdictFleet(LedgerHarness):
+    """The fleet path: pooled sessions, wrap_coverage, and the meta_tax window
+    ratio — all under FLUX_LEDGER_ALLOW_TMP=1 so fabricated temp repos are seen."""
+
+    def test_fleet_table_still_renders_after_extraction(self):
+        # Boundary guard: _ledger_fleet now reads _fleet_scan; its table must still
+        # render both repos and the meta-tax line.
+        flux_r = self.make_fleet_repo("fluxrepo", is_flux=True)
+        adopt = self.make_fleet_repo("adopter")
+        for i in range(6):
+            self.plant(flux_r, i, cwd=flux_r)
+        for i in range(6):
+            self.plant(adopt, 100 + i, cwd=adopt)
+        out = run_flux(["ledger", "--fleet"], self.repo,
+                       env_extra=self._env(allow_tmp=True))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("fluxrepo", out.stdout)
+        self.assertIn("adopter", out.stdout)
+        self.assertIn("meta-tax", out.stdout)
+
+    def test_wrap_coverage_moved(self):
+        repo = self.make_fleet_repo("adopter")
+        for i in range(10):                   # 8/10 wrapped -> coverage 0.8
+            self.plant(repo, i, wrapped=(i < 8), cwd=repo)
+        self.write_claim("f", "wrap_coverage", ">=0.8", scope="fleet")
+        out = run_flux(["ledger", "--verdict"], self.repo,
+                       env_extra=self._env(allow_tmp=True))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("wrap_coverage", out.stdout)
+        self.assertIn("moved", out.stdout)
+
+    def test_wrap_coverage_unmoved(self):
+        repo = self.make_fleet_repo("adopter")
+        for i in range(10):                   # 3/10 wrapped -> coverage 0.3
+            self.plant(repo, i, wrapped=(i < 3), cwd=repo)
+        self.write_claim("f", "wrap_coverage", ">=0.8", scope="fleet")
+        out = run_flux(["ledger", "--verdict"], self.repo,
+                       env_extra=self._env(allow_tmp=True))
+        self.assertIn("unmoved 1", out.stdout)
+
+    def test_meta_tax_moved_low_ratio(self):
+        flux_r = self.make_fleet_repo("fluxrepo", is_flux=True)
+        adopt = self.make_fleet_repo("adopter")
+        for i in range(5):                    # little flux spend
+            self.plant(flux_r, i, cwd=flux_r)
+        for i in range(20):                   # much adopting spend -> ratio well < 0.5
+            self.plant(adopt, 100 + i, cwd=adopt)
+        self.write_claim("00-loop", "meta_tax", "<0.5", scope="fleet")
+        out = run_flux(["ledger", "--verdict"], self.repo,
+                       env_extra=self._env(allow_tmp=True))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("meta_tax", out.stdout)
+        self.assertIn("moved", out.stdout)
+        self.assertIn("window-ratio, not per-cycle", out.stdout)
+
+    def test_meta_tax_zero_adopting_spend_is_pending(self):
+        flux_r = self.make_fleet_repo("fluxrepo", is_flux=True)
+        for i in range(12):                   # >= one cycle, but no adopting repo
+            self.plant(flux_r, i, cwd=flux_r)
+        self.write_claim("00-loop", "meta_tax", "<0.5", scope="fleet")
+        out = run_flux(["ledger", "--verdict"], self.repo,
+                       env_extra=self._env(allow_tmp=True))
+        self.assertIn("pending", out.stdout)
+        self.assertIn("no adopting spend", out.stdout)
+
+
+class TestCycleLine(LedgerHarness):
+    """The flux-repo-only prime cycle line: appears once a cycle (>=10 fleet
+    substantive sessions) has closed since the newest claim ts."""
+
+    def _make_self_flux(self):
+        d = os.path.join(self.repo, ".claude-plugin")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "plugin.json"), "w") as f:
+            json.dump({"name": "flux"}, f)
+
+    def _prime(self):
+        return run_flux(["prime"], self.repo, env_extra=self._env(allow_tmp=True))
+
+    def test_cycle_line_when_closed(self):
+        self._make_self_flux()
+        adopter = self.make_fleet_repo("adopter")
+        for i in range(12):                    # >= LEDGER_CYCLE post-ack
+            self.plant(adopter, i, cwd=adopter)
+        self.write_claim("f", "raw_gate", "==0", ts="2026-08-20T00:00:00.000Z")
+        out = self._prime()
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(out.stdout.count("cycle closed"), 1)
+        self.assertIn("flux ledger --verdict", out.stdout)
+
+    def test_no_line_in_non_flux_repo(self):
+        adopter = self.make_fleet_repo("adopter")
+        for i in range(12):
+            self.plant(adopter, i, cwd=adopter)
+        self.write_claim("f", "raw_gate", "==0", ts="2026-08-20T00:00:00.000Z")
+        out = self._prime()                    # self.repo is NOT a flux repo
+        self.assertNotIn("cycle closed", out.stdout)
+
+    def test_no_line_when_fewer_than_ten(self):
+        self._make_self_flux()
+        adopter = self.make_fleet_repo("adopter")
+        for i in range(5):
+            self.plant(adopter, i, cwd=adopter)
+        self.write_claim("f", "raw_gate", "==0", ts="2026-08-20T00:00:00.000Z")
+        out = self._prime()
+        self.assertNotIn("cycle closed", out.stdout)
+
+    def test_no_claims_no_line(self):
+        self._make_self_flux()
+        adopter = self.make_fleet_repo("adopter")
+        for i in range(12):
+            self.plant(adopter, i, cwd=adopter)
+        out = self._prime()                    # no claims.jsonl -> no ack -> no line
+        self.assertNotIn("cycle closed", out.stdout)
+
+    def test_corrupt_cache_prints_full_pack(self):
+        # AC-7: a corrupt cycle.json must not blank the pack — the block's own
+        # try/except, not cmd_prime's blanket catch, handles it.
+        self._make_self_flux()
+        self.write_claim("f", "raw_gate", "==0", ts="2026-08-20T00:00:00.000Z")
+        cdir = os.path.join(self.repo, ".flux", "cache")
+        os.makedirs(cdir, exist_ok=True)
+        with open(os.path.join(cdir, "cycle.json"), "w") as fh:
+            fh.write("{not json at all")
+        out = self._prime()
+        self.assertEqual(out.returncode, 0)
+        self.assertIn("## flux prime", out.stdout)      # header present
+        self.assertIn("verbs — gate:", out.stdout)      # footer present
+        self.assertNotIn("cycle closed", out.stdout)    # no fleet -> no line
 
 
 class TestGuard(FluxRepoCase):

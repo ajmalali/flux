@@ -77,3 +77,11 @@
 {"ts": "2026-09-05T01:00:59.124Z", "k": "next", "v": "/flux:plan loop phase 06 (handoff inline) — prime inlines latest handoff under its own cap, flux handoff clips; roadmap row 06, mechanical"}
 {"ts": "2026-09-05T01:00:59.124Z", "k": "routing", "v": "mechanical"}
 {"ts": "2026-09-05T01:00:59.124Z", "k": "open", "v": "5 seeded claims read pending — unproven until >=10 fleet substantive sessions postdate the 2026-09-04 seed (judged next cycle by flux ledger --verdict, not a bug)"}
+{"ts": "2026-09-06T11:54:55.012Z", "k": "phase", "v": "06-handoff-inline"}
+{"ts": "2026-09-06T11:54:55.012Z", "k": "next", "v": "/flux:apply .flux/plans/loop/06-handoff-inline.md"}
+{"ts": "2026-09-06T11:54:55.012Z", "k": "routing", "v": "mechanical"}
+{"ts": "2026-09-06T12:23:53.818Z", "k": "phase", "v": "loop 06 (handoff inline) — done, wrapped"}
+{"ts": "2026-09-06T12:23:53.818Z", "k": "position", "v": "06 shipped: handoff_budget_bytes + DEFAULT_HANDOFF_BUDGET_TOKENS=1200 (optional [state] handoff_budget_tokens knob), flux handoff clips to the handoff cap, prime inlines latest handoff under 'last handoff (<base>), inlined:' with footer reserved+appended-last (degenerate budget<footer guard falls back to whole-string clip). 267 green. Claim 06-handoff-inline first_edit <=8 seeded, reads pending."}
+{"ts": "2026-09-06T12:23:53.818Z", "k": "next", "v": "/flux:plan loop phase 07 (deletions) — routing key, zero-use skills, adopt fold-in; user decides scope. roadmap row 07"}
+{"ts": "2026-09-06T12:23:53.818Z", "k": "routing", "v": "design"}
+{"ts": "2026-09-06T12:23:53.818Z", "k": "open", "v": "6 seeded claims read pending (5 from 05 + 06-handoff-inline first_edit<=8) — unproven until >=10 fleet substantive sessions postdate their seed; judged by flux ledger --verdict, not a bug"}

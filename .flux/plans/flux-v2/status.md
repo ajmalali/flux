@@ -1,11 +1,13 @@
 # flux-v2 — status & next task
 
-Updated: 2026-09-04 — loop phases 01 (`flux ledger`), 02 (status diet), 03 (`flux log`
-+ pack footer), 04 (guard/age/seal hooks), and **05 (claims + cycle line)** shipped, gated,
-wrapped (**264 green**); phase 05 closed `.flux/plans/loop/05-claims-cycle.md` (`status:
-done`) — `flux claim add` → `.flux/claims.jsonl`, `flux ledger --verdict`, flux-repo prime
-cycle line; five real claims seeded, all read `pending` (judged next cycle). Next is
-`/flux:plan` loop phase 06 (handoff inline, mechanical). Where we are: the v1→v2 pivot is done, `bin/flux` is the single-file stdlib CLI,
+Updated: 2026-09-06 — loop phases 01 (`flux ledger`), 02 (status diet), 03 (`flux log`
++ pack footer), 04 (guard/age/seal hooks), 05 (claims + cycle line), and **06 (handoff
+inline)** shipped, gated, wrapped (**267 green**); phase 06 closed
+`.flux/plans/loop/06-handoff-inline.md` (`status: done`) — `flux handoff` clips to its own
+`handoff_budget_bytes` cap (~1200 tok), `flux prime` inlines the latest handoff's body under
+that cap with the pack footer reserved+appended-last; one real claim seeded
+(`06-handoff-inline first_edit <=8`), reads `pending`. Next is `/flux:plan` loop phase 07
+(deletions, design — user decides scope). Where we are: the v1→v2 pivot is done, `bin/flux` is the single-file stdlib CLI,
 phase 01's `flux ledger` mines transcripts into the field read-out's targets table, and
 phase 03 added `flux log <tag> "…"` → `.flux/field-log.md` plus a prime pack footer naming
 the four session verbs. History moved to `.flux/analysis/2026-09-03-status-history.md`;
@@ -59,9 +61,18 @@ this file is live state only.
   `FLUX_LEDGER_ALLOW_TMP=1` bypass in `_is_adopting_repo` (test-only, off by default). Five
   claims seeded (02 ctx_p50<75000 repo · 03 help_reads==0 fleet · 04-guard over_cap==0 fleet
   · 04-seal wrap_coverage>=0.8 fleet · 00 meta_tax<0.5 fleet) — all `pending` today, judged 2
-  cycles out (unproven → tracked in `open`). **Next: `/flux:plan` 06 handoff inline
-  (mechanical)** — prime inlines latest handoff under its own cap, `flux handoff` clips. Then
-  07 deletions (user decides), 08 optional. One phase per session; wrap every session.
+  cycles out (unproven → tracked in `open`). **06 (handoff inline) DONE**
+  (`.flux/plans/loop/06-handoff-inline.md`, `status: done`; 267 green): `handoff_budget_bytes`
+  + `DEFAULT_HANDOFF_BUDGET_TOKENS`=1200 (optional `[state] handoff_budget_tokens` knob), `flux
+  handoff` clips to that cap not the state budget, and `_prime_inner` inlines the latest
+  handoff under `last handoff (<base>), inlined:` (body clipped to the handoff cap; blanket
+  try/except falls back to the old naming line on read-error/empty). Footer survival: reserve
+  `len(PACK_FOOTER)+1` before the final body clip, append footer last; degenerate `budget <
+  footer` case (only the artificial 10-token budget test) falls back to a whole-string clip so
+  the budget invariant always wins. Sixth claim seeded (`06-handoff-inline first_edit <=8`
+  fleet) — `pending`. **Next: `/flux:plan` 07 deletions (design)** — routing key, zero-use
+  skills, `adopt` fold-in; user decides scope. Then 08 optional. One phase per session; wrap
+  every session.
 - [ ] **Execution index (ADR 0001) revival — design filed, nothing built.** Design doc
   `.flux/analysis/2026-08-26-execution-index-revival-design.md`. Revive the suspended ADR 0001
   as `flux task add|start|done|block|next|list` over a `tasks.jsonl` op-log (ADR 0002's

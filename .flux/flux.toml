@@ -7,6 +7,7 @@ verified = true              # flips to true on the first full `flux check` pass
 
 [state]
 budget_tokens = 2000          # flux refuses to emit or store more than this
+# handoff_budget_tokens = 1200  # the handoff's own cap (write + prime inline); default holds when absent
 
 [routing]                     # /flux:plan stamps one of these into each plan
 design = "opus"

@@ -668,11 +668,54 @@ class TestHandoff(FluxRepoCase):
         self.assertIn("recent commits", content)
         self.assertLessEqual(len(content.encode()), 8000)
 
-    def test_prime_points_at_latest_handoff(self):
+    def test_handoff_capped_to_its_own_budget(self):
+        # T1/AC-2 (handoff side): a position alone larger than the handoff cap still
+        # yields a file <= the cap. 6000 X's clears 4800 but stays under the 8000-byte
+        # state budget so `state set` accepts it.
+        run_flux(["init"], self.repo)
+        run_flux(["state", "set", "position", "X" * 6000], self.repo)
+        out = run_flux(["handoff"], self.repo)
+        self.assertEqual(out.returncode, 0)
+        rel = out.stdout.strip()
+        path = os.path.join(self.repo, rel) if not os.path.isabs(rel) else rel
+        with open(path, "rb") as f:
+            self.assertLessEqual(len(f.read()), 4800)
+
+    def test_prime_inlines_latest_handoff(self):
+        # AC-1: prime inlines the handoff body (a section heading, not just its path)
+        # and still ends with the verbs footer.
         run_flux(["init"], self.repo)
         run_flux(["handoff"], self.repo)
         out = run_flux(["prime"], self.repo)
-        self.assertIn("last handoff:", out.stdout)
+        self.assertIn("inlined:", out.stdout)
+        self.assertIn("## working tree", out.stdout)
+        self.assertEqual(out.stdout.rstrip("\n").splitlines()[-1], flux_module().PACK_FOOTER)
+
+    def test_prime_footer_survives_oversized_handoff(self):
+        # AC-2 (prime side): an oversized handoff cannot push the footer out of the
+        # pack, nor the pack over its state budget.
+        run_flux(["init"], self.repo)
+        hdir = os.path.join(self.repo, ".flux", "handoffs")
+        os.makedirs(hdir, exist_ok=True)
+        with open(os.path.join(hdir, "2026-01-01-0000.md"), "w") as f:
+            f.write("# handoff\n\n## working tree\n" + ("padding line\n" * 3000))
+        out = run_flux(["prime"], self.repo)
+        self.assertEqual(out.returncode, 0)
+        mod = flux_module()
+        self.assertEqual(out.stdout.rstrip("\n").splitlines()[-1], mod.PACK_FOOTER)
+        self.assertLessEqual(len(out.stdout.encode("utf-8")),
+                             mod.state_budget_bytes({}))
+
+    def test_prime_no_handoff_block_when_absent(self):
+        # AC-3: no handoffs dir -> no handoff block, header + footer still printed,
+        # exit 0.
+        run_flux(["init"], self.repo)
+        out = run_flux(["prime"], self.repo)
+        self.assertEqual(out.returncode, 0)
+        self.assertIn("## flux prime", out.stdout)
+        self.assertNotIn("last handoff", out.stdout)
+        self.assertNotIn("inlined:", out.stdout)
+        self.assertEqual(out.stdout.rstrip("\n").splitlines()[-1], flux_module().PACK_FOOTER)
 
 
 class TestRun(FluxRepoCase):

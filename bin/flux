@@ -39,6 +39,11 @@ import time
 
 BYTES_PER_TOKEN = 4
 DEFAULT_STATE_BUDGET_TOKENS = 2000
+# The handoff carries more than the pack — a working-tree + commits snapshot — so it
+# rides its own, larger cap (~1200 tokens, read-out item 4). Both `flux handoff` (the
+# write) and prime's inline of the latest handoff clip to this, so the inlined copy can
+# never overrun the pack: prime protects its footer separately (see _prime_inner).
+DEFAULT_HANDOFF_BUDGET_TOKENS = 1200
 COLD_SECONDS = 3600
 
 # The field log — an append-only instrument (`flux log <tag> "…"`), created by init.
@@ -276,6 +281,12 @@ def state_budget_bytes(cfg):
     budget = DEFAULT_STATE_BUDGET_TOKENS
     if cfg and isinstance(cfg.get("state"), dict):
         budget = cfg["state"].get("budget_tokens", budget)
+    return int(budget) * BYTES_PER_TOKEN
+
+def handoff_budget_bytes(cfg):
+    budget = DEFAULT_HANDOFF_BUDGET_TOKENS
+    if cfg and isinstance(cfg.get("state"), dict):
+        budget = cfg["state"].get("handoff_budget_tokens", budget)
     return int(budget) * BYTES_PER_TOKEN
 
 def clip(text, max_bytes, marker="\n[flux: truncated at budget]"):
@@ -793,15 +804,35 @@ def _prime_inner():
         lines.append("check: flux check  (%s)%s" % (check, unverified))
     latest = _latest_handoff(root)
     if latest:
-        lines.append("last handoff: %s" % os.path.relpath(latest, root))
+        try:
+            with open(latest, encoding="utf-8") as f:
+                body = f.read().strip()
+            if body:
+                body = clip(body, handoff_budget_bytes(cfg))
+                lines.append("last handoff (%s), inlined:" % os.path.basename(latest))
+                lines.append(body)
+            else:
+                lines.append("last handoff: %s" % os.path.relpath(latest, root))
+        except Exception:
+            lines.append("last handoff: %s" % os.path.relpath(latest, root))
     if not state.get("next"):
         lines.append("next: (unset — `flux state set next \"...\"` at wrap)")
 
     _append_cycle_line(root, cfg, lines)  # flux-repo-only; owns its try/except (A2)
 
-    lines.append(PACK_FOOTER)  # the verbs, so a cold session need not rediscover them
-
-    print(clip("\n".join(lines), budget))
+    # Clip the body first, then append the footer — never the reverse. The inlined
+    # handoff can be large, so clipping the whole string after the footer would eat the
+    # verbs; instead reserve the footer's bytes (+1 for the join newline) up front. If
+    # the budget is smaller than the footer itself (only an absurdly tight config), the
+    # budget still wins — it is the binding invariant — so fall back to a whole-string
+    # clip that may truncate the footer rather than overrun the cap.
+    reserve = len(PACK_FOOTER.encode("utf-8")) + 1
+    if budget > reserve:
+        body = clip("\n".join(lines), budget - reserve)
+        print(body + "\n" + PACK_FOOTER)  # the verbs, so a cold session need not rediscover them
+    else:
+        lines.append(PACK_FOOTER)
+        print(clip("\n".join(lines), budget))
     return 0
 
 def _ahead_behind(root, branch):
@@ -1260,7 +1291,6 @@ def cmd_handoff(_args):
         print("flux handoff: no .flux/flux.toml here — run `flux init` first", file=sys.stderr)
         return 1
     state = read_state(root)
-    budget = state_budget_bytes(cfg)
 
     sections = ["# handoff — %s" % now_stamp(), ""]
     branch = git(["branch", "--show-current"], cwd=root) or "(detached)"
@@ -1285,7 +1315,7 @@ def cmd_handoff(_args):
     sections.append(git(["log", "--oneline", "-10"], cwd=root) or "(no commits)")
     sections.append("```")
 
-    content = clip("\n".join(sections) + "\n", budget)
+    content = clip("\n".join(sections) + "\n", handoff_budget_bytes(cfg))
     hdir = os.path.join(flux_dir(root), "handoffs")
     os.makedirs(hdir, exist_ok=True)
     path = os.path.join(hdir, time.strftime("%Y-%m-%d-%H%M") + ".md")

@@ -85,3 +85,12 @@
 {"ts": "2026-09-06T12:23:53.818Z", "k": "next", "v": "/flux:plan loop phase 07 (deletions) — routing key, zero-use skills, adopt fold-in; user decides scope. roadmap row 07"}
 {"ts": "2026-09-06T12:23:53.818Z", "k": "routing", "v": "design"}
 {"ts": "2026-09-06T12:23:53.818Z", "k": "open", "v": "6 seeded claims read pending (5 from 05 + 06-handoff-inline first_edit<=8) — unproven until >=10 fleet substantive sessions postdate their seed; judged by flux ledger --verdict, not a bug"}
+{"ts": "2026-09-07T19:33:05.230Z", "k": "phase", "v": "07-deletions"}
+{"ts": "2026-09-07T19:33:05.230Z", "k": "next", "v": "/flux:audit .flux/plans/loop/07-deletions.md"}
+{"ts": "2026-09-07T19:33:05.230Z", "k": "routing", "v": "mechanical"}
+{"ts": "2026-09-07T19:47:51.298Z", "k": "next", "v": "/flux:apply .flux/plans/loop/07-deletions.md"}
+{"ts": "2026-09-07T22:49:35.300Z", "k": "routing", "v": ""}
+{"ts": "2026-09-07T23:04:41.880Z", "k": "phase", "v": "loop 07 (deletions) — done, wrapped"}
+{"ts": "2026-09-07T23:04:41.880Z", "k": "position", "v": "07 shipped: routing gone (pack -1 line; STATE_KEY_ORDER + pack tuple + [routing] toml block dropped, live routing record cleared, cmd_state still takes arbitrary keys so sample-key tests stay green); 8 zero-use skills deleted (skills dir 14->6: adopt/apply/audit/grill/plan/wrap); sync-vendored.sh wires only grill (no deleted-dir path under set -e); VENDORED.md/README/plan.md roster/CLAUDE.md:27 all grill-only + four lifecycle; adopt recipe folded inline into flux init, capped via clip(_scan_budget). 267 green. No new claim seeded (deletions validated structurally + green tests)."}
+{"ts": "2026-09-07T23:04:41.880Z", "k": "next", "v": "/flux:plan loop phase 08 (gate-bypass nudge on PreToolUse + session heartbeat) — roadmap row 08, the last/optional loop phase (design); user decides whether it's worth building"}
+{"ts": "2026-09-07T23:04:41.880Z", "k": "open", "v": "6 seeded claims still read pending (5 from 05 + 06-handoff-inline first_edit<=8) — unproven until >=10 fleet substantive sessions postdate their seed; judged by flux ledger --verdict. flux run ON NOTICE: 0 uses in 44 sessions, delete next cycle if still 0 (status.md records it)."}

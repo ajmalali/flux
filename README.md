@@ -50,12 +50,11 @@ a claim stays a human decision.
 
 ## Skills
 
-Lifecycle (`/flux:plan` `audit` `apply` `wrap` `resume`) — judgment only; procedures
-live in the CLI. One phase runs plan → (audit) → apply → wrap; `resume` opens the next
-session from the primed pack. Iterate with `flux run --filter failures`, close with
-`flux check` — nothing else counts as done. Vendored from
-[mattpocock-skills](skills/VENDORED.md) (MIT):
-`/flux:wayfinder` `to-spec` `to-tickets` `ask-matt` `grill` `review`.
+Lifecycle (`/flux:plan` `audit` `apply` `wrap`) — judgment only; procedures
+live in the CLI. One phase runs plan → (audit) → apply → wrap. Iterate with
+`flux run --filter failures`, close with `flux check` — nothing else counts as done.
+`/flux:grill` (a relentless plan/design interview) is vendored from
+[mattpocock-skills](skills/VENDORED.md) (MIT).
 
 `/flux:adopt` brings a repo in: migrates whatever knowledge it already carries into
 `.flux/`, and — only if asked, only onto a clean tree — retires the old framework by

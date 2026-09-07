@@ -15,8 +15,7 @@ a cold session can read in one screen, and leaves the rest where it is. Run once
 flux init --scan
 ```
 
-Deterministic: it finds and sizes prior state and opens nothing. `flux init` (no
-flags) prints the same routing line when it writes the config. If `.flux/flux.toml`
+Deterministic: it finds and sizes prior state and opens nothing. If `.flux/flux.toml`
 doesn't exist yet, run `flux init` now — adopt fills what init scaffolds.
 
 ## 2. Sort it into live and history
@@ -61,7 +60,7 @@ Where they disagree, the repo is right and the document is a claim. Adopting a s
 ## 5. Write the pack
 
 ```
-flux state set phase "..." position "..." next "..." routing "design|mechanical" \
+flux state set phase "..." position "..." next "..." \
   open "what is unproven, blocked, or untested — or empty"
 ```
 

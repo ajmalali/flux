@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Write a self-contained phase plan into .flux/plans/ — objective, acceptance criteria, 2-3 tasks, boundaries, verification, routing stamp. Use for work that spans sessions, cannot be undone, or whose shape is still unsettled; ordinary work goes straight to /flux:apply.
+description: Write a self-contained phase plan into .flux/plans/ — objective, acceptance criteria, 2-3 tasks, boundaries, verification. Use for work that spans sessions, cannot be undone, or whose shape is still unsettled; ordinary work goes straight to /flux:apply.
 disable-model-invocation: true
 ---
 
@@ -48,7 +48,6 @@ already has a directory.
 ```markdown
 ---
 phase: NN-slug
-routing: design | mechanical
 status: planned
 files: [paths this phase expects to touch]
 ---
@@ -78,10 +77,6 @@ Write acceptance criteria someone else could falsify. "Works correctly" is not a
 Every task needs all four lines; a task whose `verify` is "read the code" is a task
 you have not finished specifying.
 
-`routing` is read at session start: **design** when the shape is still open
-(architecture, a new surface, unclear tradeoffs); **mechanical** when the shape is
-settled and only execution remains.
-
 ## Check coherence before you finish
 
 Against the effort's plan, `CLAUDE.md`, and what `open` already records: does this
@@ -92,7 +87,7 @@ specifics, and wait. Find nothing and say nothing — silence is the pass.
 ## Close
 
 ```
-flux state set phase "<NN-slug>" next "/flux:apply <path>" routing "<design|mechanical>"
+flux state set phase "<NN-slug>" next "/flux:apply <path>"
 ```
 
 Then one line: the path, the size, and whether the phase is risky enough to warrant

@@ -9,8 +9,10 @@ the v1 harness is recorded in `.flux/archive/v1/adr/0012-plugin-pivot.md`.
 A lean personal harness for Claude Code, shipped as ONE git repo that is both a
 plugin and its own marketplace: deterministic machinery (a dependency-free CLI wired
 to hooks) for everything that runs the same way every time, plus a small skill set —
-five PAUL-derived lifecycle skills and a vendored mattpocock subset — for judgment
-work. Observability is a SEPARATE ledger CLI that reads session transcripts from
+four PAUL-derived lifecycle skills (plan/audit/apply/wrap) plus `adopt`, and a single
+vendored mattpocock skill (`grill`) — for judgment work. *(Amended loop phase 07,
+2026-09-07: `resume` and the other six vendored skills were deleted on the zero-use
+bar; see §"Vendored skills" below.)* Observability is a SEPARATE ledger CLI that reads session transcripts from
 outside; flux's only obligations to it are machine-readable state and unobstructed
 transcripts.
 
@@ -43,11 +45,12 @@ transcripts.
 - **Hooks**: SessionStart → `flux prime`. Later, optional PostToolUse(Edit) →
   touched-project typecheck; a Stop hook only if a metric demands it.
 - **Lifecycle skills** (Phase 02, PAUL-derived, all `disable-model-invocation: true`):
-  `/flux:plan` (self-contained phase plan; stamps `routing: design|mechanical`),
+  `/flux:plan` (self-contained phase plan),
   `/flux:audit` (adversarial pre-apply review in a subagent), `/flux:apply`
   (execute; delegate exploration; verify via `flux check` only), `/flux:wrap`
-  (reconcile plan vs actual, state set, handoff, PR — one exit ceremony),
-  `/flux:resume` (thin: read the primed pack, state next action, go).
+  (reconcile plan vs actual, state set, handoff, PR — one exit ceremony).
+  *(`/flux:resume` was deleted in loop phase 07, 2026-09-07 — 0 uses; a cold session
+  now reads the primed pack directly and goes to `/flux:apply`.)*
 
   **Amendment, 2026-08-22 — the default path is `prime → apply → check`, one
   session.** Principle 5 fired on the four-session lifecycle: two reporting cycles,
@@ -57,8 +60,10 @@ transcripts.
   planted false claim that changed no outcome. `/flux:plan`, `/flux:audit` and
   `/flux:wrap` are **not deleted and not deprecated** — they become deliberate, for
   work that spans sessions, takes an irreversible step, or is still being argued
-  about. `/flux:apply` no longer requires a plan path; `/flux:resume` routes to
-  apply by default and to plan only on those three conditions.
+  about. `/flux:apply` no longer requires a plan path; a cold session goes to apply
+  by default and to plan only on those three conditions. *(The thin `/flux:resume`
+  that once carried this routing was deleted in loop phase 07 — prime's pack is the
+  read.)*
 
   Two things this amendment does not claim. The ceremony's only real-work datapoint
   is positive (kiosk Phase 02's audit: three blocking findings on a plan that looked
@@ -79,10 +84,14 @@ transcripts.
   Retirement is opt-in, archives rather than deletes (`git mv` into
   `.flux/archive/<framework>/`), requires a clean tree, and is recommended only after
   one real phase has run on flux in that repo.
-- **Vendored skills** (in, synced by `scripts/sync-vendored.sh`, pinned):
+- **Vendored skills** (in, synced by `scripts/sync-vendored.sh`, pinned): `grill` is
+  the sole survivor. *(Amended loop phase 07, 2026-09-07.)* The set originally carried
   wayfinder, to-spec, to-tickets, ask-matt, grill, review, and — added 2026-08-23 —
-  research, writing-for-agents. Big-feature altitude:
-  wayfinder → to-spec → to-tickets → /flux:plan per ticket.
+  research, writing-for-agents, with a big-feature altitude of
+  wayfinder → to-spec → to-tickets → /flux:plan per ticket. All but `grill` were
+  deleted on the zero-use bar (none invoked in the fleet corpus); `grill` alone had
+  recorded use and stays wired. The altitude and the deleted bodies survive in git
+  history and the analysis files.
   *(Amendment, 2026-08-23.)* The mattpocock-skills **install is retired**: it failed a
   pre-registered utilisation bar at ≥10.6x
   (`.flux/analysis/2026-08-23-mattpocock-utilisation-bar.md`). research and
@@ -102,7 +111,9 @@ transcripts.
   pre-registration's own words; the write-up names the off-ramp and the one-line revert. So `review` now carries
   `disable-model-invocation: true` too — applied in `sync-vendored.sh`, since upstream
   has no such key and a re-sync would otherwise re-list it. **Binding consequence:
-  flux ships no model-visible skills.** All 14 are user-invocable only, and the only
+  flux ships no model-visible skills.** All six that remain (plan, audit, apply, wrap,
+adopt, grill) are user-invocable only — the roster was 14 before loop phase 07 trimmed
+the eight zero-use skills — and the only
   always-on context flux buys is `flux prime`, which is capped at 2,000 and pays off
   every session. A future skill gets a listing slot only with a written, falsifiable
   claim that the model must see it — the slot is not a default.
@@ -121,8 +132,10 @@ transcripts.
   utilisation bar — `flux check`/`flux run --filter` already keep raw output out of
   context in code, and the built-in `Explore` agent was invoked 13 times in the same
   corpus where flux-explorer was invoked 0.
-- **Model routing** only at session boundaries (prime surfaces the plan's routing
-  stamp) and subagent boundaries. Never `/model` or skill `model:` mid-session.
+- **Model routing** only at session and subagent boundaries. Never `/model` or
+  skill `model:` mid-session. (The per-plan `routing:` stamp was removed in loop
+  phase 07 — 0 uses across the fleet; model choice is a session-boundary judgment,
+  not a stored field.)
 
 ## The benchmark (`bench/`) *(amendment, 2026-08-21 — not in the original blueprint)*
 
@@ -184,6 +197,11 @@ Ledger metric it must move: all of them. This is the instrument, not a feature.
 ## The execution index (`flux task`) *(amendment, 2026-08-22 — not in the original blueprint)*
 
 Recorded in `.flux/adr/0001-execution-frontier.md`, which opens the v2 ADR line.
+
+*(Amended loop phase 07, 2026-09-07: the wayfinder → to-spec → to-tickets skills named
+throughout this section and the "Out of scope" note below were deleted on the zero-use
+bar. The references are kept as the historical record of the ADR-0001 reasoning; the
+big-feature altitude is no longer a live surface.)*
 
 The big-feature altitude above (wayfinder → to-spec → to-tickets → `/flux:plan` per
 ticket) is declared but has no spine. `/flux:plan` writes the *first* phase and says to
@@ -303,7 +321,8 @@ measurable surfaces and api has the wrong shape for both. Full working:
 - **01 — core CLI + plugin scaffold** *(this repo)*: bin/flux, hooks, manifests,
   agents, vendored skills, tests. Adopt in zaps/kiosk (PAUL untouched; prime simply
   replaces the resume read).
-- **02 — skills**: write the five lifecycle skills from the PAUL originals
+- **02 — skills**: write the five lifecycle skills from the PAUL originals (resume
+  among them, deleted in loop phase 07; four remain)
   (in zaps/kiosk); migrate kiosk's PAUL state into `.flux/` (archive `.paul/`);
   run one full real phase (plan → audit → apply → wrap) on flux v2 in kiosk.
 - **03 — establish where flux pays** *(rescoped 2026-08-23; was "package &

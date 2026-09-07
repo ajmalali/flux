@@ -65,7 +65,7 @@ STATE_LOG_LEGACY = "state.toml"
 STATE_LOG_BUDGET_MULTIPLE = 8
 # Render order: the pack's keys first, then anything else alphabetically. Fixed so
 # two clones replaying the same records produce byte-identical output.
-STATE_KEY_ORDER = ("phase", "position", "next", "routing", "open")
+STATE_KEY_ORDER = ("phase", "position", "next", "open")
 # `updated` is derived from the newest surviving record. Storing it was one
 # guaranteed-divergent line per session in a file every branch rewrote.
 STATE_DERIVED_KEYS = ("updated",)
@@ -679,10 +679,6 @@ verified = false              # flips to true on the first full `flux check` pas
 [state]
 budget_tokens = 2000          # flux refuses to emit or store more than this
 
-[routing]                     # /flux:plan stamps one of these into each plan
-design = "opus"
-mechanical = "sonnet"
-
 [guard]                       # session-boundary hooks (guard/seal). All optional —
 # warn_requests = 120         #   guard nudges to wrap past this request count
 # renudge       = 25          #   ...then stays quiet until this many more
@@ -732,17 +728,34 @@ def cmd_init(args):
 
 
 def _report_prior_state(root):
-    """Name what this repo already knows, and route to the skill that can read it.
-    init itself stays deterministic: it does not open a single one of these files."""
+    """Name what this repo already knows, and print the adoption recipe inline so a
+    session need not open /flux:adopt to know the next steps. init itself stays
+    deterministic: it does not open a single one of these files. The recipe is capped
+    like every other output flux emits (clip to the scan budget)."""
     sources = detect_state_sources(root)
     if not sources:
         return
     named = ", ".join("%s (%s)" % (s["path"], human_bytes(s["bytes"]))
                       for s in sources[:3])
     extra = " +%d more" % (len(sources) - 3) if len(sources) > 3 else ""
-    print("flux init: this repo already carries project state — %s%s" % (named, extra))
-    print("run `/flux:adopt` to migrate the live parts into .flux/ (and optionally "
-          "retire the rest); `flux init --scan` lists all of it")
+    lines = [
+        "flux init: this repo already carries project state — %s%s" % (named, extra),
+        "",
+        "adopt recipe (short form; /flux:adopt is the full reference, "
+        "`flux init --scan` lists all of it):",
+        "  1. flux init --scan  — inventory prior state; opens nothing.",
+        "  2. sort it: live (where the work stands, next, what's blocked/unproven) vs "
+        "history (everything else — leave it exactly where it is). Read big state "
+        "files from the ends with cut -c1-300, never whole.",
+        "  3. flux state set phase \"..\" position \"..\" next \"..\" open \"..\"  — the "
+        "live pack, five values; check it against git log / branch / dirty tree — the "
+        "tree wins over a stale document.",
+        "  4. flux prime  — read it back as a stranger; fix what a cold session "
+        "couldn't act on.",
+        "  5. flux check  — validate the detected gate and flip its verified stamp.",
+        "  Retiring the old framework is opt-in and archives (never deletes) — /flux:adopt.",
+    ]
+    print(clip("\n".join(lines), _scan_budget(root)))
 
 # ----------------------------------------------------------------------- prime
 
@@ -783,7 +796,7 @@ def _prime_inner():
 
     aged = winners(read_log(state_log_path(root)))  # {key: (ts, value)}, newest write
     stale_days = _guard_cfg(cfg, "stale_days", 2)
-    for key in ("phase", "position", "next", "routing", "open"):
+    for key in ("phase", "position", "next", "open"):
         value = str(state.get(key, "")).strip()
         if value:
             line = "%s: %s" % (key, value)

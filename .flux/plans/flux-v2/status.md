@@ -1,13 +1,14 @@
 # flux-v2 — status & next task
 
-Updated: 2026-09-06 — loop phases 01 (`flux ledger`), 02 (status diet), 03 (`flux log`
-+ pack footer), 04 (guard/age/seal hooks), 05 (claims + cycle line), and **06 (handoff
-inline)** shipped, gated, wrapped (**267 green**); phase 06 closed
-`.flux/plans/loop/06-handoff-inline.md` (`status: done`) — `flux handoff` clips to its own
-`handoff_budget_bytes` cap (~1200 tok), `flux prime` inlines the latest handoff's body under
-that cap with the pack footer reserved+appended-last; one real claim seeded
-(`06-handoff-inline first_edit <=8`), reads `pending`. Next is `/flux:plan` loop phase 07
-(deletions, design — user decides scope). Where we are: the v1→v2 pivot is done, `bin/flux` is the single-file stdlib CLI,
+Updated: 2026-09-07 — loop phases 01–06 plus **07 (deletions)** shipped, gated, wrapped
+(**267 green**); phase 07 closed `.flux/plans/loop/07-deletions.md` (`status: done`) —
+`routing` removed everywhere (pack −1 line), the eight zero-use skills deleted (skills dir
+14 → 6: `adopt/apply/audit/grill/plan/wrap`), `sync-vendored.sh`/`VENDORED.md`/`README`/
+`plan.md`/`CLAUDE.md` made grill-only + four-lifecycle, and the adopt recipe folded inline
+(capped) into `flux init` output. `flux run` put on notice, kiosk conflict metric closed —
+see the "On notice & closed metrics" block below. Only 08 (optional) remains in the loop.
+Next is `/flux:plan` loop phase 08 (gate-bypass nudge + heartbeat, design — user decides if
+it's worth building). Where we are: the v1→v2 pivot is done, `bin/flux` is the single-file stdlib CLI,
 phase 01's `flux ledger` mines transcripts into the field read-out's targets table, and
 phase 03 added `flux log <tag> "…"` → `.flux/field-log.md` plus a prime pack footer naming
 the four session verbs. History moved to `.flux/analysis/2026-09-03-status-history.md`;
@@ -70,8 +71,7 @@ this file is live state only.
   `len(PACK_FOOTER)+1` before the final body clip, append footer last; degenerate `budget <
   footer` case (only the artificial 10-token budget test) falls back to a whole-string clip so
   the budget invariant always wins. Sixth claim seeded (`06-handoff-inline first_edit <=8`
-  fleet) — `pending`. **Next: `/flux:plan` 07 deletions (design)** — routing key, zero-use
-  skills, `adopt` fold-in; user decides scope. Then 08 optional. One phase per session; wrap
+  fleet) — `pending`. **07 (deletions) DONE** (`.flux/plans/loop/07-deletions.md`, `status: done`; 267 green): `routing` removed (pack -1 line; `STATE_KEY_ORDER` + pack tuple + `[routing]` toml block dropped; `cmd_state set` unchanged so sample-key tests stay green), eight zero-use skills deleted (skills dir 14 to 6), `sync-vendored.sh` wires only `grill`, docs (`VENDORED.md`/`README`/`plan.md`/`CLAUDE.md`) grill-only + four-lifecycle, adopt recipe folded inline (capped) into `flux init`. No new claim (validated structurally + green tests). **Next: `/flux:plan` 08 optional (design)** gate-bypass nudge on `PreToolUse` + session heartbeat; user decides whether to build the loop's last phase. One phase per session; wrap
   every session.
 - [ ] **Execution index (ADR 0001) revival — design filed, nothing built.** Design doc
   `.flux/analysis/2026-08-26-execution-index-revival-design.md`. Revive the suspended ADR 0001
@@ -94,6 +94,25 @@ this file is live state only.
 - The 2026-09-03 field-read-out actions are the loop's phases 03–08 — the 13-action evidence
   index lives in `.flux/plans/loop/00-roadmap.md` and
   `.flux/analysis/2026-09-03-field-readout.md` §5, not re-listed here.
+
+## On notice & closed metrics (loop phase 07, 2026-09-07)
+
+- **`flux run` is on notice.** 0 uses in 44 sessions (field read-out item 12). The
+  command and its `[run]` config stay for now; **delete next cycle if it is still at 0**.
+  No code change this phase — this is the pre-registered kill condition, recorded so a
+  later session acts on it rather than re-deriving it.
+- **Kiosk conflict metric closed — unmeasurable** (item 13, F12). Only 1 commit touching
+  `state.jsonl` and 0 merges since 2026-08-24, so the metric has no denominator; it is
+  closed, not failed. The `state.jsonl` union-merge machinery itself (the merge driver +
+  `.gitattributes`) stays wired — only the *metric* is closed.
+- **Phase 07 deletions shipped:** the `routing` state key/machinery is gone (pack prints
+  one fewer line; `STATE_KEY_ORDER`, the pack tuple, and the `[routing]` toml template
+  block all dropped), the eight zero-use skills are deleted (skills dir 14 → 6: `adopt,
+  apply, audit, grill, plan, wrap`), `sync-vendored.sh`/`VENDORED.md`/`README.md`/`plan.md`/
+  `CLAUDE.md` updated so a re-sync resurrects only `grill`, and the adopt recipe is folded
+  inline into `flux init` output (capped to the scan budget). No new claim seeded —
+  deletions are validated structurally (14 → 6, pack −1 line) and by green tests, not by a
+  metric that must move.
 
 ## History
 

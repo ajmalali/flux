@@ -24,9 +24,10 @@ skill set. v2, rebuilt 2026-08-20; the v1 orchestration harness is archived at t
   is absent (user-scoped hooks fire in every repo).
 - **No MCP, no SDK.** flux talks to nothing programmatically; it is invoked by hooks
   and Bash. Skills contain judgment only; procedures live in the CLI.
-- **Vendored skills** (`skills/` minus the lifecycle five) are frozen copies —
-  edit them only through `scripts/sync-vendored.sh` (pin + rewrites), MIT-attributed
-  in `skills/VENDORED.md`.
+- **Vendored skills** — `grill` is the only one (the four lifecycle skills
+  plan/audit/apply/wrap and `adopt` are flux's own) — are frozen copies, edited only
+  through `scripts/sync-vendored.sh` (pin + rewrites), MIT-attributed in
+  `skills/VENDORED.md`.
 - Gate on this repo: `python3 -m unittest discover -s tests` (also wired as
   `flux check` here). It must pass before any commit.
 - Everything flux tracks as project docs lives under `.flux/`; skill frontmatter

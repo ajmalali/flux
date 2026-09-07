@@ -886,7 +886,7 @@ class TestStateSourceDetection(FluxRepoCase):
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILLS = os.path.join(REPO, "skills")
-LIFECYCLE = ("plan", "audit", "apply", "wrap", "resume")
+LIFECYCLE = ("plan", "audit", "apply", "wrap")
 FLUX_SKILLS = LIFECYCLE + ("adopt",)
 
 # A skill's whole file enters the context window when it is invoked, so leanness is a
@@ -913,7 +913,7 @@ def read_frontmatter(path):
 
 
 class TestLifecycleSkills(unittest.TestCase):
-    """The five lifecycle skills are part of flux's contract with a session: they must
+    """The four lifecycle skills are part of flux's contract with a session: they must
     exist, be user-invoked only, and stay inside the context budget."""
 
     def test_all_flux_skills_exist(self):

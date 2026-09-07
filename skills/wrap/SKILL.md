@@ -46,7 +46,7 @@ some, makes every later plan slightly wrong.
 
 ```
 flux state set phase "<where things are>" position "<what is true right now>" \
-  next "<the first thing the next session should do>" routing "<design|mechanical>" \
+  next "<the first thing the next session should do>" \
   open "<live blockers / unverified claims — or empty>"
 ```
 

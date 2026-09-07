@@ -1,6 +1,6 @@
 # flux-v2 — status & next task
 
-Updated: 2026-09-07 — loop phases 01–06 plus **07 (deletions)** shipped, gated, wrapped
+Updated: 2026-09-07 (README rewritten as a concise user guide: install, hooks, commands, skills, per-scenario workflows) — loop phases 01–06 plus **07 (deletions)** shipped, gated, wrapped
 (**267 green**); phase 07 closed `.flux/plans/loop/07-deletions.md` (`status: done`) —
 `routing` removed everywhere (pack −1 line), the eight zero-use skills deleted (skills dir
 14 → 6: `adopt/apply/audit/grill/plan/wrap`), `sync-vendored.sh`/`VENDORED.md`/`README`/

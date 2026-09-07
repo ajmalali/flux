@@ -1,68 +1,116 @@
 # flux
 
-Deterministic session machinery for Claude Code, shipped as one repo that is both a
-plugin and its own marketplace. flux does the parts of a working session that are
-the same every time — priming, budgeted state, filtered verification, generated
-handoffs — as scripts, so the model's context stays small and stable; judgment work
-stays in a lean skill set.
+Deterministic session machinery for Claude Code. flux does the parts of a working
+session that are the same every time — priming, budgeted state, filtered verification,
+generated handoffs — as scripts wired to hooks, so the model's context stays small and
+stable. Judgment stays in a lean set of user-invoked skills.
+
+One repo is both the plugin and its own marketplace. The CLI is a single stdlib Python
+file (≥3.9) with no dependencies and no install step. Everything it puts into model
+context has a byte cap it enforces itself.
 
 ## Install
 
-Once per machine:
+Once per machine, inside Claude Code:
 
     /plugin marketplace add ajmalali/flux
     /plugin install flux@marketplace
 
 Once per repo:
 
-    flux init        # detects Nx / Turbo / npm / cargo / uv, writes .flux/flux.toml
+    flux init            # detects Nx / Turbo / npm / cargo / uv, writes .flux/flux.toml
+    flux init --scan     # optional first: inventory prior state (PAUL, STATE.md, …), write nothing
 
-## The CLI
+`.flux/flux.toml` is the whole per-repo adapter: the gate command, the state budget,
+the output filter. Repos without `.flux/` are untouched — every hook is a silent no-op.
 
-`bin/flux` — single-file, stdlib-only Python (≥3.9), on the Bash PATH while the
-plugin is enabled.
+## What runs by itself
+
+| Hook | Command | Does |
+|---|---|---|
+| SessionStart | `flux prime` | Prints the context pack: branch, phase, position, next, open items, stale-key ages, the last handoff inlined, and the four verbs. ≤2k tokens. |
+| UserPromptSubmit | `flux guard` | Past 120 requests, one line nudging you to wrap and `/clear`. Never blocks. |
+| SessionEnd | `flux seal` | Flags a substantive session that ended without a wrap; the next prime warns. |
+
+## Commands you type
 
 | Command | Does |
 |---|---|
-| `flux init` | Detect repo type, write `.flux/flux.toml` + state scaffold |
-| `flux prime` | Session context pack (branch, phase, next, check cmd) — ≤2k tokens, SessionStart hook, silent no-op without `.flux/`. Stamps a stale state key ` [Nd]` with its age; warns when the last session ended unwrapped |
-| `flux guard` | UserPromptSubmit hook — counts this session's requests the way `flux ledger` does and, past `[guard].warn_requests` (120), injects one line nudging you to wrap + `/clear`. A nudge, never a gate; silent no-op without `.flux/` |
-| `flux seal` | SessionEnd hook — transcript-free: from `.flux/cache/` breadcrumbs it detects a substantive session that ended without a wrap, logs it `unwrapped` to the field log, and leaves the marker `flux prime` warns on next start |
-| `flux state get\|set` | Tiny TOML state; writes over budget are refused |
-| `flux init --scan` | Inventory prior project state (PAUL, agent-os, hand-kept STATE/ROADMAP, CLAUDE.md) — finds and sizes it, parses none of it, writes nothing |
-| `flux check` | Run the repo's configured verification; print failures only; exit-code semantics |
-| `flux handoff` | Deterministic, capped handoff from git status + state + commits |
-| `flux run -- <cmd>` | Output filter for noisy commands: dedupe + truncate, then `--filter elide` (default, head+tail), `failures` (check's failure extractor), `tail:N`, or `raw`; default from `[run].filter` |
-| `flux ledger` | Reads the Claude Code transcripts on disk and prints the field read-out's targets table — per cycle (ten substantive sessions), budgeted: context p50, cache-write share, sessions over 150 requests, re-reads, Bash bytes, calls before first edit, wrap coverage, raw-gate vs `flux check`, cached-skill reads, est \$/session. `--since DATE` bounds the window (default the v2 rebuild); `--fleet` prints one row per adopting repo plus a `meta-tax` line (flux-repo \$ ÷ adopting-repo \$); `--json` dumps the raw per-session rows uncapped; `--verdict` scores each open claim (see below). Est \$ are API-equivalent at list price on a subscription — a token proxy, not a bill. Zero-turn and all-retryable-error sessions are voided and excluded from every denominator |
-| `flux claim add` | `flux claim add <feature> <metric> <bar> [--scope repo\|fleet\|<name>] [--cycles N]` — append a falsifiable claim to `.flux/claims.jsonl` (append-only). `metric` is a ledger key or a derived ratio (`wrap_coverage`, `meta_tax`); `bar` is an explicit `<op><number>` (`==0`, `<75000`, `>=0.8`) so direction is per-metric. Rejects an unknown metric or unparseable bar |
-
-## Claims — attribution as data
-
-Every feature names the ledger metric it is supposed to move, and that claim lives as a
-record in `.flux/claims.jsonl`, not in a session's memory. `flux claim add` registers one;
-`flux ledger --verdict` scores each open claim against the cycles that postdate its
-timestamp (never against older data), reporting `pending`, `moved`, or `unmoved N` — where
-`unmoved 2` is the escalation that says a feature has missed its bar two cycles running and
-owes an explanation. In the flux repo only, `flux prime` adds one line when a cycle has
-closed since the last claim, so the next loop session reads the verdict and registers the
-next cycle's claims before it changes anything. Nothing auto-edits from a verdict; retiring
-a claim stays a human decision.
+| `flux check` | Run the repo's configured gate; print failures only. The only thing that counts as done. |
+| `flux run --filter failures -- <cmd>` | Same filter on one narrow command, for iterating. |
+| `flux state set <key> "<value>" …` | Write `phase` / `position` / `next` / `open`. Refuses writes over budget. |
+| `flux handoff` | Capped handoff from git status, state, and recent commits. Prime inlines the latest one. |
+| `flux log <tag> "…"` | Field note: `pack-miss`, `audit-hit`, or `want`. Feeds the ledger. |
+| `flux ledger [--fleet] [--verdict]` | Read the session transcripts on disk and print the targets table per cycle of ten sessions; `--fleet` one row per repo; `--verdict` score each open claim. |
+| `flux claim add <feature> <metric> <bar>` | Register the metric a feature must move. Unmoved two cycles means delete it. |
 
 ## Skills
 
-Lifecycle (`/flux:plan` `audit` `apply` `wrap`) — judgment only; procedures
-live in the CLI. One phase runs plan → (audit) → apply → wrap. Iterate with
-`flux run --filter failures`, close with `flux check` — nothing else counts as done.
-`/flux:grill` (a relentless plan/design interview) is vendored from
-[mattpocock-skills](skills/VENDORED.md) (MIT).
+All user-invoked, none listed to the model.
 
-`/flux:adopt` brings a repo in: migrates whatever knowledge it already carries into
-`.flux/`, and — only if asked, only onto a clean tree — retires the old framework by
-archiving it into `.flux/archive/`, never deleting. Run once per repo.
+| Skill | Use when |
+|---|---|
+| `/flux:plan` | Work outlives the session, takes an irreversible step, or is still being argued about. |
+| `/flux:audit` | A plan touches design, money, auth, data, or hardware. Runs in a subagent. |
+| `/flux:apply` | Executing, with or without a plan. Execute, report status honestly, qualify against the spec. |
+| `/flux:wrap` | Ending any working session. Verify, reconcile, state, handoff, commit. |
+| `/flux:grill` | Sharpening a design by interview before planning. Vendored from mattpocock-skills (MIT). |
+| `/flux:adopt` | Bringing a repo with existing project docs into `.flux/`. Once per repo. |
+
+## How to use it
+
+**Orienting in a codebase.** Nothing to run. Open a session and the pack tells you
+where things stand and what to do first. If it missed something you needed, say so:
+
+    flux log pack-miss "needed the migration order; not in state"
+
+flux stores state, not knowledge. What the code does lives in CLAUDE.md and the code.
+
+**Small feature or bug fix.** One session, no skills. Say the task back in one line
+with the files you expect to touch, then work. Iterate narrow, finish whole, close:
+
+    flux run --filter failures -- <one test file or target>
+    flux check
+    flux state set position "…" next "…"
+    flux handoff
+    git commit
+
+Measured twice: planning ahead of well-specified single-session work cost 3x and
+delivered the same result. Skip the ceremony here.
+
+**Big feature.** Ceremony attaches at phase boundaries, one phase per session.
+
+1. `/flux:grill` if the design is still soft.
+2. `/flux:plan` — one self-contained phase: objective, acceptance criteria, 2–3 tasks,
+   boundaries, verification.
+3. `/flux:audit` for design-routed or irreversible phases.
+4. `/flux:apply` — execute against the plan.
+5. `/flux:wrap` — reconcile plan against diff, record deviations, write state, handoff,
+   commit.
+
+The next session starts cold from the pack and goes to the next phase. Keep a roadmap
+file with one row per phase alongside the plan files; that is the cross-phase spine.
+
+**Every session, regardless.** End with `/flux:wrap` or the four lines above. A
+session that ends without a wrap has lost what it learned, and `flux seal` will say so
+next time.
+
+## What it measures
+
+Every feature names a ledger metric and lives or dies on it. `flux ledger` mines
+transcripts into: context p50, cache-write share, sessions over 150 requests,
+re-reads, Bash bytes, calls before first edit, wrap coverage, raw gate vs `flux check`,
+est \$/session. Dollar figures are API-equivalent list price on a subscription — a
+token proxy, not a bill. `flux ledger --verdict` scores each claim in
+`.flux/claims.jsonl` only against cycles newer than the claim.
+
+flux pays where a repo has a heavy resume read or a fan-out test runner. In a repo with
+a terse gate and a small state file it measured nothing, and was not installed there.
 
 ## Development
 
-    python3 -m unittest discover -s tests
+    python3 -m unittest discover -s tests     # also wired as `flux check` here
 
-Project docs: `.flux/plans/flux-v2/` (plan, status). v1 — a full Python
-orchestration harness — is archived at tag `v1-final` and `.flux/archive/v1/`.
+Project docs: `.flux/plans/flux-v2/` (plan, status), `.flux/plans/loop/` (the
+self-measurement loop), `.flux/analysis/` (dated field studies). v1, a full Python
+orchestration harness, is archived at tag `v1-final` and `.flux/archive/v1/`.

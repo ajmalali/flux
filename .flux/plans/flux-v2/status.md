@@ -1,6 +1,6 @@
 # flux-v2 — status & next task
 
-Updated: 2026-09-07 (README rewritten as a concise user guide: install, hooks, commands, skills, per-scenario workflows) — loop phases 01–06 plus **07 (deletions)** shipped, gated, wrapped
+Updated: 2026-09-08 (deployment gap fixed, see block below; README rewritten as a concise user guide: install, hooks, commands, skills, per-scenario workflows) — loop phases 01–06 plus **07 (deletions)** shipped, gated, wrapped
 (**267 green**); phase 07 closed `.flux/plans/loop/07-deletions.md` (`status: done`) —
 `routing` removed everywhere (pack −1 line), the eight zero-use skills deleted (skills dir
 14 → 6: `adopt/apply/audit/grill/plan/wrap`), `sync-vendored.sh`/`VENDORED.md`/`README`/
@@ -94,6 +94,23 @@ this file is live state only.
 - The 2026-09-03 field-read-out actions are the loop's phases 03–08 — the 13-action evidence
   index lives in `.flux/plans/loop/00-roadmap.md` and
   `.flux/analysis/2026-09-03-field-readout.md` §5, not re-listed here.
+
+## Deployment gap found 2026-09-08 — the fleet ran 2.10.1 until today
+
+- The installed plugin is a **cached copy pinned at install time**, and the marketplace
+  source is **GitHub `ajmalali/flux`, not the local directory**. From 2026-08-26 to
+  2026-09-08 every repo (this one included) ran **2.10.1: prime hook only, no
+  guard/seal, no claims, no inlined handoff, old skill roster**. Phases 03–07 were
+  green in the repo but never live in any session's hooks.
+- Fixed 2026-09-08: `claude plugin update flux@marketplace` → 2.11.1 (3 hooks, 6 skills,
+  current CLI). Update procedure, now in README §Updating: bump `plugin.json` version →
+  commit → push → `claude plugin update flux@marketplace` → restart. **Every phase that
+  ships hook or CLI changes must bump the version and push, or the fleet never sees it.**
+- Consequence for claims: the 03/04/06 claims had **zero eligible sessions with the
+  feature actually live** before 2026-09-08. `--verdict` counts sessions by timestamp
+  only, so read its `eligible` counts for those claims as starting today; do not score
+  them `unmoved` on sessions that ran 2.10.1. Consider re-seeding those three claims
+  (`flux claim add`) so their timestamps postdate the deployment.
 
 ## On notice & closed metrics (loop phase 07, 2026-09-07)
 

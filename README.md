@@ -24,6 +24,23 @@ Once per repo:
 `.flux/flux.toml` is the whole per-repo adapter: the gate command, the state budget,
 the output filter. Repos without `.flux/` are untouched — every hook is a silent no-op.
 
+## Updating
+
+The plugin is a cached copy pinned to the version it was installed at. It does not
+follow this repo on its own:
+
+    claude plugin update flux@marketplace     # then restart Claude Code
+
+The marketplace reads pushed `main` on GitHub, and the update only takes when
+`.claude-plugin/plugin.json` carries a higher version than the installed one. Check
+with `claude plugin list`. New hooks, commands, and skills reach every adopting repo on
+the next session after the restart.
+
+Repos that already have `.flux/` need nothing. The CLI reads old `flux.toml` files as
+they are, ignores tables it no longer uses, creates `field-log.md` and `cache/` on first
+use, and `flux init` refuses to overwrite an existing adapter unless you pass `--force`,
+which rewrites `flux.toml` only and keeps state and field-log intact.
+
 ## What runs by itself
 
 | Hook | Command | Does |

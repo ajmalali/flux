@@ -5,8 +5,8 @@ Single-file, stdlib-only, Python 3.9+. Rides in the plugin's bin/ so hooks can
 call it as a bare command with zero install latency. Everything it injects into
 model context has a hard byte budget it enforces itself (tokens ~= bytes / 4).
 
-Commands: init | prime | state get/set/log/compact | check | handoff | run -- <cmd>
-          | ledger | log <tag> "…" | guard | seal | claim add
+Commands: init | prime | state get/set/log/compact | task | check | handoff
+          | run -- <cmd> | ledger | log <tag> "…" | guard | seal | claim add
 
   flux guard / flux seal          hook targets (UserPromptSubmit / SessionEnd),
                                   not called by hand: guard nudges a runaway
@@ -18,6 +18,12 @@ Commands: init | prime | state get/set/log/compact | check | handoff | run -- <c
                                  register a falsifiable claim in .flux/claims.jsonl
   flux state log [N]             recent writes, newest first (default 20)
   flux state compact             collapse the log to one record per live key
+  flux task add "<title>" [--files a,b] [--blocked-by t-x,t-y] [--verify "<cmd>"]
+                         [--ref <path>]     append a task, print its id
+  flux task start <id> | done <id> --by "<what verified it>"
+  flux task list [--open|--done|--all] | next [--all] | compact
+                                 the execution index: which task is next, derived
+                                 from an append-only log, not asserted
   flux run [--tail N] [--filter elide|failures|tail:N|raw] -- <command...>
   flux ledger [--since DATE] [--fleet] [--json] [--verdict]
                                  transcripts -> the read-out's targets table, per
@@ -27,12 +33,15 @@ Commands: init | prime | state get/set/log/compact | check | handoff | run -- <c
                                  unmoved N) over the cycles that postdate it
 """
 
+import base64
 import calendar
 import fnmatch
+import hashlib
 import json
 import operator
 import os
 import re
+import socket
 import subprocess
 import sys
 import time
@@ -60,6 +69,8 @@ PACK_FOOTER = (
 # State is an append-only log, not a rewritten file. See read_state() for why.
 STATE_LOG_NAME = "state.jsonl"
 STATE_LOG_LEGACY = "state.toml"
+# The task index rides the same append-only format; its section is further down.
+TASKS_LOG_NAME = "tasks.jsonl"
 # The log is stored state, so it is capped in code like everything else flux keeps:
 # past this multiple of the rendered budget, `state set` compacts it.
 STATE_LOG_BUDGET_MULTIPLE = 8
@@ -69,10 +80,14 @@ STATE_KEY_ORDER = ("phase", "position", "next", "open")
 # `updated` is derived from the newest surviving record. Storing it was one
 # guaranteed-divergent line per session in a file every branch rewrote.
 STATE_DERIVED_KEYS = ("updated",)
+# Both logs are append-only and both are written by every session, so both need the
+# union driver: git keeps each side's records and replay resolves the result.
+GITATTRIBUTES_LINES = ("%s merge=union" % STATE_LOG_NAME,
+                       "%s merge=union" % TASKS_LOG_NAME)
 GITATTRIBUTES = (
     "# Concurrent appends from two branches must merge, not conflict: union keeps\n"
-    "# both sides' records and `flux state get` replays them last-write-wins.\n"
-    "%s merge=union\n" % STATE_LOG_NAME
+    "# both sides' records and `flux state get` / `flux task list` replay them.\n"
+    + "".join("%s\n" % line for line in GITATTRIBUTES_LINES)
 )
 
 # ---------------------------------------------------------------- toml (subset)
@@ -272,10 +287,31 @@ def compact_log(path):
     return len(records), len(live)
 
 def write_gitattributes(fdir):
+    """Create it, or append only the lines it is missing. Repos adopted before the
+    task index have a .gitattributes with the state line alone; rewriting the file
+    would clobber whatever a human added beside it, so the missing line is appended
+    instead -- with a leading newline when the file has no trailing one, or the two
+    attributes fuse into a pattern git will never match."""
     path = os.path.join(fdir, ".gitattributes")
     if not os.path.exists(path):
         with open(path, "w", encoding="utf-8") as f:
             f.write(GITATTRIBUTES)
+        return
+    try:
+        with open(path, encoding="utf-8") as f:
+            body = f.read()
+    except OSError:
+        return
+    missing = [line for line in GITATTRIBUTES_LINES if line not in body]
+    if not missing:
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as f:
+            if body and not body.endswith("\n"):
+                f.write("\n")
+            f.write("".join("%s\n" % line for line in missing))
+    except OSError:
+        return
 
 def state_budget_bytes(cfg):
     budget = DEFAULT_STATE_BUDGET_TOKENS
@@ -686,6 +722,9 @@ budget_tokens = 2000          # flux refuses to emit or store more than this
 # substantive_seconds = 180   #   seal calls a session real (worth a wrap) past this
 # cycle_refresh_hours = 6      #   flux repo: prime recomputes the fleet cycle count past this
 
+[task]                        # the execution index (`flux task`). All optional —
+# lease_hours = 12            #   how long one worktree's claim on a task holds
+
 [run]
 tail = 100                    # `flux run` keeps at most this many trailing lines
 filter = "elide"              # elide | failures | tail:80 | raw (--filter overrides)
@@ -796,16 +835,27 @@ def _prime_inner():
 
     aged = winners(read_log(state_log_path(root)))  # {key: (ts, value)}, newest write
     stale_days = _guard_cfg(cfg, "stale_days", 2)
+    # The index, when there is one, owns the `phase` slot and can fill the `next` one.
+    # Both derived lines are emitted here, inside the key loop, so pack order never
+    # depends on which path produced them. With no index both are "" and every line
+    # below is byte-for-byte what it was before the index existed.
+    task_line, task_next = _task_pack_lines_safe(root, cfg)
     for key in ("phase", "position", "next", "open"):
+        if key == "phase" and task_line:
+            lines.append(task_line)  # replaces `phase:`, never rides beside it
+            continue
         value = str(state.get(key, "")).strip()
-        if value:
-            line = "%s: %s" % (key, value)
-            info = aged.get(key)
-            if info:
-                age = _key_age_days(info[0])
-                if age is not None and age > stale_days:
-                    line += " [%dd]" % age  # a key riding the pack past its shelf life
-            lines.append(line)
+        if not value:
+            if key == "next" and task_next:
+                lines.append(task_next)  # no [Nd] suffix: it is derived, not stored
+            continue
+        line = "%s: %s" % (key, value)
+        info = aged.get(key)
+        if info:
+            age = _key_age_days(info[0])
+            if age is not None and age > stale_days:
+                line += " [%dd]" % age  # a key riding the pack past its shelf life
+        lines.append(line)
     last_session = _read_cache_json(root, "last-session.json")
     if last_session.get("warn"):
         lines.append("warn: last session ended unwrapped — its next/open may be "
@@ -828,7 +878,7 @@ def _prime_inner():
                 lines.append("last handoff: %s" % os.path.relpath(latest, root))
         except Exception:
             lines.append("last handoff: %s" % os.path.relpath(latest, root))
-    if not state.get("next"):
+    if not state.get("next") and not task_next:
         lines.append("next: (unset — `flux state set next \"...\"` at wrap)")
 
     _append_cycle_line(root, cfg, lines)  # flux-repo-only; owns its try/except (A2)
@@ -999,6 +1049,12 @@ def _seal_inner():
     cfg = read_config(root)
     if cfg is None:
         return 0  # not a flux repo — silent
+    try:
+        # Before the early return below: a session with no last-prime marker still
+        # holds leases, and a lease nobody clears parks the task for lease_hours.
+        _clear_own_leases(root)
+    except Exception:
+        pass
     reason = str(data.get("reason", "other")) or "other"
     sub_secs = _guard_cfg(cfg, "substantive_seconds", 180)
     try:
@@ -1173,6 +1229,671 @@ def migrate_legacy(root):
           "(commit it — .flux/.gitattributes union-merges it)"
           % (len(pairs), STATE_LOG_LEGACY, STATE_LOG_NAME))
     return True
+
+# ------------------------------------------------------------- the task index
+#
+# Same append-only discipline as state.jsonl, and for the same reason: two branches
+# that both worked must merge, not conflict. The record shape differs -- state
+# records carry a key and a value, task records carry an id and an op -- so this
+# reuses read_log's *posture* (skip what you cannot parse, never raise) and
+# winners()' ordering rule, not their code.
+#
+# Everything derived is derived on read. `blocked` is not a stored field, and
+# neither is "which task is next": a stored flag is wrong the moment its blocker
+# closes, and a frontier that has to be re-derived by reading is exactly the cost
+# this index exists to remove.
+
+# An add record is stored state, so it is capped like everything else flux keeps.
+TASK_RECORD_MAX_BYTES = 1024
+TASK_TITLE_MAX = 120
+# prime's task line rides inside the pack budget but carries its own cap: one long
+# title must not crowd out the rest of the pack.
+TASK_LINE_BUDGET = 200
+DEFAULT_LEASE_HOURS = 12
+
+_TASK_USAGE = (
+    'usage: flux task add "<title>" [--files a,b] [--blocked-by t-x,t-y] '
+    '[--verify "<cmd>"] [--ref <path>]\n'
+    '       flux task start <id> | done <id> --by "<what verified it>"\n'
+    '       flux task list [--open|--done|--all] | next [--all] | compact'
+)
+_TASK_DONE_USAGE = 'usage: flux task done <id> --by "<what verified it>"'
+_TASK_ADD_FLAGS = {"--files": "files", "--blocked-by": "blocked_by",
+                   "--verify": "verify", "--ref": "ref"}
+
+
+def tasks_path(root):
+    return os.path.join(flux_dir(root), TASKS_LOG_NAME)
+
+def _task_cfg(cfg, key, default):
+    """A [task] key as int, else the code default. Separate from _guard_cfg, which
+    is hardcoded to [guard] -- generalising it would let a typo in one table read
+    out of the other."""
+    table = cfg.get("task") if cfg else None
+    if isinstance(table, dict) and key in table:
+        try:
+            return int(table[key])
+        except (TypeError, ValueError):
+            return default
+    return default
+
+def read_task_log(path):
+    """Records in file order. Unparseable lines are skipped, never raised -- a union
+    merge can leave a line git could not join, and this is the file that says what
+    is left to do."""
+    records = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line.startswith("{"):
+                    continue
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                if (isinstance(rec, dict)
+                        and isinstance(rec.get("id"), str) and rec["id"]
+                        and isinstance(rec.get("op"), str) and rec["op"]):
+                    records.append(rec)
+    except OSError:
+        return []
+    return records
+
+def task_id(ts, title):
+    """`t-` + 4 base32 chars of sha1(ts \\n title). Content-addressed, never counted:
+    two clones adding tasks offline cannot collide on a counter, and an id that
+    encodes no position cannot be renumbered by a merge."""
+    digest = hashlib.sha1((ts + "\n" + title).encode("utf-8")).digest()
+    return "t-" + base64.b32encode(digest).decode("ascii")[:4].lower()
+
+def _where(root):
+    """Who holds a task: short hostname : worktree basename. It is the only thing a
+    second machine ever sees of the first."""
+    try:
+        host = socket.gethostname().split(".")[0]
+    except Exception:
+        host = "?"
+    return "%s:%s" % (host or "?", os.path.basename(os.path.realpath(root)))
+
+def _csv(raw):
+    return [part.strip() for part in str(raw or "").split(",") if part.strip()]
+
+def _str_list(value):
+    if not isinstance(value, list):
+        return []
+    return [str(x) for x in value if isinstance(x, (str, int, float))]
+
+
+def _task_ops(records):
+    """-> [(ts, file position, op, id, payload)], with compaction's folded fields
+    expanded back into synthetic start/done ops at their own stamps.
+
+    Expanding rather than seeding "initial state, then later ops" is what makes
+    compaction safe under merge: a clone that compacted after `done` and a clone
+    that appended an *earlier* `start` must still replay to done."""
+    ops = []
+    for i, rec in enumerate(records):
+        tid = rec["id"]
+        ts = str(rec.get("ts", ""))
+        ops.append((ts, i, rec["op"], tid, rec))
+        if rec["op"] != "add":
+            continue
+        status = rec.get("status")
+        if status not in ("active", "done"):
+            continue
+        starts = _str_list(rec.get("starts"))
+        if not starts and rec.get("where"):
+            starts = [str(rec["where"])]
+        start_ts = str(rec.get("start_ts") or ts)
+        for where in starts:
+            ops.append((start_ts, i, "start", tid, {"where": where}))
+        if status == "done":
+            ops.append((str(rec.get("done_ts") or ts), i, "done", tid,
+                        {"by": str(rec.get("by", ""))}))
+    return ops
+
+def _new_task(tid):
+    return {"id": tid, "ts": "", "title": "", "files": [], "blocked_by": [],
+            "verify": "", "ref": "", "status": "open", "where": "", "by": "",
+            "starts": [], "start_ts": "", "done_ts": "", "_add": False, "_closed": False}
+
+def replay_tasks(records):
+    """-> {id: task}, in (add ts, id) order. Ops are ordered by (ts, file position)
+    -- winners() semantics -- and the last one decides the status.
+
+    An id with no `add` op is an orphan (a merge can deliver a `done` whose `add`
+    lives on a branch nobody merged) and is dropped rather than guessed at."""
+    tasks = {}
+    for ts, _pos, op, tid, rec in sorted(_task_ops(records), key=lambda o: (o[0], o[1])):
+        task = tasks.get(tid)
+        if task is None:
+            task = tasks[tid] = _new_task(tid)
+        if op == "add":
+            task["_add"] = True
+            task["ts"] = ts
+            task["title"] = str(rec.get("title", ""))
+            task["files"] = _str_list(rec.get("files"))
+            task["blocked_by"] = _str_list(rec.get("blocked_by"))
+            task["verify"] = str(rec.get("verify", ""))
+            task["ref"] = str(rec.get("ref", ""))
+            task["status"] = "open"
+        elif op == "start":
+            if task["_closed"]:  # a start after a done opens a new segment
+                task["starts"] = []
+                task["_closed"] = False
+            task["where"] = str(rec.get("where", ""))
+            task["starts"].append(task["where"])
+            task["start_ts"] = ts
+            task["status"] = "active"
+        elif op == "done":
+            task["by"] = str(rec.get("by", ""))
+            task["done_ts"] = ts
+            task["_closed"] = True
+            task["status"] = "done"
+        # anything else: recorded as a touch, ignored for status (phase 2 verbs)
+    live = [t for t in tasks.values() if t["_add"]]
+    live.sort(key=lambda t: (t["ts"], t["id"]))
+    ordered = {}
+    for task in live:
+        del task["_add"]
+        del task["_closed"]
+        ordered[task["id"]] = task
+    return ordered
+
+def task_order(tasks):
+    """(add ts, id) -- the one order list, next and compaction all use."""
+    return sorted(tasks, key=lambda tid: (tasks[tid]["ts"], tid))
+
+def task_blockers(tasks, tid):
+    """The declared blockers that are not done, unknown ids marked `?`. An unknown
+    id blocks forever: it names a task this clone has not seen, so it cannot be
+    known to be done."""
+    task = tasks.get(tid)
+    if not task:
+        return []
+    out = []
+    for dep in task["blocked_by"]:
+        known = tasks.get(dep)
+        if known is None:
+            out.append("?" + dep)
+        elif known["status"] != "done":
+            out.append(dep)
+    return out
+
+def task_blocked(tasks, tid):
+    return bool(task_blockers(tasks, tid))
+
+def task_counts(tasks):
+    """-> (open, blocked, done). `open` is everything not done (an active task is
+    still work in flight); `blocked` is the subset of those waiting on an edge."""
+    live = [tid for tid in tasks if tasks[tid]["status"] != "done"]
+    return len(live), sum(1 for tid in live if task_blocked(tasks, tid)), \
+        len(tasks) - len(live)
+
+def append_task(path, rec):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+def compact_tasks(path):
+    """One record per id -- the add record with the terminal op folded in. Sorted by
+    (ts, id), so two clones compacting the same log write identical bytes.
+
+    Done tasks are never dropped (there is no archive file), so this bounds op
+    noise, not the file. Returns (records before, records after)."""
+    records = read_task_log(path)
+    tasks = replay_tasks(records)
+    out = []
+    for tid in task_order(tasks):
+        task = tasks[tid]
+        rec = {"ts": task["ts"], "id": tid, "op": "add", "title": task["title"]}
+        for field in ("files", "blocked_by", "verify", "ref"):
+            if task[field]:
+                rec[field] = task[field]
+        if task["status"] == "done":
+            rec["status"] = "done"
+            rec["by"] = task["by"]
+            rec["done_ts"] = task["done_ts"]
+        elif task["status"] == "active":
+            rec["status"] = "active"
+            rec["where"] = task["where"]
+            rec["start_ts"] = task["start_ts"]
+        if task["status"] in ("done", "active") and task["starts"]:
+            # Carried so the `[2 starts]` conflict flag survives compaction.
+            rec["starts"] = task["starts"]
+        out.append(rec)
+    out.sort(key=lambda r: (r["ts"], r["id"]))
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        for rec in out:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    os.replace(tmp, path)
+    return len(records), len(out)
+
+def _task_maybe_compact(cfg, path):
+    """The same 8x trigger `state set` uses. The notice goes to stderr because
+    `flux task add` prints the id alone on stdout, so `$(flux task add …)` composes."""
+    cap = state_budget_bytes(cfg) * STATE_LOG_BUDGET_MULTIPLE
+    try:
+        if os.path.getsize(path) <= cap:
+            return
+    except OSError:
+        return
+    before, after = compact_tasks(path)
+    if before > after:
+        print("flux task: compacted %s — %d records -> %d, log was over %d bytes "
+              "(%dx the pack budget)"
+              % (TASKS_LOG_NAME, before, after, cap, STATE_LOG_BUDGET_MULTIPLE),
+              file=sys.stderr)
+
+# ------------------------------------------------------------- leases
+#
+# A lease says "this worktree is on this task", and it lives under git's *common*
+# dir so every worktree of the repo sees the same one -- while never being a
+# tracked file that a merge could conflict on. It is advisory and expiring: a
+# machine that dies holds a task for `[task] lease_hours`, not forever.
+
+_LEASE_DIRS = {}
+
+def _lease_dir(root):
+    """<git-common-dir>/flux/leases, or None outside a git repo.
+
+    The rev-parse must run at root: git answers relative to cwd (`.git` at the
+    toplevel, `../.git` from a subdir, absolute in a linked worktree), so the answer
+    is joined to root. On failure this returns None rather than falling through to
+    <root>/flux/leases inside the working tree.
+
+    Memoised: `next` and prime ask once per candidate task, and a subprocess per task
+    on every SessionStart is exactly the cost this index exists to remove. The CLI is
+    one-shot, so a process-lifetime cache cannot go stale."""
+    if root in _LEASE_DIRS:
+        return _LEASE_DIRS[root]
+    common = git(["rev-parse", "--git-common-dir"], cwd=root)
+    ldir = None
+    if common:
+        if not os.path.isabs(common):
+            common = os.path.join(root, common)
+        ldir = os.path.join(common, "flux", "leases")
+    _LEASE_DIRS[root] = ldir
+    return ldir
+
+def _lease_path(root, tid):
+    ldir = _lease_dir(root)
+    return os.path.join(ldir, "%s.json" % tid) if ldir else None
+
+def _lease_read(root, tid):
+    """The lease as a dict; {} for absent, unreadable or malformed -- all of which
+    mean dead and overwritable."""
+    path = _lease_path(root, tid)
+    if not path:
+        return {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            obj = json.load(f)
+        return obj if isinstance(obj, dict) else {}
+    except Exception:
+        return {}
+
+def _lease_write(root, tid):
+    path = _lease_path(root, tid)
+    if not path:
+        return False
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"ts": now_iso(), "where": _where(root),
+                       "worktree": os.path.realpath(root)}, f)
+        return True
+    except OSError:
+        return False
+
+def _lease_clear(root, tid):
+    path = _lease_path(root, tid)
+    if not path:
+        return
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+def _lease_live(lease, cfg):
+    """Live iff it parses, is younger than [task] lease_hours, and its worktree
+    still exists on disk -- a deleted worktree's lease is dead, not a 12h block."""
+    if not isinstance(lease, dict):
+        return False
+    worktree = lease.get("worktree")
+    if not isinstance(worktree, str) or not worktree:
+        return False
+    epoch = _iso_epoch(lease.get("ts"))
+    if epoch is None:
+        return False
+    hours = _task_cfg(cfg, "lease_hours", DEFAULT_LEASE_HOURS)
+    if (time.time() - epoch) > hours * 3600:
+        return False
+    return os.path.isdir(worktree)
+
+def _lease_is_ours(lease, root):
+    """realpath on both sides: macOS hands out /var and /private/var for one dir."""
+    return os.path.realpath(str(lease.get("worktree", ""))) == os.path.realpath(root)
+
+def _clear_own_leases(root):
+    """Every lease this worktree holds, plus every unreadable one. Called by seal, so
+    a session that ends without `flux task done` does not park its tasks for 12h."""
+    ldir = _lease_dir(root)
+    if not ldir or not os.path.isdir(ldir):
+        return
+    for name in os.listdir(ldir):
+        if not name.endswith(".json"):
+            continue
+        path = os.path.join(ldir, name)
+        try:
+            with open(path, encoding="utf-8") as f:
+                obj = json.load(f)
+            ours = isinstance(obj, dict) and _lease_is_ours(obj, root)
+        except Exception:
+            ours = True  # unreadable: it can never be honoured, so it can only block
+        if ours:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+def _task_candidates(root, cfg, tasks):
+    """Runnable ids, best first. Candidate = not done, not blocked, no live lease
+    held by another worktree. Rank 1 is an active task this worktree already holds
+    (finish what you started), rank 2 is everything else -- open, or active with no
+    live lease at all, which is what a sealed or expired lease leaves behind.
+
+    Same input, same answer, twice: the only tie-break is (add ts, id)."""
+    ranked = []
+    for tid in task_order(tasks):
+        task = tasks[tid]
+        if task["status"] == "done" or task_blocked(tasks, tid):
+            continue
+        lease = _lease_read(root, tid)
+        rank = 1
+        if _lease_live(lease, cfg):
+            if not _lease_is_ours(lease, root):
+                continue
+            if task["status"] == "active":
+                rank = 0
+        ranked.append((rank, task["ts"], tid))
+    ranked.sort()
+    return [tid for _rank, _ts, tid in ranked]
+
+
+def cmd_task(args):
+    root = repo_root()
+    cfg = read_config(root)
+    if cfg is None:
+        print("flux task: no .flux/flux.toml here — run `flux init` first",
+              file=sys.stderr)
+        return 1
+    handler = {"add": _task_add, "start": _task_start, "done": _task_done,
+               "list": _task_list, "next": _task_next,
+               "compact": _task_compact}.get(args[0] if args else "")
+    if handler is None:
+        print(_TASK_USAGE, file=sys.stderr)
+        return 2
+    return handler(root, cfg, args[1:])
+
+def _task_add(root, cfg, args):
+    opts, pos, i = {}, [], 0
+    while i < len(args):
+        arg = args[i]
+        if arg in _TASK_ADD_FLAGS:
+            if i + 1 >= len(args):
+                print("flux task: %s needs a value\n%s" % (arg, _TASK_USAGE),
+                      file=sys.stderr)
+                return 2
+            opts[_TASK_ADD_FLAGS[arg]] = args[i + 1]  # values verbatim: a title or a
+            i += 2                                    # command may legitimately lead
+            continue                                  # with a dash
+        if arg.startswith("-"):
+            # The `state set` dash guard. A mistyped flag taken as a positional adds a
+            # task titled "--flies", reports success, and is found weeks later.
+            print("flux task: %s looks like a flag, not a title\n%s"
+                  % (arg, _TASK_USAGE), file=sys.stderr)
+            return 2
+        pos.append(arg)
+        i += 1
+    if len(pos) != 1 or not pos[0].strip():
+        print("flux task: add takes exactly one <title>\n%s" % _TASK_USAGE,
+              file=sys.stderr)
+        return 2
+    title = pos[0].strip()
+    if len(title) > TASK_TITLE_MAX:
+        print("flux task: title is %d characters, max is %d — the title is an index "
+              "entry, not the spec (point --ref at that)"
+              % (len(title), TASK_TITLE_MAX), file=sys.stderr)
+        return 2
+    stamp = now_iso()
+    tid = task_id(stamp, title)
+    path = tasks_path(root)
+    tasks = replay_tasks(read_task_log(path))
+    if tid in tasks:
+        print("flux task: id collision on %s, re-run (the stamp carries "
+              "milliseconds, so a re-run is a different id)" % tid, file=sys.stderr)
+        return 1
+    rec = {"ts": stamp, "id": tid, "op": "add", "title": title}
+    for field in ("files", "blocked_by"):
+        value = _csv(opts.get(field))
+        if value:
+            rec[field] = value
+    for field in ("verify", "ref"):
+        if opts.get(field):
+            rec[field] = opts[field]
+    size = len(json.dumps(rec, ensure_ascii=False).encode("utf-8"))
+    if size > TASK_RECORD_MAX_BYTES:
+        # Checked before appending, so a refused add leaves the log exactly as it was.
+        print("flux task: refused — record would be %d bytes, TASK_RECORD_MAX_BYTES "
+              "is %d. Trim --verify/--files; a spec belongs behind --ref."
+              % (size, TASK_RECORD_MAX_BYTES), file=sys.stderr)
+        return 1
+    append_task(path, rec)
+    write_gitattributes(flux_dir(root))
+    print(tid)
+    _task_maybe_compact(cfg, path)
+    return 0
+
+def _task_one_id(args, usage):
+    """-> (id, None) or (None, exit code). The dash guard again: an id positional."""
+    if len(args) != 1 or not args[0] or args[0].startswith("-"):
+        print(usage, file=sys.stderr)
+        return None, 2
+    return args[0], None
+
+def _task_start(root, cfg, args):
+    tid, code = _task_one_id(args, "usage: flux task start <id>")
+    if code is not None:
+        return code
+    path = tasks_path(root)
+    tasks = replay_tasks(read_task_log(path))
+    task = tasks.get(tid)
+    if task is None:
+        print("flux task: no such task %s" % tid, file=sys.stderr)
+        return 1
+    if task["status"] == "done":
+        # Last-op-wins replay would happily make this a reopen. Reopening is a phase 2
+        # verb with its own semantics; an undocumented one is worse than none.
+        print("flux task: %s is already done — reopening is not a verb" % tid,
+              file=sys.stderr)
+        return 1
+    blockers = task_blockers(tasks, tid)
+    if blockers:
+        print("flux task: %s is blocked by %s" % (tid, ", ".join(blockers)),
+              file=sys.stderr)
+        return 1
+    if _lease_dir(root) is None:
+        print("flux task: cannot lease: not a git repo", file=sys.stderr)
+        return 1
+    lease = _lease_read(root, tid)
+    if _lease_live(lease, cfg) and not _lease_is_ours(lease, root):
+        print("flux task: %s is held by %s since %s — run `flux seal` there, or wait "
+              "for the lease to expire" % (tid, lease.get("where", "?"),
+                                           lease.get("ts", "?")), file=sys.stderr)
+        return 1
+    append_task(path, {"ts": now_iso(), "id": tid, "op": "start",
+                       "where": _where(root)})
+    _lease_write(root, tid)
+    print("flux task: started %s  %s" % (tid, task["title"]))
+    return 0
+
+def _task_done(root, cfg, args):
+    by, pos, i = "", [], 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--by":
+            if i + 1 >= len(args):
+                print(_TASK_DONE_USAGE, file=sys.stderr)
+                return 2
+            by = args[i + 1]
+            i += 2
+            continue
+        if arg.startswith("-"):
+            print("flux task: %s looks like a flag, not an id\n%s"
+                  % (arg, _TASK_DONE_USAGE), file=sys.stderr)
+            return 2
+        pos.append(arg)
+        i += 1
+    if len(pos) != 1 or not by.strip():
+        print(_TASK_DONE_USAGE, file=sys.stderr)
+        return 2
+    tid = pos[0]
+    path = tasks_path(root)
+    tasks = replay_tasks(read_task_log(path))
+    task = tasks.get(tid)
+    if task is None:
+        print("flux task: no such task %s" % tid, file=sys.stderr)
+        return 1
+    if task["status"] == "done":
+        print("flux task: %s is already done — by: %s" % (tid, task["by"]),
+              file=sys.stderr)
+        return 1
+    lease = _lease_read(root, tid)
+    if _lease_live(lease, cfg) and not _lease_is_ours(lease, root):
+        print("flux task: %s is held by %s — that session owns closing it"
+              % (tid, lease.get("where", "?")), file=sys.stderr)
+        return 1
+    # append -> compact -> unlink: a crash between them leaves a stale lease on a
+    # done task, which is harmless, rather than a done record that never landed.
+    append_task(path, {"ts": now_iso(), "id": tid, "op": "done", "by": by})
+    _task_maybe_compact(cfg, path)
+    _lease_clear(root, tid)
+    print("flux task: done %s  %s" % (tid, task["title"]))
+    return 0
+
+def _task_row(tasks, tid):
+    task = tasks[tid]
+    row = "%s  %s  %s" % (tid, task["status"], task["title"])
+    if task["status"] == "active" and task["where"]:
+        row += " @%s" % task["where"]
+    blockers = task_blockers(tasks, tid)
+    if blockers:
+        row += " (blocked by %s)" % ", ".join(blockers)
+    seen = []
+    for where in task["starts"]:
+        if where and where not in seen:
+            seen.append(where)
+    if len(seen) > 1:
+        # Two machines started the same task and neither saw the other's lease.
+        row += " [%d starts: %s]" % (len(seen), ", ".join(seen))
+    if task["status"] == "done" and task["by"]:
+        row += " — by: %s" % task["by"]
+    return row
+
+def _task_list(root, cfg, args):
+    unknown = [a for a in args if a not in ("--open", "--done", "--all")]
+    if unknown:
+        print("usage: flux task list [--open|--done|--all]", file=sys.stderr)
+        return 2
+    path = tasks_path(root)
+    tasks = replay_tasks(read_task_log(path))
+    if not tasks:
+        print("flux task: no tasks yet — `flux task add \"…\"`")
+        return 0
+    if "--all" in args:
+        shown = task_order(tasks)
+    elif "--done" in args:
+        shown = [t for t in task_order(tasks) if tasks[t]["status"] == "done"]
+    elif "--open" in args:
+        shown = [t for t in task_order(tasks) if tasks[t]["status"] == "open"]
+    else:
+        shown = [t for t in task_order(tasks) if tasks[t]["status"] != "done"]
+    n_open, n_blocked, n_done = task_counts(tasks)
+    rows = [_task_row(tasks, tid) for tid in shown]
+    rows.append("%d open, %d blocked, %d done" % (n_open, n_blocked, n_done))
+    print(clip("\n".join(rows), state_budget_bytes(cfg)))
+    return 0
+
+def _task_next_line(task):
+    line = "%s  %s" % (task["id"], task["title"])
+    if task["files"]:
+        line += " · files: %s" % ",".join(task["files"])
+    if task["verify"]:
+        line += " · verify: %s" % task["verify"]
+    if task["ref"]:
+        line += " · ref: %s" % task["ref"]
+    return line
+
+def _task_next(root, cfg, args):
+    if [a for a in args if a != "--all"]:
+        print("usage: flux task next [--all]", file=sys.stderr)
+        return 2
+    tasks = replay_tasks(read_task_log(tasks_path(root)))
+    candidates = _task_candidates(root, cfg, tasks)
+    if not candidates:
+        print("no runnable task", file=sys.stderr)
+        return 1
+    if "--all" not in args:
+        candidates = candidates[:1]
+    print("\n".join(_task_next_line(tasks[tid]) for tid in candidates))
+    return 0
+
+def _task_compact(root, _cfg, args):
+    if args:
+        print("usage: flux task compact", file=sys.stderr)
+        return 2
+    path = tasks_path(root)
+    if not os.path.isfile(path):
+        print("flux task: no %s to compact" % TASKS_LOG_NAME, file=sys.stderr)
+        return 1
+    before, after = compact_tasks(path)
+    print("flux task: compacted %s — %d records -> %d"
+          % (TASKS_LOG_NAME, before, after))
+    return 0
+
+def _task_pack_lines(root, cfg):
+    """-> (task line, derived next line) for prime, both "" when the index has
+    nothing live. Returns before any git call when there is no index: this runs on
+    every SessionStart in every repo the plugin is installed in."""
+    path = tasks_path(root)
+    if not os.path.isfile(path):
+        return "", ""
+    tasks = replay_tasks(read_task_log(path))
+    live = [tid for tid in task_order(tasks) if tasks[tid]["status"] != "done"]
+    if not live:
+        return "", ""
+    n_open, n_blocked, n_done = task_counts(tasks)
+    candidates = _task_candidates(root, cfg, tasks)
+    head = candidates[0] if candidates else live[0]
+    task_line = clip("task: %s %s · %d open, %d blocked, %d done"
+                     % (head, tasks[head]["title"], n_open, n_blocked, n_done),
+                     TASK_LINE_BUDGET, marker="…")
+    next_line = ""
+    if candidates:
+        nid = candidates[0]
+        next_line = clip("next: %s %s  [from index — flux task next]"
+                         % (nid, tasks[nid]["title"]), TASK_LINE_BUDGET, marker="…")
+    return task_line, next_line
+
+def _task_pack_lines_safe(root, cfg):
+    """A broken index must never blank the pack — same posture as the cycle line."""
+    try:
+        return _task_pack_lines(root, cfg)
+    except Exception:
+        return "", ""
 
 # ----------------------------------------------------------------------- check
 
@@ -2255,6 +2976,7 @@ COMMANDS = {
     "guard": cmd_guard,
     "seal": cmd_seal,
     "claim": cmd_claim,
+    "task": cmd_task,
 }
 
 def main(argv):

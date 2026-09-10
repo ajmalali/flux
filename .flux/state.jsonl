@@ -97,3 +97,11 @@
 {"ts": "2026-09-08T17:27:03.197Z", "k": "open", "v": "6 seeded claims pending — BUT fleet ran plugin 2.10.1 (prime only) 2026-08-26..2026-09-08, so 03/04/06 claims have no live-feature sessions before 2026-09-08; consider re-seeding (status.md 'Deployment gap'). Plugin update = bump plugin.json + push + claude plugin update flux@marketplace. flux run ON NOTICE: 0 uses in 44 sessions, delete next cycle if still 0."}
 {"ts": "2026-09-10T19:21:34.423Z", "k": "next", "v": "/flux:plan task-index phase 1 (index core) per ADR 0004 — .flux/plans/task-index/01-index-core.md"}
 {"ts": "2026-09-10T19:21:34.423Z", "k": "open", "v": "6 seeded claims pending; 03/04/06 need re-seeding post-2.11.1 deployment. flux run on notice (0 uses). Loop phase 08 displaced by ADR 0004."}
+{"ts": "2026-09-10T19:47:03.523Z", "k": "phase", "v": "task-index-01-index-core"}
+{"ts": "2026-09-10T19:47:03.523Z", "k": "next", "v": "/flux:apply .flux/plans/task-index/01-index-core.md"}
+{"ts": "2026-09-10T21:11:04.889Z", "k": "phase", "v": "task-index-01-index-core shipped (ADR 0004 step 1); step 2 tiers/escalate/await + step 3 adoption next"}
+{"ts": "2026-09-10T21:11:04.889Z", "k": "position", "v": "flux task add/start/done/list/next/compact live over .flux/tasks.jsonl; leases under git common dir; prime derives task:/next:. 306 green. 2.12.0 not yet pushed/deployed — deployment-gap check pending"}
+{"ts": "2026-09-10T21:11:04.889Z", "k": "next", "v": "commit this tree, then push + `claude plugin update flux@marketplace` and confirm 2.12.0 + `flux task next` from a fresh shell in another adopted repo (2026-09-08 gap check)"}
+{"ts": "2026-09-10T21:11:04.889Z", "k": "routing", "v": "mechanical"}
+{"ts": "2026-09-10T21:11:04.889Z", "k": "open", "v": "2.12.0 undeployed — verify plugin update shows 2.12.0 and task next runs fleet-side, no traceback. 6 seeded claims still pending; 03/04/06 need re-seeding post-deploy. flux run still on notice (0 uses). ADR 0004 phases 2+3 unbuilt."}
+{"ts": "2026-09-10T21:11:15.240Z", "k": "routing", "v": ""}

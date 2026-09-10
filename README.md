@@ -28,6 +28,11 @@ The plugin does not update itself. Run this and restart Claude Code:
 It pulls from GitHub `main` and only updates if `plugin.json` has a higher version
 than what you have. Existing `.flux/` folders need no changes.
 
+One exception, from 2.12.0: the first `flux state set` or `flux task add` in a repo
+appends `tasks.jsonl merge=union` to `.flux/.gitattributes`, so the task index merges
+the way the state log already does. It shows up as a one-line diff on a tracked file.
+Commit it.
+
 ## A typical day
 
 Open a session. flux prints a short pack before you type anything. Branch, current
@@ -89,6 +94,8 @@ All are user-invoked. The model never sees them unless you type the command.
 | `flux check` | Runs your configured test command, prints failures only. |
 | `flux run --filter failures -- <cmd>` | Same filter on any one command. |
 | `flux state set <key> "<value>"` | Writes `phase`, `position`, `next`, or `open`. Refuses to go over budget. |
+| `flux task add "<title>" [--files a,b] [--blocked-by t-x]` / `start <id>` / `done <id> --by "…"` | The execution index. One append-only log of what is left; `done` has to say what verified it. |
+| `flux task next` / `flux task list` | Which task is next, derived — not asserted. `start` leases the task across worktrees, so a second session skips it. `prime` shows the current task and the counts in place of `phase`. |
 | `flux handoff` | Writes a short handoff from git status, state, and recent commits. |
 | `flux log <tag> "…"` | Field note when the pack missed something you needed. Tags are `pack-miss`, `audit-hit`, `want`. |
 | `flux ledger` | Reads your session transcripts and prints context size, request counts, wrap rate, and cost per session. `--verdict` scores whether each feature moved its metric. |

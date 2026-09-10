@@ -1,6 +1,15 @@
 # flux-v2 — status & next task
 
-Updated: 2026-09-08 (deployment gap fixed, see block below; README rewritten as a concise user guide: install, hooks, commands, skills, per-scenario workflows) — loop phases 01–06 plus **07 (deletions)** shipped, gated, wrapped
+Updated: 2026-09-10 (**ADR 0004 task-index phase 1 shipped, gated, wrapped — 306 green**;
+`.flux/plans/task-index/01-index-core.md` `status: done`). `flux task
+add/start/done/list/next/compact` over append-only `.flux/tasks.jsonl` (replayed like the
+state log), `start` leases under git's common dir (honoured by next/start, cleared by
+done/seal), prime swaps `task:` for `phase:` and derives `next:` when the index has live
+work, `.gitattributes` gains `tasks.jsonl merge=union`. plugin.json → **2.12.0, not yet
+pushed or deployed** — the 2026-09-08 deployment-gap check (plugin update shows 2.12.0 +
+`flux task next` runs fleet-side) is the first thing next session. ADR 0004 phases 2
+(tiers/escalate/await/reopen + skill rewrite) and 3 (adoption, claim seeding) unbuilt.
+— Prior (2026-09-08): deployment gap fixed, see block below; README rewritten as a concise user guide) — loop phases 01–06 plus **07 (deletions)** shipped, gated, wrapped
 (**267 green**); phase 07 closed `.flux/plans/loop/07-deletions.md` (`status: done`) —
 `routing` removed everywhere (pack −1 line), the eight zero-use skills deleted (skills dir
 14 → 6: `adopt/apply/audit/grill/plan/wrap`), `sync-vendored.sh`/`VENDORED.md`/`README`/
@@ -40,7 +49,10 @@ this file is live state only.
 
 ## Task queue
 
-- [ ] **Build ADR 0004 — the task index (grilled 2026-09-10, accepted, unbuilt).** `.flux/adr/0004-task-index-execution.md`; glossary `CONTEXT.md`. Displaces loop phase 08 as next work. Three phases, one per session, via the old plan→apply→wrap path: (1) index core `flux task add/start/done/list/next`, prime line, leases under git common dir, compaction; (2) tiers tracer/fill, `escalate`, `await`/`reopen`, plan/apply/wrap rewritten in place; (3) adopt on broadcast, seed the two day-one claims (ctx_p50<100k radiator; escalation rate<0.3). Start with `/flux:plan` for phase 1 under `.flux/plans/task-index/`.
+- **Build ADR 0004 — the task index (grilled 2026-09-10, accepted).** `.flux/adr/0004-task-index-execution.md`; glossary `CONTEXT.md`. Three phases, one per session, via plan→apply→wrap.
+  - [x] **(1) index core — DONE 2026-09-10** (`.flux/plans/task-index/01-index-core.md`, `status: done`; 306 green, plugin.json 2.12.0 undeployed). `flux task add/start/done/list/next/compact` over `.flux/tasks.jsonl`, leases under git common dir, prime task:/next: lines, compaction, gitattributes append. See the plan's `## outcome` for deviations.
+  - [ ] **(2) tiers tracer/fill, `escalate`, `await`/`reopen`, plan/apply/wrap rewritten in place.** Next after 2.12.0 is confirmed deployed.
+  - [ ] **(3) adopt on broadcast, seed the two day-one claims** (ctx_p50<100k radiator; escalation rate<0.3).
 - [ ] **Build the loop — `.flux/plans/loop/` (ADR 0003, accepted 2026-09-03).** Roadmap
   `00-roadmap.md` maps every field-read-out action to eight phases, each with the claim it is
   judged on. 01 ledger + 02 status diet + 03 `flux log`/footer + **04 guard/age/seal DONE**

@@ -203,6 +203,18 @@ throughout this section and the "Out of scope" note below were deleted on the ze
 bar. The references are kept as the historical record of the ADR-0001 reasoning; the
 big-feature altitude is no longer a live surface.)*
 
+*(Amended 2026-09-10, shipped in 2.12.0: `.flux/adr/0004-task-index-execution.md`
+supersedes this section's surface. The built verbs are
+`flux task add|start|done|list|next|compact` over an append-only `.flux/tasks.jsonl`,
+replayed like the state log. There is no `block` verb — edges are declared at `add` via
+`--blocked-by`, and `blocked` is computed on read, never stored. There is no per-task
+token estimate and no `[task].budget_tokens` refusal either: ADR 0004 considered and
+rejected both, because the 2026-08-22 context-decay work found no correctness knee to
+budget against (see the Prerequisite below). What `[task]` does carry is `lease_hours` —
+`start` takes a lease under git's common dir so a second worktree's `next` skips a task
+someone is already on. Tiers, `escalate`, `await` and adoption are ADR 0004's phases 2
+and 3, not built.)*
+
 The big-feature altitude above (wayfinder → to-spec → to-tickets → `/flux:plan` per
 ticket) is declared but has no spine. `/flux:plan` writes the *first* phase and says to
 split the rest into sequential plans — so the decomposition of everything after it

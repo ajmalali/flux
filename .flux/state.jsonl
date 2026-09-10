@@ -105,3 +105,4 @@
 {"ts": "2026-09-10T21:11:04.889Z", "k": "routing", "v": "mechanical"}
 {"ts": "2026-09-10T21:11:04.889Z", "k": "open", "v": "2.12.0 undeployed — verify plugin update shows 2.12.0 and task next runs fleet-side, no traceback. 6 seeded claims still pending; 03/04/06 need re-seeding post-deploy. flux run still on notice (0 uses). ADR 0004 phases 2+3 unbuilt."}
 {"ts": "2026-09-10T21:11:15.240Z", "k": "routing", "v": ""}
+{"ts": "2026-09-10T21:12:18.417Z", "k": "next", "v": "push (2 commits ahead), then `claude plugin update flux@marketplace` and confirm it shows 2.12.0 + `flux task next` runs from a fresh shell in another adopted repo, no traceback (2026-09-08 deployment-gap check). Then /flux:plan ADR 0004 phase 2."}

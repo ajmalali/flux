@@ -1,7 +1,7 @@
 # Design: reviving the execution index (ADR 0001), on declared-files and routing
 
 Date: 2026-08-26
-Status: **DRAFT — design only, nothing built.** A proposal to revive
+Status: **ABSORBED into ADR 0004 (2026-09-10)** — superseded in full; the validation gate below was reversed there. Kept for the reasoning. Originally: DRAFT — design only, nothing built. A proposal to revive
 `.flux/adr/0001-execution-frontier.md` (Accepted, then suspended 2026-08-22). It does
 not un-suspend that ADR; it specifies what a revival would be so the first real-work
 feature can be run *against* it. Building is gated behind the real-work pre-registration

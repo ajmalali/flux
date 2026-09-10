@@ -40,6 +40,7 @@ this file is live state only.
 
 ## Task queue
 
+- [ ] **Build ADR 0004 — the task index (grilled 2026-09-10, accepted, unbuilt).** `.flux/adr/0004-task-index-execution.md`; glossary `CONTEXT.md`. Displaces loop phase 08 as next work. Three phases, one per session, via the old plan→apply→wrap path: (1) index core `flux task add/start/done/list/next`, prime line, leases under git common dir, compaction; (2) tiers tracer/fill, `escalate`, `await`/`reopen`, plan/apply/wrap rewritten in place; (3) adopt on broadcast, seed the two day-one claims (ctx_p50<100k radiator; escalation rate<0.3). Start with `/flux:plan` for phase 1 under `.flux/plans/task-index/`.
 - [ ] **Build the loop — `.flux/plans/loop/` (ADR 0003, accepted 2026-09-03).** Roadmap
   `00-roadmap.md` maps every field-read-out action to eight phases, each with the claim it is
   judged on. 01 ledger + 02 status diet + 03 `flux log`/footer + **04 guard/age/seal DONE**

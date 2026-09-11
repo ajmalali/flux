@@ -1,35 +1,44 @@
 ---
 name: apply
-description: Execute the work — from the task as stated, or from a phase plan when one exists. Execute, report status honestly, then qualify against the spec before moving on. Iterates with `flux run --filter failures`, concludes with `flux check`. The default path after `flux prime`; /flux:plan first only when the work earns it.
+description: Execute the next task from the index (`flux task next`), or the task as the user stated it. An awaiting task is put to the person; a tracer runs here; fills dispatch to subagents as a batch. Execute, report status honestly, qualify against the spec. Iterates with `flux run --filter failures`, concludes with `flux check`.
 disable-model-invocation: true
 ---
 
 # flux apply
 
-Execute the work. Whatever specifies it — a phase plan, or the task as the user
-stated it — is the spec; your memory of executing it is not evidence.
+Execute the work. The spec is the task's `--ref` file, its index line, or the request
+as the user worded it; your memory of executing it is not evidence. Say the task back
+in one line, with the files you expect to touch, before you start.
 
-**Most work arrives without a plan, and that is the normal path**: prime, apply,
-`flux check`. Reach for `/flux:plan` first only when the work earns it — it spans
-sessions, it takes a step that cannot be undone, or its shape is still being argued
-about. Measured twice on the benchmark, planning ahead of ordinary well-specified
-work cost roughly 3x and delivered the same result
-(`.flux/analysis/2026-08-22-ceremony-two-cycles.md`).
+## Which shape this session is
 
-Start on explicit approval. "Looks good" is approval; silence isn't. With a plan,
-that means an approved plan path, read once, in full — its boundaries bind you as
-much as its tasks. Without one, it means the task said back in one line, with the
-files you expect to touch, and the user not redirecting you.
+Read `flux task next`. It decides, in this order:
+
+- **Awaiting head** — the line carries `awaiting:`. Print the steps, ask the person to
+  do them, and resolve on their word alone — `flux task done <id> --by "<what was
+  observed>"` or `flux task reopen <id> --why "<what failed>"` — then stop. Nothing
+  else runs in a session that opened on a human checkpoint; `done --by` is its end.
+- **Tracer** — no `tier: fill`. `flux task start <id>`, read its `--ref` spec once, in
+  full, then execute → report → qualify below. One tracer per session; when it is
+  done — `flux task done <id> --by "<evidence>"` — the session is done.
+- **Fill** — `tier: fill`. Take the batch: `flux task next --all`, keep the fills,
+  `start` each. Dispatch each to a built-in `general-purpose` subagent on the parent's
+  model with a spec composed at pickup — title, `files`, `verify`, the tracer's ref —
+  and the status table below as its report format. Sequential by default; parallel
+  only when the declared `files` are disjoint. **The parent edits nothing.**
+
+No index, or nothing runnable? The task is what the user asked for and the boundary is
+the files that answer it. Execute it here as a tracer would, without `start`/`done`.
+
+One tracer *or* one batch, never both.
 
 ## Per task: execute → report → qualify
 
 ### 1. Execute
 
-Do the task's `do`, to the files in its `files`. Respect `boundaries`. Working
-without a plan, the task is what the user asked for and the boundary is the files
-that answer it. Either way: when a change you want to make falls outside, stop and
-say so — do not make it "just this once"; untracked edits are what makes the next
-plan wrong, and unasked-for edits are what makes a review long.
+Do the task's `do`, to the files in its `files`; respect the spec's boundaries. When
+a change you want falls outside, stop and say so — do not make it "just this once";
+untracked edits are what makes the next plan wrong.
 
 ### 2. Report a status, honestly
 
@@ -69,6 +78,26 @@ Before claiming any task complete:
 | "the test passes" | Also compare to the spec | Tests prove what they test, not what was asked |
 | "minor deviation" | Say it out loud, now | Deviations compound; wrap needs them accurate |
 
+## Escalate, never retry
+
+A fill that reports `NEEDS_CONTEXT` or `BLOCKED`: `flux task escalate <id> --why
+"<what it said>"` and move to the next independent fill. The parent does not retry it,
+does not finish it, does not open its files to "just see". A tracer session will.
+
+After the batch, the gate once:
+
+```
+flux check
+```
+
+Red → re-run each fill's own `verify`; `escalate` the one that fails; the green fills
+stay. Then `flux task done <id> --by "<evidence>"` for each fill that passed — the
+evidence is the verify output, not the subagent's word.
+
+A `verify` that is a human observation — a phone, a screen, a device — is not run
+here: `flux task await <id> --steps "<what the person does>"`, and the session ends
+there. The next one opens on it.
+
 ## Verification: iterate scoped, conclude whole
 
 While working, run the narrow thing:
@@ -77,44 +106,18 @@ While working, run the narrow thing:
 flux run --filter failures -- <the one test file / the one target>
 ```
 
-Same filtered cost as the gate, none of the wait. To finish, run the gate:
+To finish, the gate — `flux check`, no arguments, never narrowed. A scoped run is never
+a completion. Red is red, including when the failure looks unrelated: say so.
 
-```
-flux check
-```
+## When something turns out wrong
 
-`flux check` takes no arguments and never narrows — that's what makes "check passed"
-mean anything. **A scoped run is never a completion.** Never report a task or a phase
-done on the strength of one green test file. If `flux check` is red, the phase is red,
-including when the failure looks unrelated — say so, don't route around it.
-
-## Delegate the reading
-
-- Need to find where something lives, or how a pattern is used → the built-in
-  `Explore` agent. Take its pointers, not its files.
-- Gate failing and the log is long → `flux check` already filters it, and
-  `flux run --filter failures -- <cmd>` does the same for a scoped run. Read the
-  filtered output; never re-run the command raw to see more.
-
-## When something turns out wrong, diagnose before patching
-
-Three different problems look identical at the moment of failure:
-
-- **Intent** — the wrong thing got built. Don't patch. Re-decide what the work is;
-  with a plan, mark it superseded and re-plan the phase.
-- **Spec** — the plan was right in aim, wrong or silent in detail. Fix the *plan*
-  first — the AC or the task — then the code to match. Patching only the code leaves
-  wrap reconciling against a lie.
-- **Code** — the plan was right, the implementation isn't. Fix in place, re-qualify.
-
-Ask which one it is before you touch anything. Guessing the layer is how a phase
-turns into four fragile patches.
+Intent (the wrong thing got built: re-plan, don't patch) · spec (right aim, wrong
+detail: fix the spec, then the code) · code (fix in place, re-qualify). Name the layer
+before touching anything.
 
 ## Finish
 
-Report: tasks completed of total; any non-`DONE` statuses and how they resolved; every
-deviation from the plan, however small; `flux check` verdict.
-
-Working from a plan, close with `/flux:wrap` — apply executes, wrap closes, and it
-is wrap that reconciles the plan against the tree. Working without one, there is no
-phase to close: record what moved with `flux state set` and stop.
+Report: tasks done of total, by id; every non-`DONE` status and how it resolved; every
+deviation from the spec, however small; `flux check` verdict. Then `/flux:wrap` —
+apply executes, wrap re-verifies each done and closes. Working without an index,
+record what moved with `flux state set` and stop.

@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Write a self-contained phase plan into .flux/plans/ — objective, acceptance criteria, 2-3 tasks, boundaries, verification. Use for work that spans sessions, cannot be undone, or whose shape is still unsettled; ordinary work goes straight to /flux:apply.
+description: Decompose work into the task index — one `flux task add` per task, tracers with a spec file behind `--ref`, fills as `--tier fill --tracer <id>`. Use for work that spans sessions, cannot be undone, or whose shape is still unsettled; ordinary work goes straight to /flux:apply.
 disable-model-invocation: true
 ---
 
@@ -13,43 +13,51 @@ plan→audit→apply→wrap path cost ~3x a single primed apply session and deli
 identical results (`.flux/analysis/2026-08-22-ceremony-two-cycles.md`). If none of
 the three conditions holds, say so in one line and route to `/flux:apply`.
 
-Produce ONE file a cold session can execute without re-deriving anything. It is the
-contract `/flux:apply` executes and `/flux:wrap` reconciles against. Everything the
-plan doesn't say, the executing session will have to guess.
+The output is the index, not a document: tasks a cold session executes one at a time
+without re-deriving anything. Everything a task's spec doesn't say, the executing
+session — or its subagent — will have to guess.
 
 ## Read first, narrowly
 
-The primed pack is already in context — `phase`, `position`, `next`, `open`. Add only:
+The primed pack is already in context — `task`, `position`, `next`, `open`. Add only:
 
-- the effort's `plan.md` / `status.md` under `.flux/plans/`, if one exists;
-- source files whose *current shape* the plan's correctness depends on.
+- the ADR or design the work was grilled into, and the effort's `status.md` if any;
+- source files whose *current shape* the tasks' correctness depends on.
 
-Send wider reading to the built-in `Explore` agent; take its pointers, not its files. Do not chain
-prior summaries "for context" — unread context still costs the same as read context.
+Send wider reading to the built-in `Explore` agent; take its pointers, not its files.
 
-## Size the work before writing it
+## Size the work into tiers
 
-- **Small** — one sentence, 1–2 files, no new pattern or dependency. One task, one AC,
-  no boundaries section. Still gets a plan; still gets wrapped.
-- **Standard** — 2–3 tasks. This is the target: work that fits before quality decays.
-- **Too big** — 4+ tasks, or spans parts that can fail independently. Split it into
-  sequential phase plans and write only the first. Do not write the giant plan and
-  hope apply survives it.
+- **Tracer** — a thin end-to-end slice that proves the shape: runs in the parent
+  session, one per session, and earns a full spec file. If it does not fit a session,
+  it is two tracers.
+- **Fill** — widens a proven slice from a one-line intent: the title, its files and
+  its verify are the whole spec, because a subagent finishes it from those alone. If
+  it needs a paragraph, it is a tracer.
+- **Verification-only** — no files, one check that covers several tasks; a human
+  observation is allowed as the verify (apply turns it into `await`).
 
-State the size you picked in one line, with the reason. Then write.
+State the count you picked — tracers and fills — in one line, with the reason. Then
+write.
 
-## Where it goes
+## Decompose into the index
 
-`.flux/plans/<NN-slug>.md` — or `.flux/plans/<effort>/<NN-slug>.md` when that effort
-already has a directory.
+Tracers first; a fill needs its tracer's id.
 
-## The file
+```
+flux task add "<title>" --files a,b --verify "<cmd>" --ref .flux/plans/<effort>/<slug>.md
+flux task add "<one-line intent>" --tier fill --tracer <id> --files a,b --verify "<cmd>"
+```
+
+`--blocked-by t-x,t-y` for edges beyond the tracer — declare them now; edges are not
+edited later. Add order is `next` order among equals, so add in the order you would
+run them. `--ref` points at the tracer's spec file, written before the `add`:
 
 ```markdown
 ---
-phase: NN-slug
+phase: <slug>
 status: planned
-files: [paths this phase expects to touch]
+files: [paths this tracer expects to touch]
 ---
 
 ## objective
@@ -58,37 +66,36 @@ One sentence: what is true when this is done that is not true now.
 ## acceptance criteria
 AC-1 — Given <precondition>, when <action>, then <outcome someone else could observe>.
 
-## tasks
-### T1 — <verb-first name>
+## task
 files: <paths>
 do: <the specific change — not "improve X", not "handle errors">
 verify: <the command or observation that proves it, run fresh>
 done: AC-1 when <condition>
 
 ## boundaries
-do not change: <what this phase must leave alone, and why it's tempting>
-out of scope: <the adjacent thing you'll want to fix mid-apply>
+do not change: <what this tracer must leave alone, and why it's tempting>
+out of scope: <the adjacent thing — often the fills that widen this>
 
 ## verification
 `flux check` green, plus: <what check cannot see — a screen, a device, a log line>
 ```
 
 Write acceptance criteria someone else could falsify. "Works correctly" is not an AC.
-Every task needs all four lines; a task whose `verify` is "read the code" is a task
-you have not finished specifying.
+A task whose `verify` is "read the code" is a task you have not finished specifying.
 
 ## Check coherence before you finish
 
-Against the effort's plan, `CLAUDE.md`, and what `open` already records: does this
-plan contradict a stated constraint, a decision already made, or the phase's own
-scope? Does it rewrite a file that was just rewritten? Surface what you find, in
-specifics, and wait. Find nothing and say nothing — silence is the pass.
+Against the ADR, `CLAUDE.md`, and what `open` already records: does a task contradict
+a stated constraint, a decision already made, or the effort's scope? Does a fill
+touch a file its tracer has not yet proven? Surface what you find, in specifics, and
+wait. Find nothing and say nothing — silence is the pass.
 
 ## Close
 
 ```
-flux state set phase "<NN-slug>" next "/flux:apply <path>"
+flux task next
 ```
 
-Then one line: the path, the size, and whether the phase is risky enough to warrant
-`/flux:audit` first. No menus.
+Read it back: that line is what the next session opens on. `flux state set next` only
+to override it. Then one line: tracers and fills added, the first tracer's ref, and
+whether it is risky enough to warrant `/flux:audit` on that spec first. No menus.

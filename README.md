@@ -61,18 +61,24 @@ That's the whole routine for bug fixes and small features. No skills, one sessio
 ## Bigger work
 
 Use the skills when a feature outlives one session, changes something you can't undo,
-or you're still arguing about its shape. One phase per session.
+or you're still arguing about its shape. The work goes into the task index, and a
+session takes one task or one batch from it.
 
-1. `/flux:plan` writes one phase with acceptance criteria and two or three tasks.
-2. `/flux:audit` picks the plan apart before you act on it. Skip for mechanical work.
-3. `/flux:apply` executes the plan.
-4. `/flux:wrap` checks the plan against what shipped, saves state, commits.
+1. `/flux:plan` decomposes the design into the index. Tracers are thin end-to-end
+   slices with a spec file each. Fills widen a proven slice from a one-line title.
+2. `/flux:audit` picks a tracer's spec apart before you act on it. Skip for mechanical
+   work.
+3. `/flux:apply` takes `flux task next`. A tracer runs in your session. Fills run as a
+   batch in subagents; one that can't finish gets escalated to a tracer, not retried.
+   A task whose check is something only you can see, like a phone in your hand, is
+   parked as awaiting and the next session opens on the steps.
+4. `/flux:wrap` re-runs each done task's own verify, reopens what fails, saves state,
+   commits.
 
-The next session reads the pack and starts the next phase. Keep a roadmap file with
-one row per phase next to the plans.
+The next session reads the pack and takes the next task. Nothing is planned twice.
 
-We measured this twice on single-session work. It cost 3x and delivered the same
-result, so don't reach for it out of habit.
+We measured the old plan-per-phase path twice on single-session work. It cost 3x and
+delivered the same result, so don't reach for it out of habit.
 
 ## Skills
 
@@ -80,10 +86,10 @@ All are user-invoked. The model never sees them unless you type the command.
 
 | Skill | What it does |
 |---|---|
-| `/flux:plan` | Writes a self-contained phase plan into `.flux/plans/`. Objective, acceptance criteria, tasks, boundaries, how to verify. |
+| `/flux:plan` | Decomposes work into the task index: one `flux task add` per task, tracers with a spec file, fills with a title and files. Closes by reading back `flux task next`. |
 | `/flux:audit` | Reviews a plan adversarially in a subagent so the reading never lands in your context. Fixes blocking problems in place and returns a verdict. |
-| `/flux:apply` | Executes the work, with or without a plan. Reports status honestly, then re-reads its own output and checks it against the spec before calling anything done. |
-| `/flux:wrap` | Ends the session. Runs `flux check`, reconciles the plan against the diff, writes state, generates the handoff, commits. |
+| `/flux:apply` | Takes the next task. Puts an awaiting task to you, runs a tracer in your session, or dispatches a batch of fills to subagents and escalates what can't finish. Reports status honestly, then checks its own output against the spec before calling anything done. |
+| `/flux:wrap` | Ends the session. Runs `flux check`, re-runs every done task's own verify and reopens failures, writes the tracer's outcome, writes state, generates the handoff, commits. |
 | `/flux:grill` | Interviews you relentlessly about a design until it holds up. Writes ADRs as it goes. Use before `/flux:plan` when the idea is still soft. Vendored from mattpocock-skills, MIT. |
 | `/flux:adopt` | Moves a repo's existing project docs (PAUL, STATE.md, ROADMAP.md, a fat CLAUDE.md) into `.flux/`. Optionally archives the old framework. Once per repo. |
 
@@ -94,8 +100,9 @@ All are user-invoked. The model never sees them unless you type the command.
 | `flux check` | Runs your configured test command, prints failures only. |
 | `flux run --filter failures -- <cmd>` | Same filter on any one command. |
 | `flux state set <key> "<value>"` | Writes `phase`, `position`, `next`, or `open`. Refuses to go over budget. |
-| `flux task add "<title>" [--files a,b] [--blocked-by t-x]` / `start <id>` / `done <id> --by "…"` | The execution index. One append-only log of what is left; `done` has to say what verified it. |
-| `flux task next` / `flux task list` | Which task is next, derived — not asserted. `start` leases the task across worktrees, so a second session skips it. `prime` shows the current task and the counts in place of `phase`. |
+| `flux task add "<title>" [--files a,b] [--blocked-by t-x] [--tier fill --tracer t-x]` / `start <id>` / `done <id> --by "…"` | The execution index. One append-only log of what is left; `done` has to say what verified it. A fill waits on its tracer. |
+| `flux task escalate <id> --why "…"` / `await <id> --steps "…"` / `reopen <id>` | Raise a fill to a tracer when a subagent can't finish it. Park a task on a person with the steps they follow. Reopen a done or awaiting task. |
+| `flux task next` / `flux task list` | Which task is next, derived — not asserted. An awaiting task comes first. `start` leases the task across worktrees, so a second session skips it. `prime` shows the current task and the counts in place of `phase`, plus the awaiting steps clipped; the handoff carries them whole. |
 | `flux handoff` | Writes a short handoff from git status, state, and recent commits. |
 | `flux log <tag> "…"` | Field note when the pack missed something you needed. Tags are `pack-miss`, `audit-hit`, `want`. |
 | `flux ledger` | Reads your session transcripts and prints context size, request counts, wrap rate, and cost per session. `--verdict` scores whether each feature moved its metric. |

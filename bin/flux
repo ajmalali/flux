@@ -19,9 +19,13 @@ Commands: init | prime | state get/set/log/compact | task | check | handoff
   flux state log [N]             recent writes, newest first (default 20)
   flux state compact             collapse the log to one record per live key
   flux task add "<title>" [--files a,b] [--blocked-by t-x,t-y] [--verify "<cmd>"]
-                         [--ref <path>]     append a task, print its id
+                         [--ref <path>] [--tier tracer|fill] [--tracer <id>]
+                                 append a task, print its id (absent tier = tracer)
   flux task start <id> | done <id> --by "<what verified it>"
-  flux task list [--open|--done|--all] | next [--all] | compact
+  flux task escalate <id> [--why "…"]     fill -> tracer, back to open; never lowers
+  flux task await <id> --steps "…"        a person verifies; next surfaces it first
+  flux task reopen <id> [--why "…"]       done or awaiting -> open
+  flux task list [--open|--awaiting|--done|--all] | next [--all] | compact
                                  the execution index: which task is next, derived
                                  from an append-only log, not asserted
   flux run [--tail N] [--filter elide|failures|tail:N|raw] -- <command...>
@@ -839,10 +843,12 @@ def _prime_inner():
     # Both derived lines are emitted here, inside the key loop, so pack order never
     # depends on which path produced them. With no index both are "" and every line
     # below is byte-for-byte what it was before the index existed.
-    task_line, task_next = _task_pack_lines_safe(root, cfg)
+    task_line, task_next, task_await = _task_pack_lines_safe(root, cfg)
     for key in ("phase", "position", "next", "open"):
         if key == "phase" and task_line:
             lines.append(task_line)  # replaces `phase:`, never rides beside it
+            if task_await:
+                lines.append(task_await)  # the steps a person is on, clipped
             continue
         value = str(state.get(key, "")).strip()
         if not value:
@@ -1249,17 +1255,26 @@ TASK_TITLE_MAX = 120
 # prime's task line rides inside the pack budget but carries its own cap: one long
 # title must not crowd out the rest of the pack.
 TASK_LINE_BUDGET = 200
+# An awaiting task's steps ride the pack under their own cap (ADR 0004 §4: prime
+# clips, the handoff carries them whole).
+TASK_AWAIT_BUDGET = 300
+TASK_STEPS_ROW_BYTES = 80  # the `list` row shows a glimpse; `next` prints them whole
 DEFAULT_LEASE_HOURS = 12
+TASK_TIERS = ("tracer", "fill")
 
 _TASK_USAGE = (
     'usage: flux task add "<title>" [--files a,b] [--blocked-by t-x,t-y] '
     '[--verify "<cmd>"] [--ref <path>]\n'
+    '                     [--tier tracer|fill] [--tracer <id>]\n'
     '       flux task start <id> | done <id> --by "<what verified it>"\n'
-    '       flux task list [--open|--done|--all] | next [--all] | compact'
+    '       flux task escalate <id> [--why "…"] | await <id> --steps "…" '
+    '| reopen <id> [--why "…"]\n'
+    '       flux task list [--open|--awaiting|--done|--all] | next [--all] | compact'
 )
 _TASK_DONE_USAGE = 'usage: flux task done <id> --by "<what verified it>"'
 _TASK_ADD_FLAGS = {"--files": "files", "--blocked-by": "blocked_by",
-                   "--verify": "verify", "--ref": "ref"}
+                   "--verify": "verify", "--ref": "ref",
+                   "--tier": "tier", "--tracer": "tracer"}
 
 
 def tasks_path(root):
@@ -1339,8 +1354,17 @@ def _task_ops(records):
         ops.append((ts, i, rec["op"], tid, rec))
         if rec["op"] != "add":
             continue
+        # Every folded terminal field becomes an op at its own stamp, in the order
+        # the stamps say -- a reopen folded at T cannot be undone by a merged `done`
+        # stamped before T, because that done replays first.
+        if rec.get("escalate_ts"):
+            ops.append((str(rec["escalate_ts"]), i, "escalate", tid,
+                        {"why": str(rec.get("escalated", ""))}))
+        if rec.get("reopen_ts"):
+            ops.append((str(rec["reopen_ts"]), i, "reopen", tid,
+                        {"why": str(rec.get("why", ""))}))
         status = rec.get("status")
-        if status not in ("active", "done"):
+        if status not in ("active", "done", "awaiting"):
             continue
         starts = _str_list(rec.get("starts"))
         if not starts and rec.get("where"):
@@ -1351,12 +1375,18 @@ def _task_ops(records):
         if status == "done":
             ops.append((str(rec.get("done_ts") or ts), i, "done", tid,
                         {"by": str(rec.get("by", ""))}))
+        elif status == "awaiting":
+            ops.append((str(rec.get("await_ts") or ts), i, "await", tid,
+                        {"steps": str(rec.get("steps", ""))}))
     return ops
 
 def _new_task(tid):
     return {"id": tid, "ts": "", "title": "", "files": [], "blocked_by": [],
             "verify": "", "ref": "", "status": "open", "where": "", "by": "",
-            "starts": [], "start_ts": "", "done_ts": "", "_add": False, "_closed": False}
+            "starts": [], "start_ts": "", "done_ts": "",
+            "tier": "tracer", "tracer": "", "escalated": "", "escalate_ts": "",
+            "steps": "", "await_ts": "", "reopen_ts": "", "reopen_why": "",
+            "_add": False, "_closed": False}
 
 def replay_tasks(records):
     """-> {id: task}, in (add ts, id) order. Ops are ordered by (ts, file position)
@@ -1377,6 +1407,10 @@ def replay_tasks(records):
             task["blocked_by"] = _str_list(rec.get("blocked_by"))
             task["verify"] = str(rec.get("verify", ""))
             task["ref"] = str(rec.get("ref", ""))
+            # Absent means tracer: the tier every 2.12.0 record has. The safe default
+            # keeps the work in the parent -- a fill run there is merely slow.
+            task["tier"] = rec.get("tier") if rec.get("tier") in TASK_TIERS else "tracer"
+            task["tracer"] = str(rec.get("tracer") or "")
             task["status"] = "open"
         elif op == "start":
             if task["_closed"]:  # a start after a done opens a new segment
@@ -1391,7 +1425,34 @@ def replay_tasks(records):
             task["done_ts"] = ts
             task["_closed"] = True
             task["status"] = "done"
-        # anything else: recorded as a touch, ignored for status (phase 2 verbs)
+        elif op == "escalate":
+            # Tier only ever rises. The task goes back to open: whoever raised it has
+            # handed it back, and the next tracer session picks it up -- so the
+            # start segment resets too, or that pickup reads as a two-machine conflict.
+            task["starts"] = []
+            task["where"] = ""
+            task["tier"] = "tracer"
+            task["escalated"] = str(rec.get("why", ""))
+            task["escalate_ts"] = ts
+            task["status"] = "open"
+        elif op == "await":
+            task["steps"] = str(rec.get("steps", ""))
+            task["await_ts"] = ts
+            task["status"] = "awaiting"
+        elif op == "reopen":
+            # From done or awaiting; the segment restarts so a stale `where`, `by`
+            # or `steps` cannot describe work that is open again.
+            task["starts"] = []
+            task["where"] = ""
+            task["by"] = ""
+            task["done_ts"] = ""
+            task["steps"] = ""
+            task["await_ts"] = ""
+            task["reopen_ts"] = ts
+            task["reopen_why"] = str(rec.get("why", ""))
+            task["_closed"] = False
+            task["status"] = "open"
+        # anything else: recorded as a touch, ignored for status
     live = [t for t in tasks.values() if t["_add"]]
     live.sort(key=lambda t: (t["ts"], t["id"]))
     ordered = {}
@@ -1412,8 +1473,11 @@ def task_blockers(tasks, tid):
     task = tasks.get(tid)
     if not task:
         return []
+    deps = list(task["blocked_by"])
+    if task["tracer"] and task["tracer"] not in deps:
+        deps.append(task["tracer"])  # a fill implicitly waits on the slice it widens
     out = []
-    for dep in task["blocked_by"]:
+    for dep in deps:
         known = tasks.get(dep)
         if known is None:
             out.append("?" + dep)
@@ -1425,11 +1489,26 @@ def task_blocked(tasks, tid):
     return bool(task_blockers(tasks, tid))
 
 def task_counts(tasks):
-    """-> (open, blocked, done). `open` is everything not done (an active task is
-    still work in flight); `blocked` is the subset of those waiting on an edge."""
+    """-> (open, blocked, done, awaiting, escalated). `open` is everything not done
+    (active and awaiting tasks are still work in flight); `blocked` and `awaiting`
+    are subsets of it. `escalated` counts every task that was ever escalated, done
+    or not -- it is the numerator of the escalation rate, read by hand until the
+    ledger metric lands."""
     live = [tid for tid in tasks if tasks[tid]["status"] != "done"]
-    return len(live), sum(1 for tid in live if task_blocked(tasks, tid)), \
-        len(tasks) - len(live)
+    return (len(live),
+            sum(1 for tid in live if task_blocked(tasks, tid)),
+            len(tasks) - len(live),
+            sum(1 for tid in live if tasks[tid]["status"] == "awaiting"),
+            sum(1 for tid in tasks if tasks[tid]["escalate_ts"]))
+
+def _task_count_line(tasks):
+    n_open, n_blocked, n_done, n_await, n_esc = task_counts(tasks)
+    line = "%d open, %d blocked, %d done" % (n_open, n_blocked, n_done)
+    if n_await:
+        line += ", %d awaiting" % n_await
+    if n_esc:
+        line += ", %d escalated" % n_esc
+    return line
 
 def append_task(path, rec):
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -1451,6 +1530,22 @@ def compact_tasks(path):
         for field in ("files", "blocked_by", "verify", "ref"):
             if task[field]:
                 rec[field] = task[field]
+        # The folded tier is the *current* one; the original fill-ness survives as
+        # the presence of `escalated`. A plain tracer stays unmarked (absent = tracer).
+        if task["escalate_ts"]:
+            rec["tier"] = "tracer"
+            rec["escalated"] = task["escalated"]
+            rec["escalate_ts"] = task["escalate_ts"]
+        elif task["tier"] == "fill":
+            rec["tier"] = "fill"
+        if task["tracer"]:
+            rec["tracer"] = task["tracer"]
+        if task["reopen_ts"] and task["status"] != "done":
+            # Kept while the task is open again, so a merged earlier `done` replays
+            # before the reopen and cannot resurrect it.
+            rec["reopen_ts"] = task["reopen_ts"]
+            if task["reopen_why"]:
+                rec["why"] = task["reopen_why"]
         if task["status"] == "done":
             rec["status"] = "done"
             rec["by"] = task["by"]
@@ -1459,7 +1554,13 @@ def compact_tasks(path):
             rec["status"] = "active"
             rec["where"] = task["where"]
             rec["start_ts"] = task["start_ts"]
-        if task["status"] in ("done", "active") and task["starts"]:
+        elif task["status"] == "awaiting":
+            rec["status"] = "awaiting"
+            rec["steps"] = task["steps"]
+            rec["await_ts"] = task["await_ts"]
+            if task["start_ts"]:
+                rec["start_ts"] = task["start_ts"]
+        if task["status"] in ("done", "active", "awaiting") and task["starts"]:
             # Carried so the `[2 starts]` conflict flag survives compaction.
             rec["starts"] = task["starts"]
         out.append(rec)
@@ -1605,11 +1706,17 @@ def _task_candidates(root, cfg, tasks):
     (finish what you started), rank 2 is everything else -- open, or active with no
     live lease at all, which is what a sealed or expired lease leaves behind.
 
+    Rank -1 is a task awaiting a person: it is the first thing any session should
+    surface, and leases do not apply -- `await` cleared it, and nobody holds it.
+
     Same input, same answer, twice: the only tie-break is (add ts, id)."""
     ranked = []
     for tid in task_order(tasks):
         task = tasks[tid]
         if task["status"] == "done" or task_blocked(tasks, tid):
+            continue
+        if task["status"] == "awaiting":
+            ranked.append((-1, task["ts"], tid))
             continue
         lease = _lease_read(root, tid)
         rank = 1
@@ -1631,7 +1738,8 @@ def cmd_task(args):
               file=sys.stderr)
         return 1
     handler = {"add": _task_add, "start": _task_start, "done": _task_done,
-               "list": _task_list, "next": _task_next,
+               "escalate": _task_escalate, "await": _task_await,
+               "reopen": _task_reopen, "list": _task_list, "next": _task_next,
                "compact": _task_compact}.get(args[0] if args else "")
     if handler is None:
         print(_TASK_USAGE, file=sys.stderr)
@@ -1668,6 +1776,15 @@ def _task_add(root, cfg, args):
               "entry, not the spec (point --ref at that)"
               % (len(title), TASK_TITLE_MAX), file=sys.stderr)
         return 2
+    tier = opts.get("tier") or "tracer"
+    if tier not in TASK_TIERS:
+        print("flux task: --tier is tracer or fill, not %r\n%s" % (tier, _TASK_USAGE),
+              file=sys.stderr)
+        return 2
+    if opts.get("tracer") and tier != "fill":
+        print("flux task: --tracer names the slice a *fill* widens; a tracer has "
+              "none\n%s" % _TASK_USAGE, file=sys.stderr)
+        return 2
     stamp = now_iso()
     tid = task_id(stamp, title)
     path = tasks_path(root)
@@ -1676,6 +1793,17 @@ def _task_add(root, cfg, args):
         print("flux task: id collision on %s, re-run (the stamp carries "
               "milliseconds, so a re-run is a different id)" % tid, file=sys.stderr)
         return 1
+    tracer = opts.get("tracer") or ""
+    if tracer:
+        parent = tasks.get(tracer)
+        if parent is None:
+            print("flux task: no such task %s to be the tracer of" % tracer,
+                  file=sys.stderr)
+            return 1
+        if parent["tier"] != "tracer":
+            print("flux task: %s is a fill, not a tracer — a fill widens a tracer's "
+                  "slice, never another fill's" % tracer, file=sys.stderr)
+            return 1
     rec = {"ts": stamp, "id": tid, "op": "add", "title": title}
     for field in ("files", "blocked_by"):
         value = _csv(opts.get(field))
@@ -1684,12 +1812,11 @@ def _task_add(root, cfg, args):
     for field in ("verify", "ref"):
         if opts.get(field):
             rec[field] = opts[field]
-    size = len(json.dumps(rec, ensure_ascii=False).encode("utf-8"))
-    if size > TASK_RECORD_MAX_BYTES:
-        # Checked before appending, so a refused add leaves the log exactly as it was.
-        print("flux task: refused — record would be %d bytes, TASK_RECORD_MAX_BYTES "
-              "is %d. Trim --verify/--files; a spec belongs behind --ref."
-              % (size, TASK_RECORD_MAX_BYTES), file=sys.stderr)
+    if tier == "fill":  # absent means tracer, so a tracer record stays 2.12.0-shaped
+        rec["tier"] = "fill"
+        if tracer:
+            rec["tracer"] = tracer
+    if not _task_record_fits(rec, "Trim --verify/--files; a spec belongs behind --ref."):
         return 1
     append_task(path, rec)
     write_gitattributes(flux_dir(root))
@@ -1697,12 +1824,151 @@ def _task_add(root, cfg, args):
     _task_maybe_compact(cfg, path)
     return 0
 
+def _task_record_fits(rec, hint):
+    """Checked before appending, so a refused write leaves the log exactly as it
+    was. Every record flux stores is capped, ops included -- a 2 KB `--steps` is a
+    spec, and specs go behind --ref."""
+    size = len(json.dumps(rec, ensure_ascii=False).encode("utf-8"))
+    if size > TASK_RECORD_MAX_BYTES:
+        print("flux task: refused — record would be %d bytes, TASK_RECORD_MAX_BYTES "
+              "is %d. %s" % (size, TASK_RECORD_MAX_BYTES, hint), file=sys.stderr)
+        return False
+    return True
+
 def _task_one_id(args, usage):
     """-> (id, None) or (None, exit code). The dash guard again: an id positional."""
     if len(args) != 1 or not args[0] or args[0].startswith("-"):
         print(usage, file=sys.stderr)
         return None, 2
     return args[0], None
+
+def _task_id_and_flag(args, flag, usage):
+    """`<id> [<flag> <value>]` -> (id, value, None) or (None, None, exit code).
+    The value is verbatim (a `why` may lead with a dash); the id is dash-guarded."""
+    value, pos, i = "", [], 0
+    while i < len(args):
+        arg = args[i]
+        if arg == flag:
+            if i + 1 >= len(args):
+                print(usage, file=sys.stderr)
+                return None, None, 2
+            value = args[i + 1]
+            i += 2
+            continue
+        if arg.startswith("-"):
+            print("flux task: %s looks like a flag, not an id\n%s" % (arg, usage),
+                  file=sys.stderr)
+            return None, None, 2
+        pos.append(arg)
+        i += 1
+    if len(pos) != 1 or not pos[0]:
+        print(usage, file=sys.stderr)
+        return None, None, 2
+    return pos[0], value, None
+
+def _task_load(root, tid):
+    """-> (path, tasks, task) or (path, tasks, None) with the `no such task` line
+    already printed."""
+    path = tasks_path(root)
+    tasks = replay_tasks(read_task_log(path))
+    task = tasks.get(tid)
+    if task is None:
+        print("flux task: no such task %s" % tid, file=sys.stderr)
+    return path, tasks, task
+
+def _task_held_elsewhere(root, cfg, tid, verb):
+    lease = _lease_read(root, tid)
+    if _lease_live(lease, cfg) and not _lease_is_ours(lease, root):
+        print("flux task: %s is held by %s — that session owns %s it"
+              % (tid, lease.get("where", "?"), verb), file=sys.stderr)
+        return True
+    return False
+
+def _task_escalate(root, cfg, args):
+    """fill -> tracer, one direction. What a subagent handed back with NEEDS_CONTEXT
+    or BLOCKED goes in `why`; the task returns to open for a tracer session."""
+    usage = 'usage: flux task escalate <id> [--why "<what the subagent said>"]'
+    tid, why, code = _task_id_and_flag(args, "--why", usage)
+    if code is not None:
+        return code
+    path, _tasks, task = _task_load(root, tid)
+    if task is None:
+        return 1
+    if task["status"] == "done":
+        print("flux task: %s is done — nothing to escalate" % tid, file=sys.stderr)
+        return 1
+    if task["status"] == "awaiting":
+        print("flux task: %s is awaiting a person — resolve it with done --by or "
+              "reopen first" % tid, file=sys.stderr)
+        return 1
+    if task["tier"] == "tracer":
+        print("flux task: %s is already a tracer — tier only ever rises" % tid,
+              file=sys.stderr)
+        return 1
+    if _task_held_elsewhere(root, cfg, tid, "escalating"):
+        return 1
+    rec = {"ts": now_iso(), "id": tid, "op": "escalate"}
+    if why.strip():
+        rec["why"] = why
+    if not _task_record_fits(rec, "Trim --why; the detail belongs in the spec."):
+        return 1
+    append_task(path, rec)
+    _lease_clear(root, tid)  # a batch moves on; nobody holds it
+    print("flux task: escalate %s  %s" % (tid, task["title"]))
+    return 0
+
+def _task_await(root, cfg, args):
+    """The verify is a human observation. The steps are what the person does; the
+    session ends here and the next one surfaces them first."""
+    usage = 'usage: flux task await <id> --steps "<what the person does to verify>"'
+    tid, steps, code = _task_id_and_flag(args, "--steps", usage)
+    if code is not None:
+        return code
+    if not steps.strip():
+        print(usage, file=sys.stderr)
+        return 2
+    path, _tasks, task = _task_load(root, tid)
+    if task is None:
+        return 1
+    if task["status"] == "done":
+        print("flux task: %s is done — nothing to await" % tid, file=sys.stderr)
+        return 1
+    if task["status"] == "awaiting":
+        print("flux task: %s is already awaiting a person — resolve it with done "
+              "--by or reopen first" % tid, file=sys.stderr)
+        return 1
+    if _task_held_elsewhere(root, cfg, tid, "parking"):
+        return 1
+    rec = {"ts": now_iso(), "id": tid, "op": "await", "steps": steps}
+    if not _task_record_fits(rec, "Trim --steps; the detail belongs in the spec."):
+        return 1
+    append_task(path, rec)
+    _lease_clear(root, tid)  # no session holds a task a person is verifying
+    print("flux task: await %s  %s" % (tid, task["title"]))
+    return 0
+
+def _task_reopen(root, _cfg, args):
+    """From awaiting (the observation failed) or done (a verify failed on replay).
+    Tier is untouched; the start segment resets."""
+    usage = 'usage: flux task reopen <id> [--why "<what failed>"]'
+    tid, why, code = _task_id_and_flag(args, "--why", usage)
+    if code is not None:
+        return code
+    path, _tasks, task = _task_load(root, tid)
+    if task is None:
+        return 1
+    if task["status"] not in ("done", "awaiting"):
+        print("flux task: %s is %s, not closed — reopen takes a done or awaiting task"
+              % (tid, task["status"]), file=sys.stderr)
+        return 1
+    rec = {"ts": now_iso(), "id": tid, "op": "reopen"}
+    if why.strip():
+        rec["why"] = why
+    if not _task_record_fits(rec, "Trim --why."):
+        return 1
+    append_task(path, rec)
+    print("flux task: reopen %s  %s" % (tid, task["title"]))
+    return 0
 
 def _task_start(root, cfg, args):
     tid, code = _task_one_id(args, "usage: flux task start <id>")
@@ -1715,9 +1981,13 @@ def _task_start(root, cfg, args):
         print("flux task: no such task %s" % tid, file=sys.stderr)
         return 1
     if task["status"] == "done":
-        # Last-op-wins replay would happily make this a reopen. Reopening is a phase 2
-        # verb with its own semantics; an undocumented one is worse than none.
-        print("flux task: %s is already done — reopening is not a verb" % tid,
+        # Last-op-wins replay would happily make this a reopen; `reopen` is the verb
+        # for that, with its own semantics, so an undocumented path is worse than none.
+        print("flux task: %s is already done — reopening is not a verb; "
+              "`flux task reopen %s` is" % (tid, tid), file=sys.stderr)
+        return 1
+    if task["status"] == "awaiting":
+        print("flux task: %s is awaiting a person — done --by or reopen" % tid,
               file=sys.stderr)
         return 1
     blockers = task_blockers(tasks, tid)
@@ -1799,14 +2069,20 @@ def _task_row(tasks, tid):
     if len(seen) > 1:
         # Two machines started the same task and neither saw the other's lease.
         row += " [%d starts: %s]" % (len(seen), ", ".join(seen))
+    if task["tier"] == "fill":  # tracer is the unmarked default
+        row += " [fill of %s]" % task["tracer"] if task["tracer"] else " [fill]"
+    if task["escalate_ts"]:
+        row += " [escalated]"
+    if task["status"] == "awaiting":
+        row += " (awaiting: %s)" % clip(task["steps"], TASK_STEPS_ROW_BYTES, marker="…")
     if task["status"] == "done" and task["by"]:
         row += " — by: %s" % task["by"]
     return row
 
 def _task_list(root, cfg, args):
-    unknown = [a for a in args if a not in ("--open", "--done", "--all")]
+    unknown = [a for a in args if a not in ("--open", "--awaiting", "--done", "--all")]
     if unknown:
-        print("usage: flux task list [--open|--done|--all]", file=sys.stderr)
+        print("usage: flux task list [--open|--awaiting|--done|--all]", file=sys.stderr)
         return 2
     path = tasks_path(root)
     tasks = replay_tasks(read_task_log(path))
@@ -1817,25 +2093,43 @@ def _task_list(root, cfg, args):
         shown = task_order(tasks)
     elif "--done" in args:
         shown = [t for t in task_order(tasks) if tasks[t]["status"] == "done"]
+    elif "--awaiting" in args:
+        shown = [t for t in task_order(tasks) if tasks[t]["status"] == "awaiting"]
     elif "--open" in args:
         shown = [t for t in task_order(tasks) if tasks[t]["status"] == "open"]
     else:
         shown = [t for t in task_order(tasks) if tasks[t]["status"] != "done"]
-    n_open, n_blocked, n_done = task_counts(tasks)
     rows = [_task_row(tasks, tid) for tid in shown]
-    rows.append("%d open, %d blocked, %d done" % (n_open, n_blocked, n_done))
+    rows.append(_task_count_line(tasks))
     print(clip("\n".join(rows), state_budget_bytes(cfg)))
     return 0
 
 def _task_next_line(task):
     line = "%s  %s" % (task["id"], task["title"])
+    if task["status"] == "awaiting":
+        # The person acts, not the session: the steps are the whole instruction.
+        return line + " · awaiting: %s" % task["steps"]
     if task["files"]:
         line += " · files: %s" % ",".join(task["files"])
     if task["verify"]:
         line += " · verify: %s" % task["verify"]
     if task["ref"]:
         line += " · ref: %s" % task["ref"]
+    if task["tier"] == "fill":
+        line += " · tier: fill"
+        if task["tracer"]:
+            line += " · tracer: %s" % task["tracer"]
     return line
+
+def _task_awaiting(root):
+    """[(id, title, steps)] for the handoff, add order. [] fast when there is no
+    index -- and the handoff's no-awaiting path must not change a byte."""
+    path = tasks_path(root)
+    if not os.path.isfile(path):
+        return []
+    tasks = replay_tasks(read_task_log(path))
+    return [(tid, tasks[tid]["title"], tasks[tid]["steps"])
+            for tid in task_order(tasks) if tasks[tid]["status"] == "awaiting"]
 
 def _task_next(root, cfg, args):
     if [a for a in args if a != "--all"]:
@@ -1865,35 +2159,42 @@ def _task_compact(root, _cfg, args):
     return 0
 
 def _task_pack_lines(root, cfg):
-    """-> (task line, derived next line) for prime, both "" when the index has
-    nothing live. Returns before any git call when there is no index: this runs on
-    every SessionStart in every repo the plugin is installed in."""
+    """-> (task line, derived next line, await line) for prime, all "" when the
+    index has nothing live. Returns before any git call when there is no index:
+    this runs on every SessionStart in every repo the plugin is installed in."""
     path = tasks_path(root)
     if not os.path.isfile(path):
-        return "", ""
+        return "", "", ""
     tasks = replay_tasks(read_task_log(path))
     live = [tid for tid in task_order(tasks) if tasks[tid]["status"] != "done"]
     if not live:
-        return "", ""
-    n_open, n_blocked, n_done = task_counts(tasks)
+        return "", "", ""
     candidates = _task_candidates(root, cfg, tasks)
     head = candidates[0] if candidates else live[0]
-    task_line = clip("task: %s %s · %d open, %d blocked, %d done"
-                     % (head, tasks[head]["title"], n_open, n_blocked, n_done),
+    task_line = clip("task: %s %s · %s" % (head, tasks[head]["title"],
+                                            _task_count_line(tasks)),
                      TASK_LINE_BUDGET, marker="…")
-    next_line = ""
+    next_line = await_line = ""
     if candidates:
         nid = candidates[0]
-        next_line = clip("next: %s %s  [from index — flux task next]"
-                         % (nid, tasks[nid]["title"]), TASK_LINE_BUDGET, marker="…")
-    return task_line, next_line
+        if tasks[nid]["status"] == "awaiting":
+            # The person acts; the pack says what they do and how it resolves.
+            await_line = clip("await: %s %s" % (nid, tasks[nid]["steps"]),
+                              TASK_AWAIT_BUDGET, marker="…")
+            next_line = clip('next: %s %s  [awaiting a person — flux task done %s '
+                             '--by "…" | reopen %s]' % (nid, tasks[nid]["title"], nid, nid),
+                             TASK_LINE_BUDGET, marker="…")
+        else:
+            next_line = clip("next: %s %s  [from index — flux task next]"
+                             % (nid, tasks[nid]["title"]), TASK_LINE_BUDGET, marker="…")
+    return task_line, next_line, await_line
 
 def _task_pack_lines_safe(root, cfg):
     """A broken index must never blank the pack — same posture as the cycle line."""
     try:
         return _task_pack_lines(root, cfg)
     except Exception:
-        return "", ""
+        return "", "", ""
 
 # ----------------------------------------------------------------------- check
 
@@ -2034,6 +2335,14 @@ def cmd_handoff(_args):
     for key, value in state.items():
         if str(value).strip():
             sections.append("- %s: %s" % (key, value))
+    awaiting = _task_awaiting(root)
+    if awaiting:
+        # Prime clips the steps; the handoff carries them whole (ADR 0004 §4).
+        sections.append("")
+        sections.append("## awaiting")
+        for tid, title, steps in awaiting:
+            sections.append("- %s %s" % (tid, title))
+            sections.append("  steps: %s" % steps)
     status = git(["status", "--short"], cwd=root)
     sections.append("")
     sections.append("## working tree")

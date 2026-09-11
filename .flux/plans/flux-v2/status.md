@@ -1,13 +1,15 @@
 # flux-v2 — status & next task
 
-Updated: 2026-09-10 (**ADR 0004 task-index phase 1 shipped, gated, wrapped — 306 green**;
-`.flux/plans/task-index/01-index-core.md` `status: done`). `flux task
+Updated: 2026-09-10 (**ADR 0004 task-index phase 1 shipped, gated, wrapped, AND deployed —
+306 green**; `.flux/plans/task-index/01-index-core.md` `status: done`). `flux task
 add/start/done/list/next/compact` over append-only `.flux/tasks.jsonl` (replayed like the
 state log), `start` leases under git's common dir (honoured by next/start, cleared by
 done/seal), prime swaps `task:` for `phase:` and derives `next:` when the index has live
-work, `.gitattributes` gains `tasks.jsonl merge=union`. plugin.json → **2.12.0, not yet
-pushed or deployed** — the 2026-09-08 deployment-gap check (plugin update shows 2.12.0 +
-`flux task next` runs fleet-side) is the first thing next session. ADR 0004 phases 2
+work, `.gitattributes` gains `tasks.jsonl merge=union`. plugin.json **2.12.0 pushed and
+deployed** — the 2026-09-08 deployment-gap check **passed 2026-09-10**: installed plugin
+pinned to 2.12.0 (installed_plugins.json + `which flux`), and in a fresh adopted repo from
+a clean minimal-env shell `flux init` / `task add` / `task next` / `task list` and `flux
+prime` (task:/next: derivation) all run clean, exit 0, no traceback. ADR 0004 phases 2
 (tiers/escalate/await/reopen + skill rewrite) and 3 (adoption, claim seeding) unbuilt.
 — Prior (2026-09-08): deployment gap fixed, see block below; README rewritten as a concise user guide) — loop phases 01–06 plus **07 (deletions)** shipped, gated, wrapped
 (**267 green**); phase 07 closed `.flux/plans/loop/07-deletions.md` (`status: done`) —
@@ -51,7 +53,7 @@ this file is live state only.
 
 - **Build ADR 0004 — the task index (grilled 2026-09-10, accepted).** `.flux/adr/0004-task-index-execution.md`; glossary `CONTEXT.md`. Three phases, one per session, via plan→apply→wrap.
   - [x] **(1) index core — DONE 2026-09-10** (`.flux/plans/task-index/01-index-core.md`, `status: done`; 306 green, plugin.json 2.12.0 undeployed). `flux task add/start/done/list/next/compact` over `.flux/tasks.jsonl`, leases under git common dir, prime task:/next: lines, compaction, gitattributes append. See the plan's `## outcome` for deviations.
-  - [ ] **(2) tiers tracer/fill, `escalate`, `await`/`reopen`, plan/apply/wrap rewritten in place.** Next after 2.12.0 is confirmed deployed.
+  - [ ] **(2) tiers tracer/fill, `escalate`, `await`/`reopen`, plan/apply/wrap rewritten in place.** 2.12.0 confirmed deployed 2026-09-10 — this is the next build (`/flux:plan` ADR 0004 phase 2).
   - [ ] **(3) adopt on broadcast, seed the two day-one claims** (ctx_p50<100k radiator; escalation rate<0.3).
 - [ ] **Build the loop — `.flux/plans/loop/` (ADR 0003, accepted 2026-09-03).** Roadmap
   `00-roadmap.md` maps every field-read-out action to eight phases, each with the claim it is
@@ -124,6 +126,22 @@ this file is live state only.
   only, so read its `eligible` counts for those claims as starting today; do not score
   them `unmoved` on sessions that ran 2.10.1. Consider re-seeding those three claims
   (`flux claim add`) so their timestamps postdate the deployment.
+- **Status 2026-09-10:** still not re-seeded. `flux ledger --verdict` today scores
+  `04-guard over_cap==0` **unmoved 2**, `04-seal wrap_coverage>=0.8` **unmoved 2** (latest
+  0.40), `06-handoff-inline first_edit<=8` **unmoved 2** (latest 26) — all contaminated by
+  2.10.1-era sessions. `03-log help_reads==0` and `00-loop meta_tax<0.5` read **moved**;
+  `02-status-diet` **pending** (<1 cycle). Decision still open: re-seed 04/04/06 post-deploy
+  vs. let them accrue clean cycles now that 2.11.1+ is live fleet-wide.
+
+## 2.12.0 deployment-gap check — PASSED 2026-09-10
+
+- **Version:** `installed_plugins.json` pins `flux@marketplace` → installPath
+  `.../cache/marketplace/flux/2.12.0`, `version 2.12.0`; `which flux` resolves to that
+  bin. The `claude plugin update flux@marketplace` took.
+- **Fleet-side task index:** in a throwaway git repo (scratchpad) with no `.flux/`, run
+  from a clean `env -i` shell against the plugin's 2.12.0 bin — `flux init`, `flux task add`,
+  `flux task next`, `flux task list`, and `flux prime` all exit 0 with no traceback; prime
+  emits the `task:`/`next:` derivation lines. Gap for 2.12.0 is closed.
 
 ## On notice & closed metrics (loop phase 07, 2026-09-07)
 

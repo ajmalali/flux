@@ -1,7 +1,7 @@
 # flux-v2 — status & next task
 
 Updated: 2026-09-11 (**ADR 0004 task-index phase 2 shipped, gated, wrapped — 327 green;
-plugin.json 2.13.0 committed, NOT yet pushed/deployed**; `.flux/plans/task-index/
+plugin.json 2.13.0 pushed + deployed**; `.flux/plans/task-index/
 02-tiers-await-skills.md` `status: done`, applied without an audit pass). Tasks carry a
 tier (`--tier tracer|fill`, absent = tracer; `--tracer <id>` is an implicit blocking
 edge), `flux task escalate` raises fill→tracer (never lowers, clears the lease),
@@ -11,8 +11,9 @@ task back to open. Compaction folds all three as synthetic ops. plan/apply/wrap 
 rewritten whole around the index (plan decomposes into `flux task add`, apply takes
 `next` — awaiting head / one tracer / one fill batch to subagents, escalate never retry —
 wrap re-verifies each done and reopens failures). Deviations in the plan's `## outcome`.
-**Next: push + `claude plugin update flux@marketplace`, confirm 2.13.0 fleet-side
-(`flux task escalate t-x` → "no such task", exit 1) — then `/flux:plan` phase 3.**
+**2.13.0 pushed + deployed 2026-09-11; deployment-gap check passed** (installed copy
+reports 2.13.0, `flux task escalate t-x` → "no such task" exit 1, no-`.flux` cwd → init
+hint exit 1, prime clean). **Next: `/flux:plan` ADR 0004 phase 3.**
 — Prior (2026-09-10): phase 1 (`01-index-core.md`, `status: done`) — `flux task
 add/start/done/list/next/compact` over append-only `.flux/tasks.jsonl`, leases under
 git's common dir, prime `task:`/`next:` derivation, `tasks.jsonl merge=union`; 2.12.0
@@ -59,8 +60,8 @@ this file is live state only.
 
 - **Build ADR 0004 — the task index (grilled 2026-09-10, accepted).** `.flux/adr/0004-task-index-execution.md`; glossary `CONTEXT.md`. Three phases, one per session, via plan→apply→wrap.
   - [x] **(1) index core — DONE 2026-09-10** (`.flux/plans/task-index/01-index-core.md`, `status: done`; 306 green, plugin.json 2.12.0 undeployed). `flux task add/start/done/list/next/compact` over `.flux/tasks.jsonl`, leases under git common dir, prime task:/next: lines, compaction, gitattributes append. See the plan's `## outcome` for deviations.
-  - [x] **(2) tiers tracer/fill, `escalate`, `await`/`reopen`, plan/apply/wrap rewritten in place — DONE 2026-09-11** (`.flux/plans/task-index/02-tiers-await-skills.md`, `status: done`; 327 green; plugin.json 2.13.0 **undeployed until pushed + plugin update**). Verbs, prime `await:` line, handoff `## awaiting`, three skills rewritten. See the plan's `## outcome` for eight deviations.
-  - [ ] **(3) adopt on broadcast, seed the two day-one claims** (ctx_p50<100k radiator; escalation rate<0.3) — plus the escalation-rate and replay-check ledger metrics the claims need. Gate: 2.13.0 deployment-gap check passed first.
+  - [x] **(2) tiers tracer/fill, `escalate`, `await`/`reopen`, plan/apply/wrap rewritten in place — DONE 2026-09-11** (`.flux/plans/task-index/02-tiers-await-skills.md`, `status: done`; 327 green; plugin.json 2.13.0 **deployed 2026-09-11**). Verbs, prime `await:` line, handoff `## awaiting`, three skills rewritten. See the plan's `## outcome` for eight deviations.
+  - [ ] **(3) adopt on broadcast, seed the two day-one claims** (ctx_p50<100k radiator; escalation rate<0.3) — plus the escalation-rate and replay-check ledger metrics the claims need. Gate: 2.13.0 deployment-gap check **passed 2026-09-11**.
 - [ ] **Build the loop — `.flux/plans/loop/` (ADR 0003, accepted 2026-09-03).** Roadmap
   `00-roadmap.md` maps every field-read-out action to eight phases, each with the claim it is
   judged on. 01 ledger + 02 status diet + 03 `flux log`/footer + **04 guard/age/seal DONE**

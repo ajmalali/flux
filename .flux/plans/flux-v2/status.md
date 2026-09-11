@@ -1,19 +1,29 @@
 # flux-v2 — status & next task
 
-Updated: 2026-09-11 (**ADR 0004 task-index phase 2 shipped, gated, wrapped — 327 green;
-plugin.json 2.13.0 pushed + deployed**; `.flux/plans/task-index/
-02-tiers-await-skills.md` `status: done`, applied without an audit pass). Tasks carry a
-tier (`--tier tracer|fill`, absent = tracer; `--tracer <id>` is an implicit blocking
-edge), `flux task escalate` raises fill→tracer (never lowers, clears the lease),
-`await <id> --steps` parks a task on a person (ranks first in `next`; prime prints
-`await:` ≤300 B, handoff carries `## awaiting` whole), `reopen` takes a done or awaiting
-task back to open. Compaction folds all three as synthetic ops. plan/apply/wrap were
-rewritten whole around the index (plan decomposes into `flux task add`, apply takes
-`next` — awaiting head / one tracer / one fill batch to subagents, escalate never retry —
-wrap re-verifies each done and reopens failures). Deviations in the plan's `## outcome`.
-**2.13.0 pushed + deployed 2026-09-11; deployment-gap check passed** (installed copy
-reports 2.13.0, `flux task escalate t-x` → "no such task" exit 1, no-`.flux` cwd → init
-hint exit 1, prime clean). **Next: `/flux:plan` ADR 0004 phase 3.**
+Updated: 2026-09-11 (**ADR 0004 phase 3, metric half shipped, gated, wrapped — 336
+green**; `.flux/plans/task-index/03-escalation-metric.md` `status: done`, applied without an
+audit pass). `escalation_rate` is a claimable ledger metric: `_verdict_escalation` scores a
+**window** ratio over the task log — tasks carry no session, so it cannot be chunked by
+cycles; it follows `meta_tax`'s precedent (eligibility + patience from eligible sessions in
+scope, divergence stated in the line), reads `pending` under one cycle and
+`pending (n/a — no fills)` on an empty denominator. `_task_log_for_scope` maps
+repo/fleet/name to `.flux/tasks.jsonl` paths through `_fleet_scan`; `_escalation_counts`
+reads them with `read_task_log` + `replay_tasks` only. The fill denominator is
+`tier == "fill"` **or** a truthy `escalate_ts` — that disjunct is the whole of its
+compaction-safety, since compaction rewrites an escalated fill's tier to `tracer`. One
+deviation: a now-false docstring line inside `_verdict_general`, a do-not-change boundary —
+text only, no behavior. **Deployed version is still 2.13.0 — no bump, no push this
+session.** **Next: the fills the index already carries** (t-6if4 reopen-evidence, t-g5ub
+seed the two day-one claims, t-mu43 2.14.0 bump+push), then t-v2b7 deployment-gap check and
+t-gnvk adopt-on-broadcast.
+— Prior (2026-09-11): phase 2 (`02-tiers-await-skills.md`, `status: done`; 327 green) —
+tiers (`--tier tracer|fill`, absent = tracer; `--tracer <id>` an implicit blocking edge),
+`escalate` fill→tracer (never lowers, clears the lease), `await <id> --steps` parking a task
+on a person (ranks first in `next`; prime `await:` ≤300 B, handoff `## awaiting` whole),
+`reopen`; compaction folds all three as synthetic ops; plan/apply/wrap rewritten whole
+around the index. 2.13.0 pushed + deployed, deployment-gap check passed (installed copy
+reports 2.13.0, `flux task escalate t-x` → "no such task" exit 1, no-`.flux` cwd → init hint
+exit 1, prime clean).
 — Prior (2026-09-10): phase 1 (`01-index-core.md`, `status: done`) — `flux task
 add/start/done/list/next/compact` over append-only `.flux/tasks.jsonl`, leases under
 git's common dir, prime `task:`/`next:` derivation, `tasks.jsonl merge=union`; 2.12.0
@@ -38,7 +48,7 @@ this file is live state only.
   `.flux/archive/v1/`, rationale ADR 0012 there). This repo is the flux v2 plugin +
   self-marketplace described in `plan.md`.
 - **`bin/flux`** — single-file stdlib CLI (Python ≥3.9, tomllib fallback):
-  init/prime/state/check/handoff/run/**ledger**/**log**/**guard**/**seal**, byte-budgets enforced (tokens ≈
+  init/prime/state/check/handoff/run/**ledger**/**log**/**guard**/**seal**/**claim**/**task**, byte-budgets enforced (tokens ≈
   bytes/4), prime hook-safe (never fails, silent no-op without `.flux/`). `flux check` is
   the fixed gate — no args, no narrowing; scoped runs go through `flux run --filter`. Prime
   ends with a pack footer naming the verbs (gate/subset/close/log, 143 B). `flux log <tag>
@@ -58,10 +68,11 @@ this file is live state only.
 
 ## Task queue
 
-- **Build ADR 0004 — the task index (grilled 2026-09-10, accepted).** `.flux/adr/0004-task-index-execution.md`; glossary `CONTEXT.md`. Three phases, one per session, via plan→apply→wrap.
+- **Build ADR 0004 — the task index (grilled 2026-09-10, accepted).** `.flux/adr/0004-task-index-execution.md`; glossary `CONTEXT.md`. Three phases via plan→apply→wrap; phases 1 and 2 were one session each, phase 3 runs off the index (one tracer, then its fills).
   - [x] **(1) index core — DONE 2026-09-10** (`.flux/plans/task-index/01-index-core.md`, `status: done`; 306 green, plugin.json 2.12.0 undeployed). `flux task add/start/done/list/next/compact` over `.flux/tasks.jsonl`, leases under git common dir, prime task:/next: lines, compaction, gitattributes append. See the plan's `## outcome` for deviations.
   - [x] **(2) tiers tracer/fill, `escalate`, `await`/`reopen`, plan/apply/wrap rewritten in place — DONE 2026-09-11** (`.flux/plans/task-index/02-tiers-await-skills.md`, `status: done`; 327 green; plugin.json 2.13.0 **deployed 2026-09-11**). Verbs, prime `await:` line, handoff `## awaiting`, three skills rewritten. See the plan's `## outcome` for eight deviations.
-  - [ ] **(3) adopt on broadcast, seed the two day-one claims** (ctx_p50<100k radiator; escalation rate<0.3) — plus the escalation-rate and replay-check ledger metrics the claims need. Gate: 2.13.0 deployment-gap check **passed 2026-09-11**.
+  - [x] **(3a) `escalation_rate` ledger metric — DONE 2026-09-11** (`.flux/plans/task-index/03-escalation-metric.md`, `status: done`; 336 green, no version bump). Window ratio over the task log; `claim add escalation_rate` accepted, the six existing verdict lines unchanged. One deviation in the plan's `## outcome`.
+  - [ ] **(3b) the rest of phase 3 — now tracked as index tasks, not prose.** `flux task next` owns the order: t-6if4 (reopen evidence survives compaction), t-g5ub (seed the two day-one claims — ctx_p50<100k radiator, escalation_rate<0.3), t-mu43 (bump 2.14.0 + push), t-v2b7 (2.14.0 deployment-gap check), t-gnvk (adopt on broadcast). The **replay-check** metric is deliberately not here: ADR 0004 seeds it after one cycle, not day one.
 - [ ] **Build the loop — `.flux/plans/loop/` (ADR 0003, accepted 2026-09-03).** Roadmap
   `00-roadmap.md` maps every field-read-out action to eight phases, each with the claim it is
   judged on. 01 ledger + 02 status diet + 03 `flux log`/footer + **04 guard/age/seal DONE**

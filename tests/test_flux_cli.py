@@ -1431,6 +1431,138 @@ class TestVerdictFleet(LedgerHarness):
         self.assertIn("no adopting spend", out.stdout)
 
 
+class TestVerdictEscalation(LedgerHarness):
+    """`escalation_rate` — a window ratio over the task log, not a per-cycle metric.
+    Repo-scoped throughout (the T0 harness needs no fleet), with the cycle clock fed
+    by planted sessions and the ratio by hand-written task records: the CLI stamps
+    `now`, which would postdate the dated claim."""
+
+    def write_tasks(self, fills, escalated=0, pre_claim_fills=0):
+        """`fills` fill tasks added after the claim ts, the first `escalated` of them
+        carrying an `escalate` op; `pre_claim_fills` escalated fills stamped *before*
+        it. Written straight to .flux/tasks.jsonl for the same reason write_claim is."""
+        path = os.path.join(self.repo, ".flux", "tasks.jsonl")
+        with open(path, "a") as f:
+            def add(tid, ts, esc):
+                f.write(json.dumps({"ts": ts, "id": tid, "op": "add",
+                                    "title": tid, "tier": "fill"}) + "\n")
+                if esc:
+                    f.write(json.dumps({"ts": ts[:14] + "30.000Z", "id": tid,
+                                        "op": "escalate", "why": "no context"}) + "\n")
+            for i in range(fills):
+                add("t-f%02d" % i, _iso_minute(i, "2026-08-22"), i < escalated)
+            for i in range(pre_claim_fills):
+                add("t-p%02d" % i, _iso_minute(i, "2026-08-19"), True)
+
+    def _verdict(self):
+        return run_flux(["ledger", "--verdict"], self.repo, env_extra=self._env())
+
+    def test_moved_one_of_five_escalated(self):
+        # AC-1: 5 post-claim fills, 1 escalated -> 0.20 < 0.3 -> moved, stated as a
+        # window ratio rather than a per-cycle figure.
+        for i in range(10):
+            self.plant(self.top, i)
+        self.write_tasks(5, escalated=1)
+        self.write_claim("03-task", "escalation_rate", "<0.3")
+        out = self._verdict()
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("03-task escalation_rate <0.3 [repo] — moved", out.stdout)
+        self.assertIn("ratio=0.20", out.stdout)
+        self.assertIn("1 escalated of 5 post-claim fills", out.stdout)
+        self.assertIn("window-ratio, not per-cycle", out.stdout)
+
+    def test_unmoved_two_of_five_escalated(self):
+        # AC-2, one cycle of eligible sessions: the bar is missed but the window has
+        # not yet spanned the claim's patience, so it is unmoved 1.
+        for i in range(10):
+            self.plant(self.top, i)
+        self.write_tasks(5, escalated=2)
+        self.write_claim("03-task", "escalation_rate", "<0.3")
+        out = self._verdict()
+        self.assertIn("unmoved 1", out.stdout)
+        self.assertIn("ratio=0.40", out.stdout)
+
+    def test_unmoved_2_once_window_spans_two_cycles(self):
+        # AC-2, second half: 20 eligible sessions = cycles x LEDGER_CYCLE -> the
+        # patience is spent.
+        for i in range(20):
+            self.plant(self.top, i)
+        self.write_tasks(5, escalated=2)
+        self.write_claim("03-task", "escalation_rate", "<0.3")
+        out = self._verdict()
+        self.assertIn("unmoved 2", out.stdout)
+        self.assertIn("ratio=0.40", out.stdout)
+
+    def test_pending_before_one_cycle(self):
+        # AC-3: the ratio is computable but the clock has not run -> no ratio shown.
+        for i in range(9):
+            self.plant(self.top, i)
+        self.write_tasks(5, escalated=1)
+        self.write_claim("03-task", "escalation_rate", "<0.3")
+        out = self._verdict()
+        self.assertIn("pending (9 eligible sessions, <1 cycle)", out.stdout)
+        self.assertNotIn("ratio=", out.stdout)
+
+    def test_zero_fills_is_pending_not_moved(self):
+        # AC-4: an empty denominator is no signal. 0.0 < 0.3 must not read as moved.
+        for i in range(10):
+            self.plant(self.top, i)
+        self.write_claim("03-task", "escalation_rate", "<0.3")
+        out = self._verdict()
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("pending (n/a — no fills)", out.stdout)
+        self.assertNotIn("moved", out.stdout)
+
+    def test_ratio_survives_compaction(self):
+        # AC-5: compaction rewrites an escalated fill's tier to `tracer`; the folded
+        # `escalate_ts` is what keeps it in both numerator and denominator.
+        for i in range(10):
+            self.plant(self.top, i)
+        self.write_tasks(5, escalated=1)
+        self.write_claim("03-task", "escalation_rate", "<0.3")
+        before = self._verdict().stdout
+        self.assertIn("ratio=0.20", before)
+        compact = run_flux(["task", "compact"], self.repo)
+        self.assertEqual(compact.returncode, 0, compact.stderr)
+        with open(os.path.join(self.repo, ".flux", "tasks.jsonl")) as f:
+            folded = [json.loads(l) for l in f if l.strip()]
+        self.assertTrue(any(r.get("escalate_ts") and r.get("tier") == "tracer"
+                            for r in folded))     # the tier really was rewritten
+        self.assertEqual(self._verdict().stdout, before)
+
+    def test_pre_claim_fills_excluded(self):
+        # The claim is never scored against data older than itself: three escalated
+        # fills predating it would push the ratio to 0.50 if they counted.
+        for i in range(10):
+            self.plant(self.top, i)
+        self.write_tasks(5, escalated=1, pre_claim_fills=3)
+        self.write_claim("03-task", "escalation_rate", "<0.3")
+        out = self._verdict()
+        self.assertIn("ratio=0.20", out.stdout)
+        self.assertIn("1 escalated of 5 post-claim fills", out.stdout)
+
+    def test_tracer_tasks_are_not_in_the_denominator(self):
+        # Only fills are counted: a tracer added after the claim is not a fill that
+        # could have been escalated, so it must not dilute the ratio.
+        for i in range(10):
+            self.plant(self.top, i)
+        self.write_tasks(5, escalated=1)
+        path = os.path.join(self.repo, ".flux", "tasks.jsonl")
+        with open(path, "a") as f:
+            for i in range(5):
+                f.write(json.dumps({"ts": _iso_minute(i, "2026-08-23"),
+                                    "id": "t-t%02d" % i, "op": "add",
+                                    "title": "tracer"}) + "\n")
+        self.write_claim("03-task", "escalation_rate", "<0.3")
+        out = self._verdict()
+        self.assertIn("1 escalated of 5 post-claim fills", out.stdout)
+
+    def test_escalation_rate_is_a_claimable_metric(self):
+        out = run_flux(["claim", "add", "03-task", "escalation_rate", "<0.3"], self.repo)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertIn("escalation_rate", out.stdout)
+
+
 class TestCycleLine(LedgerHarness):
     """The flux-repo-only prime cycle line: appears once a cycle (>=10 fleet
     substantive sessions) has closed since the newest claim ts."""

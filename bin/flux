@@ -1492,8 +1492,8 @@ def task_counts(tasks):
     """-> (open, blocked, done, awaiting, escalated). `open` is everything not done
     (active and awaiting tasks are still work in flight); `blocked` and `awaiting`
     are subsets of it. `escalated` counts every task that was ever escalated, done
-    or not -- it is the numerator of the escalation rate, read by hand until the
-    ledger metric lands."""
+    or not -- it is the numerator of the `escalation_rate` ledger metric
+    (`_verdict_escalation`), which scores the same ratio over a claim's window."""
     live = [tid for tid in tasks if tasks[tid]["status"] != "done"]
     return (len(live),
             sum(1 for tid in live if task_blocked(tasks, tid)),
@@ -2975,12 +2975,14 @@ def _ledger_fleet(since, as_json):
 CLAIMS_LOG_NAME = "claims.jsonl"
 
 # The vocabulary a claim's `metric` may name: every raw key `_aggregate` produces
-# (bin/flux _aggregate) plus two derived ratios the read-out states as fractions.
-# `sessions` is a denominator, not a claimable target, so it is deliberately out.
+# (bin/flux _aggregate), plus two derived ratios the read-out states as fractions,
+# plus `escalation_rate` -- the first metric from a different source entirely (the
+# task log, not the transcripts). `sessions` is a denominator, not a claimable
+# target, so it is deliberately out.
 _CLAIM_METRICS = frozenset({
     "ctx_p50", "cw_share", "over_cap", "rereads", "bash_bytes", "first_edit",
     "wrapped", "raw_gate", "flux_check", "help_reads", "dollars", "per_session",
-    "wrap_coverage", "meta_tax",
+    "wrap_coverage", "meta_tax", "escalation_rate",
 })
 
 # `bar` is an explicit <op><number>: direction is per-metric (ctx/meta-tax lower is
@@ -3166,11 +3168,12 @@ def _verdict_sessions(root, since, scope):
 
 
 def _verdict_general(claim, op, threshold, sub):
-    """Per-cycle verdict for every metric but meta_tax. Eligible = sessions whose
-    start (minute-normalized) is strictly after the claim ts; chunk by LEDGER_CYCLE;
-    only complete chunks count. State: pending (<1 valued cycle) / moved (latest
-    complete cycle meets the bar) / unmoved K (K consecutive trailing complete
-    cycles miss, capped at the claim's patience)."""
+    """Per-cycle verdict for every metric but the two window ratios (meta_tax,
+    escalation_rate). Eligible = sessions whose start (minute-normalized) is strictly
+    after the claim ts; chunk by LEDGER_CYCLE; only complete chunks count. State:
+    pending (<1 valued cycle) / moved (latest complete cycle meets the bar) /
+    unmoved K (K consecutive trailing complete cycles miss, capped at the claim's
+    patience)."""
     metric = claim["metric"]
     scope = claim.get("scope", "repo")
     prefix = "%s %s %s [%s]" % (claim.get("feature", "?"), metric,
@@ -3241,6 +3244,75 @@ def _verdict_meta_tax(since, claim, op, threshold):
         prefix, state, ratio, n_elig)
 
 
+def _task_log_for_scope(root, since, scope):
+    """The task logs a claim's scope covers -- `_verdict_sessions` one level down:
+    sessions come from transcripts, escalations from each repo's .flux/tasks.jsonl.
+    `repo` = this root; `fleet` = every adopting repo pooled; a bare name = that
+    repo. Resolving through `_fleet_scan` keeps one definition of the fleet."""
+    if scope == "repo":
+        return [tasks_path(root)]
+    if scope == "fleet":
+        return [tasks_path(path) for _n, path, _f, _sub in _fleet_scan(since)]
+    return [tasks_path(path) for name, path, _f, _sub in _fleet_scan(since)
+            if name == scope]
+
+
+def _escalation_counts(paths, claim_ts):
+    """(escalated, fills) over the tasks added strictly after claim_ts, pooled across
+    paths. Read with read_task_log + replay_tasks -- never a second parser, never a
+    re-derivation of tier.
+
+    A fill is `tier == "fill"` OR anything carrying `escalate_ts`: compaction rewrites
+    an escalated fill's tier to `tracer`, and `flux task escalate` refuses a task that
+    is already a tracer, so an `escalate_ts` is proof the task was a fill when it was
+    raised. That disjunct is the whole of the ratio's compaction-safety."""
+    escalated = fills = 0
+    for path in paths:
+        for task in replay_tasks(read_task_log(path)).values():
+            if str(task["ts"])[:16] <= claim_ts:
+                continue
+            if not (task["tier"] == "fill" or task["escalate_ts"]):
+                continue
+            fills += 1
+            if task["escalate_ts"]:
+                escalated += 1
+    return escalated, fills
+
+
+def _verdict_escalation(root, since, claim, op, threshold):
+    """escalation_rate is a window ratio over *tasks*, NOT a per-cycle metric: a task
+    carries no session, so it cannot be chunked by the ledger's cycles. It follows
+    meta_tax's precedent exactly -- one ratio summed over the whole eligible window,
+    with the divergence stated in the line so it is not read as a bug -- while the
+    cycle clock and patience still come from the eligible sessions in scope.
+
+    An empty denominator is pending, never moved: zero post-claim fills is no signal,
+    and `0.0 < 0.3` would score a bar nothing was ever measured against."""
+    scope = claim.get("scope", "repo")
+    prefix = "%s escalation_rate %s [%s]" % (claim.get("feature", "?"),
+                                             claim.get("bar", ""), scope)
+    cycles = _claim_cycles(claim)
+    claim_ts = str(claim.get("ts", ""))[:16]
+    n_elig = sum(1 for s in _verdict_sessions(root, since, scope)
+                 if s["start"] > claim_ts)
+    if n_elig < LEDGER_CYCLE:
+        return "%s — pending (%d eligible session%s, <1 cycle)" % (
+            prefix, n_elig, "" if n_elig == 1 else "s")
+    escalated, fills = _escalation_counts(
+        _task_log_for_scope(root, since, scope), claim_ts)
+    if not fills:
+        return "%s — pending (n/a — no fills)" % prefix
+    ratio = escalated / float(fills)
+    if op(ratio, threshold):
+        state = "moved"
+    else:
+        state = "unmoved %d" % (cycles if n_elig >= cycles * LEDGER_CYCLE else 1)
+    return ("%s — %s (ratio=%.2f, %d escalated of %d post-claim fill%s over %d "
+            "session%s; window-ratio, not per-cycle)"
+            % (prefix, state, ratio, escalated, fills, "" if fills == 1 else "s",
+               n_elig, "" if n_elig == 1 else "s"))
+
+
 def _verdict_line(root, since, claim):
     bar = claim.get("bar", "")
     parsed = _parse_bar(bar)
@@ -3252,6 +3324,8 @@ def _verdict_line(root, since, claim):
     op = _CLAIM_OPS[op_str]
     if claim.get("metric") == "meta_tax":
         return _verdict_meta_tax(since, claim, op, threshold)
+    if claim.get("metric") == "escalation_rate":
+        return _verdict_escalation(root, since, claim, op, threshold)
     sub = _verdict_sessions(root, since, claim.get("scope", "repo"))
     return _verdict_general(claim, op, threshold, sub)
 

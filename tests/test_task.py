@@ -763,6 +763,62 @@ class TestTaskAwait(TaskCase):
                                     "op": "done", "by": "stale clone"}))
         self.assertIn("%s  open  Reopened" % r, self.task("list").stdout)
 
+    def test_compaction_keeps_the_reopen_of_a_re_done_task(self):
+        """t-6if4: done -> reopen -> done again. The reopen is the replay-check
+        evidence; compaction must not fold it away, and must stay idempotent."""
+        r = self.add("Redone")
+        self.task("start", r)
+        self.task("done", r, "--by", "first")
+        self.task("reopen", r, "--why", "verify failed on replay")
+        self.task("start", r)
+        self.task("done", r, "--by", "second")
+        before = self.task("list", "--all").stdout
+        self.assertIn("%s  done  Redone — by: second" % r, before)
+
+        self.task("compact")
+        self.assertEqual(len(self.log_lines()), 1)
+        folded = json.loads(self.log_lines()[0])
+        self.assertEqual(folded["status"], "done")
+        self.assertEqual(folded["by"], "second")
+        self.assertTrue(folded["reopen_ts"])
+        self.assertEqual(folded["why"], "verify failed on replay")
+        self.assertLessEqual(folded["reopen_ts"], folded["start_ts"])
+        self.assertLessEqual(folded["start_ts"], folded["done_ts"])
+        self.assertEqual(self.task("list", "--all").stdout, before)
+        with open(self.log_path()) as f:
+            first = f.read()
+        self.task("compact")
+        with open(self.log_path()) as f:
+            self.assertEqual(f.read(), first)  # starts survive the second pass
+
+        tasks = flux_module().replay_tasks(flux_module().read_task_log(self.log_path()))
+        self.assertTrue(tasks[r]["reopen_ts"])
+        self.assertEqual(tasks[r]["starts"], folded["starts"])
+
+        # A stale clone's first `done`, stamped before the reopen, replays first.
+        self.append_raw(json.dumps({"ts": folded["ts"], "id": r,
+                                    "op": "done", "by": "stale clone"}))
+        self.assertIn("%s  done  Redone — by: second" % r,
+                      self.task("list", "--all").stdout)
+
+    def test_compaction_keeps_starts_of_an_escalated_fill_done_later(self):
+        t = self.add("T")
+        f = self.add("F", "--tier", "fill", "--tracer", t)
+        self.task("done", t, "--by", "x")
+        self.task("start", f)
+        self.task("escalate", f, "--why", "BLOCKED")
+        self.task("start", f)
+        self.task("done", f, "--by", "y")
+        self.task("compact")
+        with open(self.log_path()) as fh:
+            first = fh.read()
+        self.task("compact")
+        with open(self.log_path()) as fh:
+            self.assertEqual(fh.read(), first)
+        folded = [json.loads(l) for l in self.log_lines() if '"id": "%s"' % f in l][0]
+        self.assertTrue(folded["starts"])
+        self.assertLessEqual(folded["escalate_ts"], folded["start_ts"])
+
     def test_next_all_lists_awaiting_before_runnable_regardless_of_lease(self):
         a = self.add("A")
         b = self.add("B")

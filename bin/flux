@@ -1540,9 +1540,10 @@ def compact_tasks(path):
             rec["tier"] = "fill"
         if task["tracer"]:
             rec["tracer"] = task["tracer"]
-        if task["reopen_ts"] and task["status"] != "done":
+        if task["reopen_ts"]:
             # Kept while the task is open again, so a merged earlier `done` replays
-            # before the reopen and cannot resurrect it.
+            # before the reopen and cannot resurrect it -- and kept once it is done
+            # again, because a reopen is the evidence that a done failed its verify.
             rec["reopen_ts"] = task["reopen_ts"]
             if task["reopen_why"]:
                 rec["why"] = task["reopen_why"]
@@ -1550,6 +1551,10 @@ def compact_tasks(path):
             rec["status"] = "done"
             rec["by"] = task["by"]
             rec["done_ts"] = task["done_ts"]
+            if task["starts"] and (task["reopen_ts"] or task["escalate_ts"]):
+                # The folded reopen/escalate resets the start segment on replay, so
+                # the starts must be stamped after it or they replay first and vanish.
+                rec["start_ts"] = task["start_ts"]
         elif task["status"] == "active":
             rec["status"] = "active"
             rec["where"] = task["where"]

@@ -130,3 +130,5 @@
 {"ts": "2026-09-14T21:14:35.060Z", "k": "position", "v": "t-g5ub done: seeded 0004-index ctx_p50<100000 [radiator-revivers-landing-page] and 0004-fills escalation_rate<0.3 [fleet], both pending. 338 green. Deployed still 2.13.0; 3 commits unpushed until t-mu43."}
 {"ts": "2026-09-14T21:14:35.118Z", "k": "open", "v": "Both 0004 claims pending until radiator sessions and broadcast fills land. Plans 02 and 03 shipped unaudited. Verdict 2026-09-14: 04-seal and 06 unmoved 2 (2.10.1-era contamination; re-seed?), 03-log and 02-status-diet unmoved 1, 04-guard moved. flux run still on notice."}
 {"ts": "2026-09-14T21:14:35.174Z", "k": "phase", "v": "task-index-03 fills: claims seeded; bump+push, gap check, broadcast adoption next"}
+{"ts": "2026-09-14T21:25:35.778Z", "k": "position", "v": "t-mu43 done: plugin.json 2.14.0 pushed (94d9a61). Not installed fleet-side yet — t-v2b7 runs claude plugin update flux@marketplace + deployment-gap check."}
+{"ts": "2026-09-14T21:25:35.844Z", "k": "phase", "v": "task-index-03 fills: 2.14.0 pushed; gap check, then broadcast adoption"}

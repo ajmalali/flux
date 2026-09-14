@@ -8,3 +8,5 @@
 {"ts": "2026-09-11T23:22:33.414Z", "id": "t-xx2e", "op": "done", "by": "flux check green: 336 tests (327 + 9 new AC-1..AC-5 in TestVerdictEscalation); ./bin/flux ledger --verdict prints the six existing claim lines unchanged; claim add rejects 'foo' (exit 2) and accepts escalation_rate"}
 {"ts": "2026-09-13T01:47:27.971Z", "id": "t-6if4", "op": "start", "where": "Ajmals-MacBook-Pro:flux"}
 {"ts": "2026-09-13T01:50:44.474Z", "id": "t-6if4", "op": "done", "by": "flux check green: 338 tests (336 + 2 in TestTaskAwait); both new tests fail on HEAD's compact_tasks (KeyError reopen_ts; escalated-then-done starts dropped on 2nd pass) and pass after: a re-done task's folded record keeps reopen_ts+why, list --all unchanged, compaction byte-identical twice"}
+{"ts": "2026-09-14T21:12:47.701Z", "id": "t-g5ub", "op": "start", "where": "Ajmals-MBP:flux"}
+{"ts": "2026-09-14T21:13:08.008Z", "id": "t-g5ub", "op": "done", "by": "flux ledger --verdict lists 0004-index ctx_p50<100000 [radiator-revivers-landing-page] and 0004-fills escalation_rate<0.3 [fleet], both pending"}

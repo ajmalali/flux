@@ -4,3 +4,5 @@
 {"ts": "2026-09-03T23:08:58.655Z", "feature": "04-seal", "metric": "wrap_coverage", "bar": ">=0.8", "scope": "fleet", "cycles": 2}
 {"ts": "2026-09-03T23:08:58.700Z", "feature": "00-loop", "metric": "meta_tax", "bar": "<0.5", "scope": "fleet", "cycles": 2}
 {"ts": "2026-09-06T12:19:11.830Z", "feature": "06-handoff-inline", "metric": "first_edit", "bar": "<=8", "scope": "fleet", "cycles": 2}
+{"ts": "2026-09-14T21:12:53.331Z", "feature": "0004-index", "metric": "ctx_p50", "bar": "<100000", "scope": "radiator-revivers-landing-page", "cycles": 2}
+{"ts": "2026-09-14T21:12:53.386Z", "feature": "0004-fills", "metric": "escalation_rate", "bar": "<0.3", "scope": "fleet", "cycles": 2}
